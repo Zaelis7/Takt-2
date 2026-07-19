@@ -3,8 +3,11 @@
 Review date: 2026-07-19. Every direct dependency is pinned exactly and both
 ecosystem lockfiles are committed. Current releases, declared licenses and
 upstream repositories were checked through the crates.io and npm registries.
-`cargo deny check`, `cargo audit`, `pnpm audit` and `pnpm licenses list --long`
-are repository gates.
+`cargo deny check`, `cargo audit`, `pnpm audit` and `pnpm check:licenses` are
+repository gates. The Node license gate enforces a permissive SPDX allow-list;
+CC-BY-4.0 `caniuse-lite`, MPL-2.0 `lightningcss` platform tooling and
+Python-2.0 `argparse` are package-scoped development-tool exceptions and are
+rejected if they enter the production dependency graph.
 
 ## Rust runtime dependencies
 

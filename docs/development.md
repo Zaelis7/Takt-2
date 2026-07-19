@@ -82,13 +82,14 @@ pnpm install --frozen-lockfile
 pnpm contracts:validate
 pnpm check:architecture
 pnpm check:generated
+pnpm test:tools
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo deny check
 cargo audit
 pnpm audit --audit-level high
-pnpm licenses list --long
+pnpm check:licenses
 pnpm lint
 pnpm typecheck
 pnpm test --run
@@ -106,4 +107,3 @@ cargo build --locked --release -p takt-server
 ```
 
 The resulting `takt-server` binary contains the exact files from `web/dist`.
-

@@ -11,4 +11,3 @@ publish = false
 prost-build.workspace = true
 protox.workspace = true
 tempfile.workspace = true
-

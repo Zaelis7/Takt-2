@@ -12,4 +12,3 @@ describe("bootstrap application shell", () => {
     expect(markup).toContain('data-contract-status="ok"');
   });
 });
-

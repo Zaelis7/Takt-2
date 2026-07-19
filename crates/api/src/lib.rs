@@ -14,7 +14,7 @@ use axum::{
 };
 use rust_embed::{EmbeddedFile, RustEmbed};
 use serde::Serialize;
-use uuid::Uuid;
+use uuid::{Uuid, Version};
 
 const API_PREFIX: &str = "api/";
 const HEALTH_PREFIX: &str = "health/";
@@ -59,6 +59,7 @@ async fn attach_request_id(request: Request, next: Next) -> Response {
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| Uuid::parse_str(value).ok())
+        .filter(|value| value.get_version() == Some(Version::SortRand))
         .unwrap_or_else(Uuid::now_v7)
         .to_string();
 

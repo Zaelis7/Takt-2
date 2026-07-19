@@ -4,4 +4,3 @@ extends:
 apis:
   takt:
     root: specs/contracts/openapi.yaml
-

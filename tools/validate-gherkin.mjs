@@ -42,4 +42,3 @@ if (parseFailures.length > 0) {
 }
 
 console.log(`Parsed ${featureFiles.length} Gherkin feature files`);
-

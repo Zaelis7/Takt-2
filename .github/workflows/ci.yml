@@ -48,6 +48,9 @@ jobs:
           pnpm check:architecture
           pnpm check:generated
 
+      - name: Test repository tools
+        run: pnpm test:tools
+
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
@@ -65,7 +68,7 @@ jobs:
       - name: Check Node dependencies
         run: |
           pnpm audit --audit-level high
-          pnpm licenses list --long
+          pnpm check:licenses
 
       - name: Lint and test web application
         run: |
@@ -80,4 +83,3 @@ jobs:
 
       - name: Build embedded production server
         run: cargo build --workspace --all-features --release --locked
-

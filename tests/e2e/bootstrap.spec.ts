@@ -8,4 +8,3 @@ test("bootstrap web shell has an accessible heading", async ({ page }) => {
   ).toBeVisible();
   await expect(page.locator("main")).toHaveAttribute("data-contract-status", "ok");
 });
-

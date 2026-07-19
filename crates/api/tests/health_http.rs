@@ -6,8 +6,10 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
+use uuid::{Uuid, Version};
 
 const PROVIDED_REQUEST_ID: &str = "019b0000-0000-7000-8000-000000000002";
+const NON_V7_REQUEST_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
 async fn request(path: &str, request_id: Option<&str>) -> Result<String, Box<dyn Error>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -52,6 +54,17 @@ fn assert_health_response(response: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn response_request_id(response: &str) -> Result<Uuid, Box<dyn Error>> {
+    let header = response
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with("x-request-id: "))
+        .ok_or_else(|| io::Error::other("HTTP response has no X-Request-Id header"))?;
+    let (_, value) = header
+        .split_once(':')
+        .ok_or_else(|| io::Error::other("X-Request-Id header is malformed"))?;
+    Ok(Uuid::parse_str(value.trim())?)
+}
+
 // PRD-NFR-008 / getLiveness: exercise the endpoint through a real TCP listener.
 #[tokio::test]
 async fn prd_nfr_008_liveness_is_contract_compliant_http() -> Result<(), Box<dyn Error>> {
@@ -82,6 +95,19 @@ async fn prd_api_002_invalid_request_id_is_not_reflected() -> Result<(), Box<dyn
 
     assert!(!response.contains("x-request-id: invalid-request-id"));
     assert!(response.to_ascii_lowercase().contains("x-request-id: "));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prd_api_002_non_v7_request_id_is_replaced() -> Result<(), Box<dyn Error>> {
+    let response = request("/health/live", Some(NON_V7_REQUEST_ID)).await?;
+
+    assert!(!response.contains(&format!("x-request-id: {NON_V7_REQUEST_ID}")));
+    assert_eq!(
+        response_request_id(&response)?.get_version(),
+        Some(Version::SortRand),
+        "replacement request IDs must use UUIDv7"
+    );
     Ok(())
 }
 

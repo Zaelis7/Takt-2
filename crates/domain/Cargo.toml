@@ -8,4 +8,3 @@ license.workspace = true
 
 [dependencies]
 uuid.workspace = true
-

@@ -19,9 +19,10 @@
     "generate": "pnpm generate:openapi && pnpm generate:proto && pnpm build",
     "generate:openapi": "node tools/openapi-types.mjs generate",
     "generate:proto": "cargo run --locked -p xtask -- generate-proto",
-    "licenses": "pnpm licenses list --long",
+    "check:licenses": "pnpm licenses list --prod --json | node tools/check-node-licenses.mjs --production && pnpm licenses list --json | node tools/check-node-licenses.mjs",
     "lint": "pnpm --dir web lint",
     "test": "pnpm --dir web test",
+    "test:tools": "node --test tools/*.test.mjs",
     "typecheck": "pnpm --dir web typecheck"
   },
   "devDependencies": {
