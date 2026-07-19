@@ -1,0 +1,1168 @@
+use std::str::FromStr;
+
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteRow};
+use takt_application::{
+    AuditRepository, BootstrapPlan, BootstrapRepository, BootstrapResources, BootstrapStoreResult,
+    ExistingBootstrap, LocalUserRepository, MembershipRepository, NewAuditEvent, NewLocalUser,
+    NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
+    ProjectRepository, RepositoryError,
+};
+use takt_domain::{
+    AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
+    MembershipId, OperationId, Organization, OrganizationId, Project, ProjectId, ResourceId, Role,
+    UserId, UtcTimestamp,
+};
+use time::OffsetDateTime;
+
+use crate::database::{Database, DatabasePool};
+
+#[derive(Clone)]
+pub struct SqlxRepository {
+    database: Database,
+}
+
+impl SqlxRepository {
+    #[must_use]
+    pub const fn new(database: Database) -> Self {
+        Self { database }
+    }
+
+    #[must_use]
+    pub const fn database(&self) -> &Database {
+        &self.database
+    }
+}
+
+#[async_trait]
+impl OrganizationRepository for SqlxRepository {
+    async fn create_organization(
+        &self,
+        organization: NewOrganization,
+    ) -> Result<Organization, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let now = postgres_time(organization.now)?;
+                let row = sqlx::query(
+                    "INSERT INTO organizations (id, slug, name, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $4, 1) RETURNING id, slug, name, created_at, updated_at, version",
+                )
+                .bind(organization.id.as_uuid())
+                .bind(&organization.slug)
+                .bind(&organization.name)
+                .bind(now)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?;
+                organization_from_postgres(&row)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let row = sqlx::query(
+                    "INSERT INTO organizations (id, slug, name, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?4, 1) RETURNING id, slug, name, created_at, updated_at, version",
+                )
+                .bind(organization.id.to_string())
+                .bind(&organization.slug)
+                .bind(&organization.name)
+                .bind(organization.now.unix_micros())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?;
+                organization_from_sqlite(&row)
+            }
+        }
+    }
+
+    async fn organization_by_id(
+        &self,
+        id: OrganizationId,
+    ) -> Result<Organization, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => organization_from_postgres(
+                &sqlx::query(
+                    "SELECT id, slug, name, created_at, updated_at, version FROM organizations WHERE id = $1",
+                )
+                .bind(id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => organization_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, slug, name, created_at, updated_at, version FROM organizations WHERE id = ?1",
+                )
+                .bind(id.to_string())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn organization_by_slug(&self, slug: &str) -> Result<Organization, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => organization_from_postgres(
+                &sqlx::query(
+                    "SELECT id, slug, name, created_at, updated_at, version FROM organizations WHERE slug = $1",
+                )
+                .bind(slug)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => organization_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, slug, name, created_at, updated_at, version FROM organizations WHERE slug = ?1",
+                )
+                .bind(slug)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl ProjectRepository for SqlxRepository {
+    async fn create_project(&self, project: NewProject) -> Result<Project, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => project_from_postgres(
+                &sqlx::query(
+                    "INSERT INTO projects (id, organization_id, slug, name, default_timezone, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $6, 1) RETURNING id, organization_id, slug, name, default_timezone, created_at, updated_at, version",
+                )
+                .bind(project.id.as_uuid())
+                .bind(project.organization_id.as_uuid())
+                .bind(&project.slug)
+                .bind(&project.name)
+                .bind(&project.default_timezone)
+                .bind(postgres_time(project.now)?)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => project_from_sqlite(
+                &sqlx::query(
+                    "INSERT INTO projects (id, organization_id, slug, name, default_timezone, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1) RETURNING id, organization_id, slug, name, default_timezone, created_at, updated_at, version",
+                )
+                .bind(project.id.to_string())
+                .bind(project.organization_id.to_string())
+                .bind(&project.slug)
+                .bind(&project.name)
+                .bind(&project.default_timezone)
+                .bind(project.now.unix_micros())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn project_by_id(&self, id: ProjectId) -> Result<Project, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => project_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, slug, name, default_timezone, created_at, updated_at, version FROM projects WHERE id = $1",
+                )
+                .bind(id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => project_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, slug, name, default_timezone, created_at, updated_at, version FROM projects WHERE id = ?1",
+                )
+                .bind(id.to_string())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn project_by_slug(
+        &self,
+        organization_id: OrganizationId,
+        slug: &str,
+    ) -> Result<Project, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => project_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, slug, name, default_timezone, created_at, updated_at, version FROM projects WHERE organization_id = $1 AND slug = $2",
+                )
+                .bind(organization_id.as_uuid())
+                .bind(slug)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => project_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, slug, name, default_timezone, created_at, updated_at, version FROM projects WHERE organization_id = ?1 AND slug = ?2",
+                )
+                .bind(organization_id.to_string())
+                .bind(slug)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl LocalUserRepository for SqlxRepository {
+    async fn create_local_user(&self, user: NewLocalUser) -> Result<LocalUser, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "INSERT INTO users (id, normalized_username, display_name, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $4, 1) RETURNING id, normalized_username, display_name, created_at, updated_at, version",
+                )
+                .bind(user.id.as_uuid())
+                .bind(&user.normalized_username)
+                .bind(&user.display_name)
+                .bind(postgres_time(user.now)?)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                sqlx::query(
+                    "INSERT INTO local_credentials (user_id, password_hash, created_at, updated_at, version) VALUES ($1, $2, $3, $3, 1)",
+                )
+                .bind(user.id.as_uuid())
+                .bind(user.password_hash.expose_for_persistence())
+                .bind(postgres_time(user.now)?)
+                .execute(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let result = local_user_from_postgres(&row)?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(result)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "INSERT INTO users (id, normalized_username, display_name, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?4, 1) RETURNING id, normalized_username, display_name, created_at, updated_at, version",
+                )
+                .bind(user.id.to_string())
+                .bind(&user.normalized_username)
+                .bind(&user.display_name)
+                .bind(user.now.unix_micros())
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                sqlx::query(
+                    "INSERT INTO local_credentials (user_id, password_hash, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?3, 1)",
+                )
+                .bind(user.id.to_string())
+                .bind(user.password_hash.expose_for_persistence())
+                .bind(user.now.unix_micros())
+                .execute(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let result = local_user_from_sqlite(&row)?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(result)
+            }
+        }
+    }
+
+    async fn local_user_by_username(
+        &self,
+        normalized_username: &str,
+    ) -> Result<LocalUser, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => local_user_from_postgres(
+                &sqlx::query(
+                    "SELECT id, normalized_username, display_name, created_at, updated_at, version FROM users WHERE normalized_username = $1",
+                )
+                .bind(normalized_username)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => local_user_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, normalized_username, display_name, created_at, updated_at, version FROM users WHERE normalized_username = ?1",
+                )
+                .bind(normalized_username)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl MembershipRepository for SqlxRepository {
+    async fn create_membership(
+        &self,
+        membership: NewMembership,
+    ) -> Result<Membership, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => membership_from_postgres(
+                &sqlx::query(
+                    "INSERT INTO memberships (id, organization_id, project_id, user_id, role, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $6, 1) RETURNING id, organization_id, project_id, user_id, role, created_at, updated_at, version",
+                )
+                .bind(membership.id.as_uuid())
+                .bind(membership.organization_id.as_uuid())
+                .bind(membership.project_id.map(ProjectId::as_uuid))
+                .bind(membership.user_id.as_uuid())
+                .bind(membership.role.as_str())
+                .bind(postgres_time(membership.now)?)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => membership_from_sqlite(
+                &sqlx::query(
+                    "INSERT INTO memberships (id, organization_id, project_id, user_id, role, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1) RETURNING id, organization_id, project_id, user_id, role, created_at, updated_at, version",
+                )
+                .bind(membership.id.to_string())
+                .bind(membership.organization_id.to_string())
+                .bind(membership.project_id.map(|id| id.to_string()))
+                .bind(membership.user_id.to_string())
+                .bind(membership.role.as_str())
+                .bind(membership.now.unix_micros())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn membership_by_scope(
+        &self,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+        user_id: UserId,
+    ) -> Result<Membership, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => membership_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, project_id, user_id, role, created_at, updated_at, version FROM memberships WHERE organization_id = $1 AND project_id IS NOT DISTINCT FROM $2 AND user_id = $3",
+                )
+                .bind(organization_id.as_uuid())
+                .bind(project_id.map(ProjectId::as_uuid))
+                .bind(user_id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => membership_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, project_id, user_id, role, created_at, updated_at, version FROM memberships WHERE organization_id = ?1 AND project_id IS ?2 AND user_id = ?3",
+                )
+                .bind(organization_id.to_string())
+                .bind(project_id.map(|id| id.to_string()))
+                .bind(user_id.to_string())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl AuditRepository for SqlxRepository {
+    async fn append_audit_event(
+        &self,
+        event: NewAuditEvent,
+    ) -> Result<AuditEvent, RepositoryError> {
+        let metadata = audit_metadata_json(&event.event.metadata);
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => audit_from_postgres(
+                &sqlx::query(
+                    "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at",
+                )
+                .bind(event.event.id.as_uuid())
+                .bind(event.event.organization_id.as_uuid())
+                .bind(event.event.project_id.map(ProjectId::as_uuid))
+                .bind(event.event.actor_type.as_str())
+                .bind(event.event.actor_id.map(UserId::as_uuid))
+                .bind(&event.event.action)
+                .bind(&event.event.resource_type)
+                .bind(event.event.resource_id.as_uuid())
+                .bind(event.event.request_id.as_uuid())
+                .bind(metadata)
+                .bind(postgres_time(event.event.occurred_at)?)
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => audit_from_sqlite(
+                &sqlx::query(
+                    "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at",
+                )
+                .bind(event.event.id.to_string())
+                .bind(event.event.organization_id.to_string())
+                .bind(event.event.project_id.map(|id| id.to_string()))
+                .bind(event.event.actor_type.as_str())
+                .bind(event.event.actor_id.map(|id| id.to_string()))
+                .bind(&event.event.action)
+                .bind(&event.event.resource_type)
+                .bind(event.event.resource_id.to_string())
+                .bind(event.event.request_id.to_string())
+                .bind(metadata.to_string())
+                .bind(event.event.occurred_at.unix_micros())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn audit_event_by_id(&self, id: AuditEventId) -> Result<AuditEvent, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => audit_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at FROM audit_events WHERE id = $1",
+                )
+                .bind(id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => audit_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at FROM audit_events WHERE id = ?1",
+                )
+                .bind(id.to_string())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl BootstrapRepository for SqlxRepository {
+    async fn bootstrap(
+        &self,
+        plan: BootstrapPlan,
+    ) -> Result<BootstrapStoreResult, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                sqlx::query("SELECT pg_advisory_xact_lock($1)")
+                    .bind(8_428_154_626_001_i64)
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?;
+
+                if let Some(existing) = existing_bootstrap_postgres(&mut transaction).await? {
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(BootstrapStoreResult::Existing(existing));
+                }
+                if bootstrap_row_count_postgres(&mut transaction).await? != 0 {
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(BootstrapStoreResult::Conflict);
+                }
+
+                let resources = resources_from_plan(&plan);
+                insert_bootstrap_postgres(&mut transaction, &plan).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(BootstrapStoreResult::Created(resources))
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool
+                    .begin_with("BEGIN IMMEDIATE")
+                    .await
+                    .map_err(map_sqlx_error)?;
+                if let Some(existing) = existing_bootstrap_sqlite(&mut transaction).await? {
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(BootstrapStoreResult::Existing(existing));
+                }
+                if bootstrap_row_count_sqlite(&mut transaction).await? != 0 {
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(BootstrapStoreResult::Conflict);
+                }
+                let resources = resources_from_plan(&plan);
+                insert_bootstrap_sqlite(&mut transaction, &plan).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(BootstrapStoreResult::Created(resources))
+            }
+        }
+    }
+}
+
+async fn bootstrap_row_count_postgres(
+    connection: &mut PgConnection,
+) -> Result<i64, RepositoryError> {
+    sqlx::query(
+        "SELECT ((SELECT COUNT(*) FROM organizations) + (SELECT COUNT(*) FROM projects) + (SELECT COUNT(*) FROM users) + (SELECT COUNT(*) FROM local_credentials) + (SELECT COUNT(*) FROM memberships) + (SELECT COUNT(*) FROM audit_events))::BIGINT AS row_count",
+    )
+    .fetch_one(connection)
+    .await
+    .map_err(map_sqlx_error)?
+    .try_get("row_count")
+    .map_err(map_sqlx_error)
+}
+
+async fn bootstrap_row_count_sqlite(
+    connection: &mut SqliteConnection,
+) -> Result<i64, RepositoryError> {
+    sqlx::query(
+        "SELECT ((SELECT COUNT(*) FROM organizations) + (SELECT COUNT(*) FROM projects) + (SELECT COUNT(*) FROM users) + (SELECT COUNT(*) FROM local_credentials) + (SELECT COUNT(*) FROM memberships) + (SELECT COUNT(*) FROM audit_events)) AS row_count",
+    )
+    .fetch_one(connection)
+    .await
+    .map_err(map_sqlx_error)?
+    .try_get("row_count")
+    .map_err(map_sqlx_error)
+}
+
+async fn existing_bootstrap_postgres(
+    connection: &mut PgConnection,
+) -> Result<Option<ExistingBootstrap>, RepositoryError> {
+    let row = sqlx::query(
+        "SELECT o.id AS organization_id, o.slug AS organization_slug, o.name AS organization_name, o.created_at AS organization_created_at, o.updated_at AS organization_updated_at, o.version AS organization_version, p.id AS project_id, p.slug AS project_slug, p.name AS project_name, p.default_timezone, p.created_at AS project_created_at, p.updated_at AS project_updated_at, p.version AS project_version, u.id AS user_id, u.normalized_username, u.display_name, u.created_at AS user_created_at, u.updated_at AS user_updated_at, u.version AS user_version, c.password_hash, m.id AS membership_id, m.role, m.created_at AS membership_created_at, m.updated_at AS membership_updated_at, m.version AS membership_version, a.id AS audit_id, a.actor_type, a.actor_id, a.action, a.resource_type, a.resource_id, a.request_id, a.metadata, a.occurred_at FROM organizations o JOIN projects p ON p.organization_id = o.id AND p.slug = 'default' JOIN memberships m ON m.organization_id = o.id AND m.project_id IS NULL AND m.role = 'owner' JOIN users u ON u.id = m.user_id JOIN local_credentials c ON c.user_id = u.id JOIN audit_events a ON a.organization_id = o.id AND a.project_id = p.id AND a.actor_id = u.id AND a.action = 'admin.bootstrap' WHERE o.slug = 'default' ORDER BY a.occurred_at ASC LIMIT 1",
+    )
+    .fetch_optional(connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    row.as_ref().map(existing_from_postgres).transpose()
+}
+
+async fn existing_bootstrap_sqlite(
+    connection: &mut SqliteConnection,
+) -> Result<Option<ExistingBootstrap>, RepositoryError> {
+    let row = sqlx::query(
+        "SELECT o.id AS organization_id, o.slug AS organization_slug, o.name AS organization_name, o.created_at AS organization_created_at, o.updated_at AS organization_updated_at, o.version AS organization_version, p.id AS project_id, p.slug AS project_slug, p.name AS project_name, p.default_timezone, p.created_at AS project_created_at, p.updated_at AS project_updated_at, p.version AS project_version, u.id AS user_id, u.normalized_username, u.display_name, u.created_at AS user_created_at, u.updated_at AS user_updated_at, u.version AS user_version, c.password_hash, m.id AS membership_id, m.role, m.created_at AS membership_created_at, m.updated_at AS membership_updated_at, m.version AS membership_version, a.id AS audit_id, a.actor_type, a.actor_id, a.action, a.resource_type, a.resource_id, a.request_id, a.metadata, a.occurred_at FROM organizations o JOIN projects p ON p.organization_id = o.id AND p.slug = 'default' JOIN memberships m ON m.organization_id = o.id AND m.project_id IS NULL AND m.role = 'owner' JOIN users u ON u.id = m.user_id JOIN local_credentials c ON c.user_id = u.id JOIN audit_events a ON a.organization_id = o.id AND a.project_id = p.id AND a.actor_id = u.id AND a.action = 'admin.bootstrap' WHERE o.slug = 'default' ORDER BY a.occurred_at ASC LIMIT 1",
+    )
+    .fetch_optional(connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    row.as_ref().map(existing_from_sqlite).transpose()
+}
+
+async fn insert_bootstrap_postgres(
+    connection: &mut PgConnection,
+    plan: &BootstrapPlan,
+) -> Result<(), RepositoryError> {
+    let now = postgres_time(plan.organization.now)?;
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $4, 1)",
+    )
+    .bind(plan.organization.id.as_uuid())
+    .bind(&plan.organization.slug)
+    .bind(&plan.organization.name)
+    .bind(now)
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO projects (id, organization_id, slug, name, default_timezone, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $6, 1)",
+    )
+    .bind(plan.project.id.as_uuid())
+    .bind(plan.project.organization_id.as_uuid())
+    .bind(&plan.project.slug)
+    .bind(&plan.project.name)
+    .bind(&plan.project.default_timezone)
+    .bind(postgres_time(plan.project.now)?)
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO users (id, normalized_username, display_name, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $4, 1)",
+    )
+    .bind(plan.user.id.as_uuid())
+    .bind(&plan.user.normalized_username)
+    .bind(&plan.user.display_name)
+    .bind(postgres_time(plan.user.now)?)
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO local_credentials (user_id, password_hash, created_at, updated_at, version) VALUES ($1, $2, $3, $3, 1)",
+    )
+    .bind(plan.user.id.as_uuid())
+    .bind(plan.user.password_hash.expose_for_persistence())
+    .bind(postgres_time(plan.user.now)?)
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO memberships (id, organization_id, project_id, user_id, role, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $6, 1)",
+    )
+    .bind(plan.membership.id.as_uuid())
+    .bind(plan.membership.organization_id.as_uuid())
+    .bind(plan.membership.project_id.map(ProjectId::as_uuid))
+    .bind(plan.membership.user_id.as_uuid())
+    .bind(plan.membership.role.as_str())
+    .bind(postgres_time(plan.membership.now)?)
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    let audit = &plan.audit_event.event;
+    sqlx::query(
+        "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+    )
+    .bind(audit.id.as_uuid())
+    .bind(audit.organization_id.as_uuid())
+    .bind(audit.project_id.map(ProjectId::as_uuid))
+    .bind(audit.actor_type.as_str())
+    .bind(audit.actor_id.map(UserId::as_uuid))
+    .bind(&audit.action)
+    .bind(&audit.resource_type)
+    .bind(audit.resource_id.as_uuid())
+    .bind(audit.request_id.as_uuid())
+    .bind(audit_metadata_json(&audit.metadata))
+    .bind(postgres_time(audit.occurred_at)?)
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+async fn insert_bootstrap_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &BootstrapPlan,
+) -> Result<(), RepositoryError> {
+    sqlx::query(
+        "INSERT INTO organizations (id, slug, name, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?4, 1)",
+    )
+    .bind(plan.organization.id.to_string())
+    .bind(&plan.organization.slug)
+    .bind(&plan.organization.name)
+    .bind(plan.organization.now.unix_micros())
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO projects (id, organization_id, slug, name, default_timezone, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1)",
+    )
+    .bind(plan.project.id.to_string())
+    .bind(plan.project.organization_id.to_string())
+    .bind(&plan.project.slug)
+    .bind(&plan.project.name)
+    .bind(&plan.project.default_timezone)
+    .bind(plan.project.now.unix_micros())
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO users (id, normalized_username, display_name, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?4, 1)",
+    )
+    .bind(plan.user.id.to_string())
+    .bind(&plan.user.normalized_username)
+    .bind(&plan.user.display_name)
+    .bind(plan.user.now.unix_micros())
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO local_credentials (user_id, password_hash, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?3, 1)",
+    )
+    .bind(plan.user.id.to_string())
+    .bind(plan.user.password_hash.expose_for_persistence())
+    .bind(plan.user.now.unix_micros())
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    sqlx::query(
+        "INSERT INTO memberships (id, organization_id, project_id, user_id, role, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1)",
+    )
+    .bind(plan.membership.id.to_string())
+    .bind(plan.membership.organization_id.to_string())
+    .bind(plan.membership.project_id.map(|id| id.to_string()))
+    .bind(plan.membership.user_id.to_string())
+    .bind(plan.membership.role.as_str())
+    .bind(plan.membership.now.unix_micros())
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    let audit = &plan.audit_event.event;
+    sqlx::query(
+        "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    )
+    .bind(audit.id.to_string())
+    .bind(audit.organization_id.to_string())
+    .bind(audit.project_id.map(|id| id.to_string()))
+    .bind(audit.actor_type.as_str())
+    .bind(audit.actor_id.map(|id| id.to_string()))
+    .bind(&audit.action)
+    .bind(&audit.resource_type)
+    .bind(audit.resource_id.to_string())
+    .bind(audit.request_id.to_string())
+    .bind(audit_metadata_json(&audit.metadata).to_string())
+    .bind(audit.occurred_at.unix_micros())
+    .execute(&mut *connection)
+    .await
+    .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+fn resources_from_plan(plan: &BootstrapPlan) -> BootstrapResources {
+    BootstrapResources {
+        organization: Organization {
+            id: plan.organization.id,
+            slug: plan.organization.slug.clone(),
+            name: plan.organization.name.clone(),
+            created_at: plan.organization.now,
+            updated_at: plan.organization.now,
+            version: 1,
+        },
+        project: Project {
+            id: plan.project.id,
+            organization_id: plan.project.organization_id,
+            slug: plan.project.slug.clone(),
+            name: plan.project.name.clone(),
+            default_timezone: plan.project.default_timezone.clone(),
+            created_at: plan.project.now,
+            updated_at: plan.project.now,
+            version: 1,
+        },
+        user: LocalUser {
+            id: plan.user.id,
+            normalized_username: plan.user.normalized_username.clone(),
+            display_name: plan.user.display_name.clone(),
+            created_at: plan.user.now,
+            updated_at: plan.user.now,
+            version: 1,
+        },
+        membership: Membership {
+            id: plan.membership.id,
+            organization_id: plan.membership.organization_id,
+            project_id: plan.membership.project_id,
+            user_id: plan.membership.user_id,
+            role: plan.membership.role,
+            created_at: plan.membership.now,
+            updated_at: plan.membership.now,
+            version: 1,
+        },
+        audit_event: plan.audit_event.event.clone(),
+    }
+}
+
+fn existing_from_postgres(row: &PgRow) -> Result<ExistingBootstrap, RepositoryError> {
+    let organization_id =
+        OrganizationId::from_uuid(row.try_get("organization_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let project_id = ProjectId::from_uuid(row.try_get("project_id").map_err(map_sqlx_error)?)
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let user_id = UserId::from_uuid(row.try_get("user_id").map_err(map_sqlx_error)?)
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let membership_id =
+        MembershipId::from_uuid(row.try_get("membership_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let audit_id = AuditEventId::from_uuid(row.try_get("audit_id").map_err(map_sqlx_error)?)
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let resource_id = ResourceId::from_uuid(row.try_get("resource_id").map_err(map_sqlx_error)?)
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let request_id = OperationId::from_uuid(row.try_get("request_id").map_err(map_sqlx_error)?)
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let actor_id = row
+        .try_get::<Option<uuid::Uuid>, _>("actor_id")
+        .map_err(map_sqlx_error)?
+        .map(UserId::from_uuid)
+        .transpose()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let resources = BootstrapResources {
+        organization: Organization {
+            id: organization_id,
+            slug: row.try_get("organization_slug").map_err(map_sqlx_error)?,
+            name: row.try_get("organization_name").map_err(map_sqlx_error)?,
+            created_at: timestamp_from_postgres(row, "organization_created_at")?,
+            updated_at: timestamp_from_postgres(row, "organization_updated_at")?,
+            version: row
+                .try_get("organization_version")
+                .map_err(map_sqlx_error)?,
+        },
+        project: Project {
+            id: project_id,
+            organization_id,
+            slug: row.try_get("project_slug").map_err(map_sqlx_error)?,
+            name: row.try_get("project_name").map_err(map_sqlx_error)?,
+            default_timezone: row.try_get("default_timezone").map_err(map_sqlx_error)?,
+            created_at: timestamp_from_postgres(row, "project_created_at")?,
+            updated_at: timestamp_from_postgres(row, "project_updated_at")?,
+            version: row.try_get("project_version").map_err(map_sqlx_error)?,
+        },
+        user: LocalUser {
+            id: user_id,
+            normalized_username: row.try_get("normalized_username").map_err(map_sqlx_error)?,
+            display_name: row.try_get("display_name").map_err(map_sqlx_error)?,
+            created_at: timestamp_from_postgres(row, "user_created_at")?,
+            updated_at: timestamp_from_postgres(row, "user_updated_at")?,
+            version: row.try_get("user_version").map_err(map_sqlx_error)?,
+        },
+        membership: Membership {
+            id: membership_id,
+            organization_id,
+            project_id: None,
+            user_id,
+            role: Role::from_str(row.try_get::<&str, _>("role").map_err(map_sqlx_error)?)
+                .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+            created_at: timestamp_from_postgres(row, "membership_created_at")?,
+            updated_at: timestamp_from_postgres(row, "membership_updated_at")?,
+            version: row.try_get("membership_version").map_err(map_sqlx_error)?,
+        },
+        audit_event: AuditEvent {
+            id: audit_id,
+            organization_id,
+            project_id: Some(project_id),
+            actor_type: parse_actor_type(row.try_get("actor_type").map_err(map_sqlx_error)?)?,
+            actor_id,
+            action: row.try_get("action").map_err(map_sqlx_error)?,
+            resource_type: row.try_get("resource_type").map_err(map_sqlx_error)?,
+            resource_id,
+            request_id,
+            metadata: parse_audit_metadata(&row.try_get("metadata").map_err(map_sqlx_error)?)?,
+            occurred_at: timestamp_from_postgres(row, "occurred_at")?,
+        },
+    };
+    let password_hash =
+        PasswordHash::from_persistence(row.try_get("password_hash").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    Ok(ExistingBootstrap {
+        resources,
+        password_hash,
+    })
+}
+
+fn existing_from_sqlite(row: &SqliteRow) -> Result<ExistingBootstrap, RepositoryError> {
+    let organization_id = parse_id::<OrganizationId>(row, "organization_id")?;
+    let project_id = parse_id::<ProjectId>(row, "project_id")?;
+    let user_id = parse_id::<UserId>(row, "user_id")?;
+    let membership_id = parse_id::<MembershipId>(row, "membership_id")?;
+    let audit_id = parse_id::<AuditEventId>(row, "audit_id")?;
+    let resource_id = parse_id::<ResourceId>(row, "resource_id")?;
+    let request_id = parse_id::<OperationId>(row, "request_id")?;
+    let actor_id = parse_optional_id::<UserId>(row, "actor_id")?;
+    let metadata_text: String = row.try_get("metadata").map_err(map_sqlx_error)?;
+    let metadata_value =
+        serde_json::from_str(&metadata_text).map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    let resources = BootstrapResources {
+        organization: Organization {
+            id: organization_id,
+            slug: row.try_get("organization_slug").map_err(map_sqlx_error)?,
+            name: row.try_get("organization_name").map_err(map_sqlx_error)?,
+            created_at: timestamp_from_sqlite(row, "organization_created_at")?,
+            updated_at: timestamp_from_sqlite(row, "organization_updated_at")?,
+            version: row
+                .try_get("organization_version")
+                .map_err(map_sqlx_error)?,
+        },
+        project: Project {
+            id: project_id,
+            organization_id,
+            slug: row.try_get("project_slug").map_err(map_sqlx_error)?,
+            name: row.try_get("project_name").map_err(map_sqlx_error)?,
+            default_timezone: row.try_get("default_timezone").map_err(map_sqlx_error)?,
+            created_at: timestamp_from_sqlite(row, "project_created_at")?,
+            updated_at: timestamp_from_sqlite(row, "project_updated_at")?,
+            version: row.try_get("project_version").map_err(map_sqlx_error)?,
+        },
+        user: LocalUser {
+            id: user_id,
+            normalized_username: row.try_get("normalized_username").map_err(map_sqlx_error)?,
+            display_name: row.try_get("display_name").map_err(map_sqlx_error)?,
+            created_at: timestamp_from_sqlite(row, "user_created_at")?,
+            updated_at: timestamp_from_sqlite(row, "user_updated_at")?,
+            version: row.try_get("user_version").map_err(map_sqlx_error)?,
+        },
+        membership: Membership {
+            id: membership_id,
+            organization_id,
+            project_id: None,
+            user_id,
+            role: Role::from_str(row.try_get::<&str, _>("role").map_err(map_sqlx_error)?)
+                .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+            created_at: timestamp_from_sqlite(row, "membership_created_at")?,
+            updated_at: timestamp_from_sqlite(row, "membership_updated_at")?,
+            version: row.try_get("membership_version").map_err(map_sqlx_error)?,
+        },
+        audit_event: AuditEvent {
+            id: audit_id,
+            organization_id,
+            project_id: Some(project_id),
+            actor_type: parse_actor_type(row.try_get("actor_type").map_err(map_sqlx_error)?)?,
+            actor_id,
+            action: row.try_get("action").map_err(map_sqlx_error)?,
+            resource_type: row.try_get("resource_type").map_err(map_sqlx_error)?,
+            resource_id,
+            request_id,
+            metadata: parse_audit_metadata(&metadata_value)?,
+            occurred_at: timestamp_from_sqlite(row, "occurred_at")?,
+        },
+    };
+    let password_hash =
+        PasswordHash::from_persistence(row.try_get("password_hash").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    Ok(ExistingBootstrap {
+        resources,
+        password_hash,
+    })
+}
+
+fn organization_from_postgres(row: &PgRow) -> Result<Organization, RepositoryError> {
+    Ok(Organization {
+        id: OrganizationId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        slug: row.try_get("slug").map_err(map_sqlx_error)?,
+        name: row.try_get("name").map_err(map_sqlx_error)?,
+        created_at: timestamp_from_postgres(row, "created_at")?,
+        updated_at: timestamp_from_postgres(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn organization_from_sqlite(row: &SqliteRow) -> Result<Organization, RepositoryError> {
+    Ok(Organization {
+        id: parse_id(row, "id")?,
+        slug: row.try_get("slug").map_err(map_sqlx_error)?,
+        name: row.try_get("name").map_err(map_sqlx_error)?,
+        created_at: timestamp_from_sqlite(row, "created_at")?,
+        updated_at: timestamp_from_sqlite(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn project_from_postgres(row: &PgRow) -> Result<Project, RepositoryError> {
+    Ok(Project {
+        id: ProjectId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        organization_id: OrganizationId::from_uuid(
+            row.try_get("organization_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        slug: row.try_get("slug").map_err(map_sqlx_error)?,
+        name: row.try_get("name").map_err(map_sqlx_error)?,
+        default_timezone: row.try_get("default_timezone").map_err(map_sqlx_error)?,
+        created_at: timestamp_from_postgres(row, "created_at")?,
+        updated_at: timestamp_from_postgres(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn project_from_sqlite(row: &SqliteRow) -> Result<Project, RepositoryError> {
+    Ok(Project {
+        id: parse_id(row, "id")?,
+        organization_id: parse_id(row, "organization_id")?,
+        slug: row.try_get("slug").map_err(map_sqlx_error)?,
+        name: row.try_get("name").map_err(map_sqlx_error)?,
+        default_timezone: row.try_get("default_timezone").map_err(map_sqlx_error)?,
+        created_at: timestamp_from_sqlite(row, "created_at")?,
+        updated_at: timestamp_from_sqlite(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn local_user_from_postgres(row: &PgRow) -> Result<LocalUser, RepositoryError> {
+    Ok(LocalUser {
+        id: UserId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        normalized_username: row.try_get("normalized_username").map_err(map_sqlx_error)?,
+        display_name: row.try_get("display_name").map_err(map_sqlx_error)?,
+        created_at: timestamp_from_postgres(row, "created_at")?,
+        updated_at: timestamp_from_postgres(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn local_user_from_sqlite(row: &SqliteRow) -> Result<LocalUser, RepositoryError> {
+    Ok(LocalUser {
+        id: parse_id(row, "id")?,
+        normalized_username: row.try_get("normalized_username").map_err(map_sqlx_error)?,
+        display_name: row.try_get("display_name").map_err(map_sqlx_error)?,
+        created_at: timestamp_from_sqlite(row, "created_at")?,
+        updated_at: timestamp_from_sqlite(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn membership_from_postgres(row: &PgRow) -> Result<Membership, RepositoryError> {
+    Ok(Membership {
+        id: MembershipId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        organization_id: OrganizationId::from_uuid(
+            row.try_get("organization_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        project_id: row
+            .try_get::<Option<uuid::Uuid>, _>("project_id")
+            .map_err(map_sqlx_error)?
+            .map(ProjectId::from_uuid)
+            .transpose()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        user_id: UserId::from_uuid(row.try_get("user_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        role: Role::from_str(row.try_get::<&str, _>("role").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        created_at: timestamp_from_postgres(row, "created_at")?,
+        updated_at: timestamp_from_postgres(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn membership_from_sqlite(row: &SqliteRow) -> Result<Membership, RepositoryError> {
+    Ok(Membership {
+        id: parse_id(row, "id")?,
+        organization_id: parse_id(row, "organization_id")?,
+        project_id: parse_optional_id(row, "project_id")?,
+        user_id: parse_id(row, "user_id")?,
+        role: Role::from_str(row.try_get::<&str, _>("role").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        created_at: timestamp_from_sqlite(row, "created_at")?,
+        updated_at: timestamp_from_sqlite(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn audit_from_postgres(row: &PgRow) -> Result<AuditEvent, RepositoryError> {
+    let metadata: Value = row.try_get("metadata").map_err(map_sqlx_error)?;
+    Ok(AuditEvent {
+        id: AuditEventId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        organization_id: OrganizationId::from_uuid(
+            row.try_get("organization_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        project_id: row
+            .try_get::<Option<uuid::Uuid>, _>("project_id")
+            .map_err(map_sqlx_error)?
+            .map(ProjectId::from_uuid)
+            .transpose()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        actor_type: parse_actor_type(row.try_get("actor_type").map_err(map_sqlx_error)?)?,
+        actor_id: row
+            .try_get::<Option<uuid::Uuid>, _>("actor_id")
+            .map_err(map_sqlx_error)?
+            .map(UserId::from_uuid)
+            .transpose()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        action: row.try_get("action").map_err(map_sqlx_error)?,
+        resource_type: row.try_get("resource_type").map_err(map_sqlx_error)?,
+        resource_id: ResourceId::from_uuid(row.try_get("resource_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        request_id: OperationId::from_uuid(row.try_get("request_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        metadata: parse_audit_metadata(&metadata)?,
+        occurred_at: timestamp_from_postgres(row, "occurred_at")?,
+    })
+}
+
+fn audit_from_sqlite(row: &SqliteRow) -> Result<AuditEvent, RepositoryError> {
+    let metadata_text: String = row.try_get("metadata").map_err(map_sqlx_error)?;
+    let metadata =
+        serde_json::from_str(&metadata_text).map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    Ok(AuditEvent {
+        id: parse_id(row, "id")?,
+        organization_id: parse_id(row, "organization_id")?,
+        project_id: parse_optional_id(row, "project_id")?,
+        actor_type: parse_actor_type(row.try_get("actor_type").map_err(map_sqlx_error)?)?,
+        actor_id: parse_optional_id(row, "actor_id")?,
+        action: row.try_get("action").map_err(map_sqlx_error)?,
+        resource_type: row.try_get("resource_type").map_err(map_sqlx_error)?,
+        resource_id: parse_id(row, "resource_id")?,
+        request_id: parse_id(row, "request_id")?,
+        metadata: parse_audit_metadata(&metadata)?,
+        occurred_at: timestamp_from_sqlite(row, "occurred_at")?,
+    })
+}
+
+fn parse_id<T>(row: &SqliteRow, column: &str) -> Result<T, RepositoryError>
+where
+    T: FromStr,
+{
+    row.try_get::<String, _>(column)
+        .map_err(map_sqlx_error)?
+        .parse()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)
+}
+
+fn parse_optional_id<T>(row: &SqliteRow, column: &str) -> Result<Option<T>, RepositoryError>
+where
+    T: FromStr,
+{
+    row.try_get::<Option<String>, _>(column)
+        .map_err(map_sqlx_error)?
+        .map(|value| {
+            value
+                .parse()
+                .map_err(|_| RepositoryError::UnknownInfrastructure)
+        })
+        .transpose()
+}
+
+fn postgres_time(timestamp: UtcTimestamp) -> Result<OffsetDateTime, RepositoryError> {
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp.unix_micros()) * 1_000)
+        .map_err(|_| RepositoryError::ConstraintViolation)
+}
+
+fn timestamp_from_postgres(row: &PgRow, column: &str) -> Result<UtcTimestamp, RepositoryError> {
+    let timestamp: OffsetDateTime = row.try_get(column).map_err(map_sqlx_error)?;
+    let micros = timestamp.unix_timestamp_nanos() / 1_000;
+    i64::try_from(micros)
+        .map(UtcTimestamp::from_unix_micros)
+        .map_err(|_| RepositoryError::UnknownInfrastructure)
+}
+
+fn timestamp_from_sqlite(row: &SqliteRow, column: &str) -> Result<UtcTimestamp, RepositoryError> {
+    row.try_get(column)
+        .map(UtcTimestamp::from_unix_micros)
+        .map_err(map_sqlx_error)
+}
+
+fn parse_actor_type(value: &str) -> Result<AuditActorType, RepositoryError> {
+    match value {
+        "system" => Ok(AuditActorType::System),
+        "local_cli" => Ok(AuditActorType::LocalCli),
+        _ => Err(RepositoryError::UnknownInfrastructure),
+    }
+}
+
+fn audit_metadata_json(metadata: &BootstrapAuditMetadata) -> Value {
+    json!({
+        "organization_id": metadata.organization_id.to_string(),
+        "project_id": metadata.project_id.to_string(),
+        "user_id": metadata.user_id.to_string(),
+        "membership_id": metadata.membership_id.to_string(),
+        "redacted": true
+    })
+}
+
+fn parse_audit_metadata(value: &Value) -> Result<BootstrapAuditMetadata, RepositoryError> {
+    Ok(BootstrapAuditMetadata {
+        organization_id: parse_json_id(value, "organization_id")?,
+        project_id: parse_json_id(value, "project_id")?,
+        user_id: parse_json_id(value, "user_id")?,
+        membership_id: parse_json_id(value, "membership_id")?,
+    })
+}
+
+fn parse_json_id<T>(value: &Value, key: &str) -> Result<T, RepositoryError>
+where
+    T: FromStr,
+{
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or(RepositoryError::UnknownInfrastructure)?
+        .parse()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)
+}
+
+fn map_sqlx_error(error: sqlx::Error) -> RepositoryError {
+    match error {
+        sqlx::Error::RowNotFound => RepositoryError::NotFound,
+        sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed
+        | sqlx::Error::Io(_)
+        | sqlx::Error::Tls(_) => RepositoryError::DatabaseUnavailable,
+        sqlx::Error::Database(database_error) if database_error.is_unique_violation() => {
+            RepositoryError::AlreadyExists
+        }
+        sqlx::Error::Database(database_error)
+            if database_error.is_foreign_key_violation() || database_error.is_check_violation() =>
+        {
+            RepositoryError::ConstraintViolation
+        }
+        _ => RepositoryError::UnknownInfrastructure,
+    }
+}

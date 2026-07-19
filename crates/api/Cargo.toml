@@ -7,9 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 axum.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

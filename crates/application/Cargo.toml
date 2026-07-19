@@ -1,0 +1,14 @@
+[package]
+name = "takt-application"
+description = "Application services and persistence ports for Takt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+argon2.workspace = true
+async-trait.workspace = true
+takt-domain = { path = "../domain", version = "=0.0.0" }
+uuid.workspace = true
+zeroize.workspace = true

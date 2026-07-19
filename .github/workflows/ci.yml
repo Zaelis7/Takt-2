@@ -9,9 +9,24 @@ permissions:
 
 jobs:
   quality:
-    name: Bootstrap quality gates
+    name: Persistence milestone quality gates
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      TAKT_TEST_POSTGRES_URL: postgresql://postgres@127.0.0.1:5432/takt_test
+    services:
+      postgres:
+        image: postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7
+        env:
+          POSTGRES_DB: takt_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname takt_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -47,6 +62,7 @@ jobs:
         run: |
           pnpm check:architecture
           pnpm check:generated
+          pnpm check:secrets
 
       - name: Test repository tools
         run: pnpm test:tools

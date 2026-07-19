@@ -19,6 +19,14 @@ rejected if they enter the production dependency graph.
 | UUID 1.24.0 | Typed domain parsing and UUIDv7 request IDs | MIT OR Apache-2.0 | Generation stays outside the domain; another ID source can be injected later. |
 | rust-embed 8.12.0 | Embed the reproducible Vite output in the server binary | MIT | Adds compile-time macros but no service; can be replaced by generated `include_bytes!` mappings. |
 | Prost 0.14.4 | Rust message types for the normative Proto contract | Apache-2.0 | Contracted stack; wire format remains protobuf if generation changes. |
+| SQLx 0.9.0 | Contracted PostgreSQL/SQLite pools, bound queries and embedded forward migrations | MIT OR Apache-2.0 | Actively maintained LaunchBadge project; PostgreSQL and SQLite features increase the server dependency graph substantially, but avoid a second ORM or engine-specific domain layer. Runtime bound queries avoid an offline `.sqlx` cache; replaceable behind application repository ports. |
+| Argon2 0.5.3 | Argon2id PHC hashing and verification for local credentials | MIT OR Apache-2.0 | Maintained RustCrypto implementation; central parameters isolate recalibration or a future audited password-hash implementation. Adds cryptographic hashing code but no service. |
+| Clap 4.6.2 | Non-interactive server/admin CLI parsing with explicit flags and help | MIT OR Apache-2.0 | Actively maintained standard Rust CLI parser; prevents hand-written argument ambiguity. Derive macros add build-time code and can be replaced without changing application ports. |
+| async-trait 0.1.91 | Object-safe async application/readiness ports | MIT OR Apache-2.0 | Small, mature proc-macro dependency; replaceable with boxed futures if native object-safe async traits become available. |
+| Serde JSON 1.0.150 | Redacted audit metadata and machine-readable CLI output | MIT OR Apache-2.0 | Paired with the existing Serde boundary; JSON representation is already required by the product contracts. |
+| time 0.3.53 | Exact UTC microsecond conversion for PostgreSQL `TIMESTAMPTZ(6)` | MIT OR Apache-2.0 | Actively maintained; isolated to the SQL adapter while the domain retains its framework-free UTC timestamp type. |
+| tracing 0.1.44 / tracing-subscriber 0.3.23 | Structured, redacted readiness and server diagnostics | MIT | Tokio ecosystem standard; JSON formatting adds modest server code and can be swapped at the process boundary. |
+| zeroize 1.8.2 | Clear password/hash/database-URL allocations on drop | Apache-2.0 OR MIT | RustCrypto-adjacent, mature primitive; defense in depth because allocator copies cannot be universally guaranteed. |
 
 ## Rust build and repository tooling
 
@@ -28,10 +36,9 @@ rejected if they enter the production dependency graph.
 | protox 0.9.1 | Pure-Rust Proto compiler, avoiding a host `protoc` dependency | MIT OR Apache-2.0 | Used only by `xtask`; vendored `protoc` is the fallback. |
 | tempfile 3.27.0 | Isolated drift-generation directories with automatic cleanup | MIT OR Apache-2.0 | Used only by `xtask`; a manually managed OS temp directory is the fallback. |
 
-`cargo deny` reports a small set of duplicate transitive versions inside the
-Proto code-generation toolchain (`hashbrown`, `logos`, `logos-codegen`,
-`logos-derive`, and `syn`). They are build tooling only; licenses and advisories
-pass. They remain warnings so upstream-compatible versions are not forced.
+`cargo deny` may report duplicate transitive versions in the Proto generator and
+dual-database SQLx graph. They remain warnings only where licenses, advisories
+and sources pass; incompatible upstream versions are not forced together.
 
 ## Web runtime dependencies
 

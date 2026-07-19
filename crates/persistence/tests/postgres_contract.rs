@@ -1,0 +1,161 @@
+#![forbid(unsafe_code)]
+
+mod common;
+
+use std::{env, error::Error, io};
+
+use sqlx::{PgPool, Row};
+use takt_application::{Argon2idConfig, BootstrapService, BootstrapStatus, PasswordHasher};
+use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
+
+use common::{FixedClock, SequenceIds, TEST_PASSWORD};
+
+fn test_url() -> Result<String, Box<dyn Error>> {
+    env::var("TAKT_TEST_POSTGRES_URL").map_err(|_| {
+        io::Error::other(
+            "TAKT_TEST_POSTGRES_URL is required for the real PostgreSQL contract suite",
+        )
+        .into()
+    })
+}
+
+async fn reset_test_database(url: &str) -> Result<(), Box<dyn Error>> {
+    let pool = PgPool::connect(url).await?;
+    let database_name: String = sqlx::query("SELECT current_database() AS database_name")
+        .fetch_one(&pool)
+        .await?
+        .try_get("database_name")?;
+    if !database_name.starts_with("takt_test") {
+        return Err(io::Error::other(
+            "refusing to reset a PostgreSQL database whose name does not start with 'takt_test'",
+        )
+        .into());
+    }
+    sqlx::query("DROP SCHEMA public CASCADE")
+        .execute(&pool)
+        .await?;
+    sqlx::query("CREATE SCHEMA public").execute(&pool).await?;
+    pool.close().await;
+    Ok(())
+}
+
+async fn connect(url: &str) -> Result<Database, Box<dyn Error>> {
+    let config = DatabaseConfig::postgresql_for_test(url.to_owned())?;
+    Ok(Database::connect(&config).await?)
+}
+
+// PRD-NFR-002 / PRD-IAM-001: this test requires a real PostgreSQL 16+ service;
+// it is intentionally not skipped when the service configuration is absent.
+#[tokio::test]
+async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), Box<dyn Error>> {
+    let url = test_url()?;
+    reset_test_database(&url).await?;
+    let database = connect(&url).await?;
+    assert_eq!(
+        database.schema_status().await?,
+        SchemaStatus::MigrationRequired { found: 0 }
+    );
+    database.migrate().await?;
+    database.migrate().await?;
+    let raw = PgPool::connect(&url).await?;
+    let server_version: i64 = sqlx::query("SHOW server_version_num")
+        .fetch_one(&raw)
+        .await?
+        .try_get::<String, _>(0)?
+        .parse()?;
+    assert!(server_version >= 160_000);
+    common::run_repository_contract(&SqlxRepository::new(database.clone())).await?;
+    let audit_id = common::resource_id(5)?;
+    assert!(
+        sqlx::query("UPDATE audit_events SET action = 'mutated' WHERE id = $1")
+            .bind(audit_id.as_uuid())
+            .execute(&raw)
+            .await
+            .is_err(),
+        "audit rows must be immutable in PostgreSQL"
+    );
+    raw.close().await;
+
+    let (url_prefix, _) = url
+        .rsplit_once('/')
+        .ok_or_else(|| io::Error::other("PostgreSQL test URL has no database segment"))?;
+    let admin = PgPool::connect(&format!("{url_prefix}/postgres")).await?;
+    sqlx::query("ALTER DATABASE takt_test WITH ALLOW_CONNECTIONS false")
+        .execute(&admin)
+        .await?;
+    sqlx::query(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'takt_test' AND pid <> pg_backend_pid()",
+    )
+    .execute(&admin)
+    .await?;
+    let outage_readiness = database.readiness().await;
+    sqlx::query("ALTER DATABASE takt_test WITH ALLOW_CONNECTIONS true")
+        .execute(&admin)
+        .await?;
+    admin.close().await;
+    assert_eq!(outage_readiness, Err(ReadinessError::DatabaseUnavailable));
+    database.close().await?;
+
+    reset_test_database(&url).await?;
+    let database = connect(&url).await?;
+    database.migrate().await?;
+    let repository = SqlxRepository::new(database.clone());
+    common::run_bootstrap_contract(&repository).await?;
+    let raw = PgPool::connect(&url).await?;
+    let credential: String = sqlx::query("SELECT password_hash FROM local_credentials")
+        .fetch_one(&raw)
+        .await?
+        .try_get("password_hash")?;
+    assert!(credential.starts_with("$argon2id$"));
+    assert!(!credential.contains(TEST_PASSWORD));
+    let metadata: serde_json::Value = sqlx::query("SELECT metadata FROM audit_events")
+        .fetch_one(&raw)
+        .await?
+        .try_get("metadata")?;
+    assert!(!metadata.to_string().contains(TEST_PASSWORD));
+    assert!(!metadata.to_string().contains("argon2"));
+    raw.close().await;
+    database.close().await?;
+
+    reset_test_database(&url).await?;
+    let database = connect(&url).await?;
+    database.migrate().await?;
+    let repository = SqlxRepository::new(database.clone());
+    let hasher = PasswordHasher::new(Argon2idConfig::testing());
+    let clock = FixedClock;
+    let ids = SequenceIds::new(10_000);
+    let service = BootstrapService::new(&repository, &hasher, &clock, &ids);
+    let (left, right) = tokio::join!(
+        service.execute("admin", TEST_PASSWORD),
+        service.execute("admin", TEST_PASSWORD)
+    );
+    let left = left?;
+    let right = right?;
+    assert!(matches!(
+        (left.status, right.status),
+        (BootstrapStatus::Created, BootstrapStatus::AlreadyPresent)
+            | (BootstrapStatus::AlreadyPresent, BootstrapStatus::Created)
+    ));
+    let raw = PgPool::connect(&url).await?;
+    assert_eq!(
+        sqlx::query("SELECT COUNT(*) AS count FROM users")
+            .fetch_one(&raw)
+            .await?
+            .try_get::<i64, _>("count")?,
+        1
+    );
+    sqlx::query("UPDATE _sqlx_migrations SET version = 2 WHERE version = 1")
+        .execute(&raw)
+        .await?;
+    assert_eq!(
+        database.schema_status().await?,
+        SchemaStatus::TooNew {
+            found: 2,
+            supported: 1
+        }
+    );
+    assert!(database.migrate().await.is_err());
+    raw.close().await;
+    database.close().await?;
+    Ok(())
+}

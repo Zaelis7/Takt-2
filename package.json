@@ -11,6 +11,7 @@
     "build": "pnpm --dir web build",
     "check:architecture": "node tools/check-architecture.mjs",
     "check:generated": "node tools/openapi-types.mjs check && cargo run --locked -p xtask -- check-proto && node tools/check-web-dist.mjs",
+    "check:secrets": "node tools/scan-secrets.mjs",
     "contracts:gherkin": "node tools/validate-gherkin.mjs",
     "contracts:openapi": "redocly lint specs/contracts/openapi.yaml",
     "contracts:proto": "cargo run --locked -p xtask -- check-proto",

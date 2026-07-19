@@ -1,9 +1,15 @@
 #![forbid(unsafe_code)]
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
+use async_trait::async_trait;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{OriginalUri, Request},
+    extract::{OriginalUri, Request, State},
     http::{
         HeaderName, HeaderValue, StatusCode,
         header::{CACHE_CONTROL, CONTENT_TYPE},
@@ -24,6 +30,12 @@ const REQUEST_ID_HEADER: &str = "x-request-id";
 #[folder = "../../web/dist/"]
 struct WebAssets;
 
+#[derive(Clone)]
+struct ApiState {
+    readiness: Arc<dyn ReadinessCheck>,
+    health_metrics: Arc<HealthMetrics>,
+}
+
 #[derive(Serialize)]
 struct Health {
     status: HealthStatus,
@@ -35,25 +47,134 @@ enum HealthStatus {
     Ok,
 }
 
-/// Builds the complete HTTP router for the bootstrap server.
-///
-/// Readiness is healthy once this router is serving because this milestone has
-/// no database, worker, key, or other external dependency to evaluate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadinessFailure {
+    DatabaseUnavailable,
+    MigrationInProgress,
+    SchemaNotReady,
+}
+
+impl ReadinessFailure {
+    #[must_use]
+    pub const fn event_code(self) -> &'static str {
+        match self {
+            Self::DatabaseUnavailable => "database_unavailable",
+            Self::MigrationInProgress => "database_migration_in_progress",
+            Self::SchemaNotReady => "database_schema_not_ready",
+        }
+    }
+
+    const fn metric_index(self) -> usize {
+        match self {
+            Self::DatabaseUnavailable => 0,
+            Self::MigrationInProgress => 1,
+            Self::SchemaNotReady => 2,
+        }
+    }
+}
+
+#[async_trait]
+pub trait ReadinessCheck: Send + Sync {
+    async fn check(&self) -> Result<(), ReadinessFailure>;
+}
+
+#[derive(Default)]
+pub struct HealthMetrics {
+    readiness_failures: [AtomicU64; 3],
+}
+
+impl HealthMetrics {
+    fn record_readiness_failure(&self, failure: ReadinessFailure) {
+        self.readiness_failures[failure.metric_index()].fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn readiness_failure_count(&self, failure: ReadinessFailure) -> u64 {
+        self.readiness_failures[failure.metric_index()].load(Ordering::Relaxed)
+    }
+}
+
+struct AlwaysReady;
+
+#[async_trait]
+impl ReadinessCheck for AlwaysReady {
+    async fn check(&self) -> Result<(), ReadinessFailure> {
+        Ok(())
+    }
+}
+
 pub fn router() -> Router {
+    router_with_readiness(Arc::new(AlwaysReady), Arc::new(HealthMetrics::default()))
+}
+
+/// Builds the HTTP router with an injected dependency readiness check.
+pub fn router_with_readiness(
+    readiness: Arc<dyn ReadinessCheck>,
+    health_metrics: Arc<HealthMetrics>,
+) -> Router {
     Router::new()
-        .route("/health/live", get(health))
-        .route("/health/ready", get(health))
+        .route("/health/live", get(liveness))
+        .route("/health/ready", get(readiness_handler))
         .fallback(serve_web_asset)
+        .with_state(ApiState {
+            readiness,
+            health_metrics,
+        })
         .layer(middleware::from_fn(attach_request_id))
 }
 
-async fn health() -> Json<Health> {
+async fn liveness() -> Json<Health> {
     Json(Health {
         status: HealthStatus::Ok,
     })
 }
 
-async fn attach_request_id(request: Request, next: Next) -> Response {
+#[derive(Serialize)]
+struct ReadinessProblem {
+    r#type: &'static str,
+    title: &'static str,
+    status: u16,
+    code: &'static str,
+    detail: &'static str,
+    request_id: String,
+}
+
+async fn readiness_handler(
+    State(state): State<ApiState>,
+    axum::Extension(request_id): axum::Extension<RequestId>,
+) -> Response {
+    match state.readiness.check().await {
+        Ok(()) => liveness().await.into_response(),
+        Err(failure) => {
+            state.health_metrics.record_readiness_failure(failure);
+            tracing::warn!(
+                event_code = failure.event_code(),
+                "readiness dependency check failed"
+            );
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [(
+                    CONTENT_TYPE,
+                    HeaderValue::from_static("application/problem+json"),
+                )],
+                Json(ReadinessProblem {
+                    r#type: "https://takt.dev/problems/service_unavailable",
+                    title: "Service unavailable",
+                    status: StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                    code: "service_unavailable",
+                    detail: "The service is not ready.",
+                    request_id: request_id.0,
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Clone)]
+struct RequestId(String);
+
+async fn attach_request_id(mut request: Request, next: Next) -> Response {
     let request_id = request
         .headers()
         .get(REQUEST_ID_HEADER)
@@ -63,6 +184,9 @@ async fn attach_request_id(request: Request, next: Next) -> Response {
         .unwrap_or_else(Uuid::now_v7)
         .to_string();
 
+    request
+        .extensions_mut()
+        .insert(RequestId(request_id.clone()));
     let mut response = next.run(request).await;
     if let Ok(value) = HeaderValue::from_str(&request_id) {
         response.headers_mut().insert(REQUEST_ID_HEADER, value);

@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
-use std::{error::Error, io};
+use std::{error::Error, io, sync::Arc};
 
+use async_trait::async_trait;
+use axum::Router;
+use takt_api::{HealthMetrics, ReadinessCheck, ReadinessFailure};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -12,9 +15,17 @@ const PROVIDED_REQUEST_ID: &str = "019b0000-0000-7000-8000-000000000002";
 const NON_V7_REQUEST_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
 async fn request(path: &str, request_id: Option<&str>) -> Result<String, Box<dyn Error>> {
+    request_with_router(takt_api::router(), path, request_id).await
+}
+
+async fn request_with_router(
+    router: Router,
+    path: &str,
+    request_id: Option<&str>,
+) -> Result<String, Box<dyn Error>> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
-    let server = tokio::spawn(async move { axum::serve(listener, takt_api::router()).await });
+    let server = tokio::spawn(async move { axum::serve(listener, router).await });
 
     let mut stream = TcpStream::connect(address).await?;
     let request_id_header = request_id
@@ -30,6 +41,15 @@ async fn request(path: &str, request_id: Option<&str>) -> Result<String, Box<dyn
     server.abort();
 
     Ok(String::from_utf8(response)?)
+}
+
+struct FailedReadiness(ReadinessFailure);
+
+#[async_trait]
+impl ReadinessCheck for FailedReadiness {
+    async fn check(&self) -> Result<(), ReadinessFailure> {
+        Err(self.0)
+    }
 }
 
 fn assert_health_response(response: &str) -> Result<(), Box<dyn Error>> {
@@ -86,6 +106,41 @@ async fn prd_nfr_008_readiness_is_contract_compliant_http() -> Result<(), Box<dy
             .to_ascii_lowercase()
             .contains(&format!("x-request-id: {PROVIDED_REQUEST_ID}"))
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn prd_nfr_008_database_failure_only_affects_readiness() -> Result<(), Box<dyn Error>> {
+    let metrics = Arc::new(HealthMetrics::default());
+    let router = takt_api::router_with_readiness(
+        Arc::new(FailedReadiness(ReadinessFailure::DatabaseUnavailable)),
+        metrics.clone(),
+    );
+    let ready = request_with_router(router.clone(), "/health/ready", None).await?;
+    assert!(ready.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+    assert!(ready.contains("application/problem+json"));
+    assert!(ready.contains(r#""code":"service_unavailable""#));
+    assert!(!ready.contains("postgres://"));
+    assert!(!ready.contains("sqlite://"));
+    assert_eq!(
+        metrics.readiness_failure_count(ReadinessFailure::DatabaseUnavailable),
+        1
+    );
+
+    let live = request_with_router(router, "/health/live", None).await?;
+    assert_health_response(&live)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn prd_nfr_008_migration_in_progress_is_not_ready() -> Result<(), Box<dyn Error>> {
+    let router = takt_api::router_with_readiness(
+        Arc::new(FailedReadiness(ReadinessFailure::MigrationInProgress)),
+        Arc::new(HealthMetrics::default()),
+    );
+    let response = request_with_router(router, "/health/ready", None).await?;
+    assert!(response.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
+    assert!(!response.contains("database_migration_in_progress"));
     Ok(())
 }
 

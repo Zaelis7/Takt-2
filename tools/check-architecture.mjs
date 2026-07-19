@@ -18,9 +18,14 @@ const workspacePackages = metadata.packages.filter((entry) =>
 const workspaceNames = new Set(workspacePackages.map((entry) => entry.name));
 const allowedInternalDependencies = new Map([
   ["takt-api", new Set()],
+  ["takt-application", new Set(["takt-domain"])],
   ["takt-domain", new Set()],
+  ["takt-persistence", new Set(["takt-application", "takt-domain"])],
   ["takt-probe-protocol", new Set()],
-  ["takt-server", new Set(["takt-api"])],
+  [
+    "takt-server",
+    new Set(["takt-api", "takt-application", "takt-persistence"]),
+  ],
   ["xtask", new Set()],
 ]);
 
@@ -71,6 +76,28 @@ const importedFrameworks = domain.dependencies
 if (importedFrameworks.length > 0) {
   throw new Error(
     `takt-domain imports forbidden I/O or runtime frameworks: ${importedFrameworks.join(", ")}`,
+  );
+}
+
+const application = workspacePackages.find(
+  (entry) => entry.name === "takt-application",
+);
+if (application === undefined) {
+  throw new Error("takt-application is missing from the workspace");
+}
+const forbiddenApplicationFrameworks = new Set([
+  "axum",
+  "reqwest",
+  "sqlx",
+  "tonic",
+  "tower",
+]);
+const applicationFrameworks = application.dependencies
+  .map((dependency) => dependency.name)
+  .filter((name) => forbiddenApplicationFrameworks.has(name));
+if (applicationFrameworks.length > 0) {
+  throw new Error(
+    `takt-application imports forbidden adapter frameworks: ${applicationFrameworks.join(", ")}`,
   );
 }
 
