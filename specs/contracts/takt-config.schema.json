@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://takt.dev/schemas/takt-config-v1alpha1.json",
+  "title": "Takt declarative project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "const": "takt.dev/v1alpha1" },
+    "kind": { "const": "TaktProject" },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["organization", "project", "source"],
+      "properties": {
+        "organization": { "$ref": "#/$defs/slug" },
+        "project": { "$ref": "#/$defs/slug" },
+        "source": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 200,
+          "description": "Stable owner identity, for example git:https://example/repo//prod/takt.yaml"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "monitors": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": { "$ref": "#/$defs/monitor" }
+        },
+        "notificationChannels": {
+          "type": "array",
+          "maxItems": 500,
+          "items": { "$ref": "#/$defs/notificationChannel" }
+        },
+        "maintenances": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": { "$ref": "#/$defs/maintenance" }
+        },
+        "statusPages": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "$ref": "#/$defs/statusPage" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(ms|s|m|h|d)$"
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretRef"],
+      "properties": {
+        "secretRef": { "$ref": "#/$defs/slug" },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "default": "value"
+        }
+      }
+    },
+    "labelSelector": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_.-]{0,62}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "maxProperties": 20
+    },
+    "monitorSelector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "matchTags": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 50 }
+        },
+        "matchSlugs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/slug" }
+        }
+      },
+      "anyOf": [
+        { "required": ["matchTags"] },
+        { "required": ["matchSlugs"] }
+      ]
+    },
+    "probePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["any", "all", "quorum"] },
+        "minSuccess": { "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "mode": { "const": "quorum" } }, "required": ["mode"] },
+          "then": { "required": ["minSuccess"] }
+        }
+      ]
+    },
+    "monitor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "name", "type", "target"],
+      "properties": {
+        "slug": { "$ref": "#/$defs/slug" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 2000 },
+        "type": { "enum": ["http", "tcp", "dns", "icmp", "tls", "push", "browser"] },
+        "enabled": { "type": "boolean", "default": true },
+        "interval": { "$ref": "#/$defs/duration", "default": "60s" },
+        "timeout": { "$ref": "#/$defs/duration", "default": "10s" },
+        "failureThreshold": { "type": "integer", "minimum": 1, "maximum": 20, "default": 3 },
+        "recoveryThreshold": { "type": "integer", "minimum": 1, "maximum": 20, "default": 2 },
+        "tags": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 50 }
+        },
+        "probeSelector": { "$ref": "#/$defs/labelSelector" },
+        "probePolicy": { "$ref": "#/$defs/probePolicy" },
+        "notificationChannels": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/slug" }
+        },
+        "target": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "http" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/httpTarget" } } } },
+        { "if": { "properties": { "type": { "const": "tcp" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/tcpTarget" } } } },
+        { "if": { "properties": { "type": { "const": "dns" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/dnsTarget" } } } },
+        { "if": { "properties": { "type": { "const": "icmp" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/icmpTarget" } } } },
+        { "if": { "properties": { "type": { "const": "tls" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/tlsTarget" } } } },
+        { "if": { "properties": { "type": { "const": "push" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/pushTarget" } } } },
+        { "if": { "properties": { "type": { "const": "browser" } } }, "then": { "properties": { "target": { "$ref": "#/$defs/browserTarget" } } } }
+      ]
+    },
+    "httpTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "method": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "default": "GET" },
+        "headers": {
+          "type": "object",
+          "maxProperties": 50,
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string", "maxLength": 8192 },
+              { "$ref": "#/$defs/secretRef" }
+            ]
+          }
+        },
+        "body": {
+          "oneOf": [
+            { "type": "string", "maxLength": 1048576 },
+            { "$ref": "#/$defs/secretRef" }
+          ]
+        },
+        "expectedStatus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "integer", "minimum": 100, "maximum": 599, "default": 200 },
+            "max": { "type": "integer", "minimum": 100, "maximum": 599, "default": 399 }
+          }
+        },
+        "followRedirects": { "type": "integer", "minimum": 0, "maximum": 10, "default": 5 },
+        "verifyTls": { "type": "boolean", "default": true },
+        "bodyContains": { "type": "string", "maxLength": 4096 },
+        "maxResponseTime": { "$ref": "#/$defs/duration" }
+      }
+    },
+    "tcpTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "sendText": { "type": "string", "maxLength": 4096 },
+        "expectPrefix": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "dnsTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "recordType"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "recordType": { "enum": ["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SOA", "CAA"] },
+        "expectedValues": {
+          "type": "array",
+          "maxItems": 100,
+          "items": { "type": "string", "maxLength": 4096 }
+        }
+      }
+    },
+    "icmpTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "packets": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 }
+      }
+    },
+    "tlsTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host"],
+      "properties": {
+        "host": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 443 },
+        "warningDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
+        "criticalDays": { "type": "integer", "minimum": 0, "maximum": 3650, "default": 7 }
+      }
+    },
+    "pushTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "grace": { "$ref": "#/$defs/duration", "default": "60s" },
+        "allowGet": { "type": "boolean", "default": false }
+      }
+    },
+    "browserStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action"],
+      "properties": {
+        "action": { "enum": ["navigate", "click", "fill", "wait", "assertText", "assertUrl"] },
+        "selector": { "type": "string", "maxLength": 1000 },
+        "value": {
+          "oneOf": [
+            { "type": "string", "maxLength": 4096 },
+            { "$ref": "#/$defs/secretRef" }
+          ]
+        }
+      }
+    },
+    "browserTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startUrl", "steps"],
+      "properties": {
+        "startUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/browserStep" }
+        }
+      }
+    },
+    "notificationChannel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "name", "type", "config"],
+      "properties": {
+        "slug": { "$ref": "#/$defs/slug" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "type": { "enum": ["webhook", "smtp", "slack", "discord", "telegram"] },
+        "enabled": { "type": "boolean", "default": true },
+        "config": {
+          "type": "object",
+          "description": "Type-specific non-secret values and secretRef objects.",
+          "maxProperties": 50
+        }
+      }
+    },
+    "maintenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "name", "startsAt", "endsAt", "monitorSelector"],
+      "properties": {
+        "slug": { "$ref": "#/$defs/slug" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "startsAt": { "type": "string", "format": "date-time" },
+        "endsAt": { "type": "string", "format": "date-time" },
+        "timezone": { "type": "string", "default": "UTC" },
+        "behavior": { "enum": ["suppressNotifications", "markMaintenance"], "default": "markMaintenance" },
+        "monitorSelector": { "$ref": "#/$defs/monitorSelector" }
+      }
+    },
+    "statusPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "title", "visibility", "groups"],
+      "properties": {
+        "slug": { "$ref": "#/$defs/slug" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "visibility": { "enum": ["public", "token"] },
+        "locale": { "enum": ["de", "en"], "default": "en" },
+        "groups": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "monitors"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "monitors": {
+                "type": "array",
+                "maxItems": 500,
+                "uniqueItems": true,
+                "items": { "$ref": "#/$defs/slug" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

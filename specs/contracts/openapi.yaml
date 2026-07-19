@@ -1,0 +1,1200 @@
+openapi: 3.1.0
+info:
+  title: Takt API
+  version: 0.3.0
+  summary: Public management and monitoring API for Takt
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  description: |
+    Normative baseline contract for Takt. Every implemented public endpoint must be
+    represented here. Problem responses use RFC 9457-style Problem Details.
+servers:
+  - url: /
+tags:
+  - name: System
+    description: Health and instance capability information.
+  - name: Monitors
+    description: Monitor configuration, execution and results.
+  - name: Probes
+    description: Remote probe inventory and enrollment.
+  - name: Automation
+    description: Declarative validation, planning and apply.
+  - name: Public Status
+    description: Redacted endpoints intended for anonymous status consumers.
+security:
+  - bearerAuth: []
+  - sessionCookie: []
+paths:
+  /health/live:
+    get:
+      tags: [System]
+      operationId: getLiveness
+      summary: Check whether the server process is alive
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "429":
+          $ref: "#/components/responses/Problem"
+  /health/ready:
+    get:
+      tags: [System]
+      operationId: getReadiness
+      summary: Check whether the instance is ready to serve traffic
+      security: []
+      responses:
+        "200":
+          description: Instance is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+  /api/v1/system/info:
+    get:
+      tags: [System]
+      operationId: getSystemInfo
+      summary: Get non-secret instance capabilities
+      responses:
+        "200":
+          description: Non-secret system capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects/{project_id}/monitors:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      tags: [Monitors]
+      operationId: listMonitors
+      summary: List monitors in a project
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: state
+          in: query
+          schema:
+            $ref: "#/components/schemas/MonitorState"
+        - name: kind
+          in: query
+          schema:
+            $ref: "#/components/schemas/MonitorKind"
+        - name: query
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        "200":
+          description: Page of monitors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MonitorPage"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [Monitors]
+      operationId: createMonitor
+      summary: Create a monitor
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MonitorCreate"
+      responses:
+        "201":
+          description: Monitor created
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects/{project_id}/monitors/{monitor_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/MonitorId"
+    get:
+      tags: [Monitors]
+      operationId: getMonitor
+      summary: Get a monitor
+      responses:
+        "200":
+          description: Monitor
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "404":
+          $ref: "#/components/responses/Problem"
+    patch:
+      tags: [Monitors]
+      operationId: updateMonitor
+      summary: Update selected monitor fields
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/MonitorPatch"
+      responses:
+        "200":
+          description: Updated monitor
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Monitor"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      tags: [Monitors]
+      operationId: deleteMonitor
+      summary: Delete a monitor
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects/{project_id}/monitors/{monitor_id}/checks:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/MonitorId"
+    post:
+      tags: [Monitors]
+      operationId: runMonitorCheck
+      summary: Queue an immediate monitor check
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Check queued
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operation"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects/{project_id}/monitors/{monitor_id}/observations:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/MonitorId"
+    get:
+      tags: [Monitors]
+      operationId: listMonitorObservations
+      summary: List recent monitor observations
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Observation page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObservationPage"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/projects/{project_id}/monitors/{monitor_id}/uptime:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - $ref: "#/components/parameters/MonitorId"
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date-time
+      - name: bucket
+        in: query
+        schema:
+          type: string
+          enum: [raw, minute, hour, day]
+          default: hour
+    get:
+      tags: [Monitors]
+      operationId: getMonitorUptime
+      summary: Get time-weighted monitor uptime
+      responses:
+        "200":
+          description: Time-weighted uptime summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UptimeSummary"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /api/v1/probes:
+    get:
+      tags: [Probes]
+      operationId: listProbes
+      summary: List remote probes
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Probe page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbePage"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [Probes]
+      operationId: createProbeEnrollment
+      summary: Create a one-time probe enrollment
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProbeEnrollmentCreate"
+      responses:
+        "201":
+          description: One-time enrollment data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeEnrollment"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/config/validate:
+    post:
+      tags: [Automation]
+      operationId: validateConfig
+      summary: Validate a declarative configuration
+      requestBody:
+        required: true
+        content:
+          application/yaml:
+            schema:
+              type: string
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationResult"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/config/plan:
+    post:
+      tags: [Automation]
+      operationId: planConfig
+      summary: Plan a declarative configuration change
+      parameters:
+        - name: prune
+          in: query
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Declarative plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigPlan"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/v1/config/apply:
+    post:
+      tags: [Automation]
+      operationId: applyConfig
+      summary: Apply a declarative configuration
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: prune
+          in: query
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "202":
+          description: Apply operation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Operation"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /api/public/v1/status-pages/{slug}:
+    get:
+      tags: [Public Status]
+      operationId: getPublicStatusPage
+      summary: Get a redacted public status page projection
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/Slug"
+      responses:
+        "200":
+          description: Redacted public status projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicStatusPage"
+        "404":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: TaktToken
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: takt_session
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    MonitorId:
+      name: monitor_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+        maxLength: 2048
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema:
+        type: string
+  headers:
+    ETag:
+      description: Quoted resource version
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: Problem Details response
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    Slug:
+      type: string
+      pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+    SystemInfo:
+      type: object
+      additionalProperties: false
+      required: [version, database, capabilities]
+      properties:
+        version:
+          type: string
+        database:
+          type: string
+          enum: [postgresql, sqlite]
+        capabilities:
+          type: array
+          items:
+            type: string
+    MonitorKind:
+      type: string
+      enum: [http, tcp, dns, icmp, tls, push, browser]
+    MonitorState:
+      type: string
+      enum: [PENDING, UP, DEGRADED, DOWN, PAUSED, MAINTENANCE, UNKNOWN]
+    ProbePolicy:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [any, all, quorum]
+        min_success:
+          type: integer
+          minimum: 1
+      allOf:
+        - if:
+            properties:
+              mode:
+                const: quorum
+          then:
+            properties:
+              min_success:
+                type: integer
+                minimum: 1
+            required: [min_success]
+    MonitorCommon:
+      type: object
+      required:
+        - slug
+        - name
+        - kind
+        - enabled
+        - schedule_interval_ms
+        - timeout_ms
+        - failure_threshold
+        - recovery_threshold
+        - spec
+      properties:
+        slug:
+          $ref: "#/components/schemas/Slug"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: [string, "null"]
+          maxLength: 2000
+        kind:
+          $ref: "#/components/schemas/MonitorKind"
+        enabled:
+          type: boolean
+        schedule_interval_ms:
+          type: integer
+          minimum: 10000
+          maximum: 86400000
+        timeout_ms:
+          type: integer
+          minimum: 100
+          maximum: 300000
+        failure_threshold:
+          type: integer
+          minimum: 1
+          maximum: 20
+        recovery_threshold:
+          type: integer
+          minimum: 1
+          maximum: 20
+        probe_policy:
+          $ref: "#/components/schemas/ProbePolicy"
+        probe_selector:
+          type: object
+          additionalProperties:
+            type: string
+        tags:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 50
+        spec:
+          $ref: "#/components/schemas/CheckSpec"
+    MonitorCreate:
+      allOf:
+        - $ref: "#/components/schemas/MonitorCommon"
+      unevaluatedProperties: false
+    MonitorPatch:
+      type: object
+      minProperties: 1
+      maxProperties: 15
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: [string, "null"]
+          maxLength: 2000
+        enabled:
+          type: boolean
+        schedule_interval_ms:
+          type: integer
+          minimum: 10000
+          maximum: 86400000
+        timeout_ms:
+          type: integer
+          minimum: 100
+          maximum: 300000
+        failure_threshold:
+          type: integer
+          minimum: 1
+          maximum: 20
+        recovery_threshold:
+          type: integer
+          minimum: 1
+          maximum: 20
+        probe_policy:
+          $ref: "#/components/schemas/ProbePolicy"
+        probe_selector:
+          type: object
+          additionalProperties:
+            type: string
+        tags:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items:
+            type: string
+        spec:
+          $ref: "#/components/schemas/CheckSpec"
+      additionalProperties: false
+    Monitor:
+      allOf:
+        - $ref: "#/components/schemas/MonitorCommon"
+        - type: object
+          required: [id, project_id, state, state_since, version, created_at, updated_at]
+          properties:
+            id:
+              $ref: "#/components/schemas/Uuid"
+            project_id:
+              $ref: "#/components/schemas/Uuid"
+            state:
+              $ref: "#/components/schemas/MonitorState"
+            state_since:
+              type: string
+              format: date-time
+            version:
+              type: integer
+              minimum: 1
+            managed_by:
+              type: string
+              enum: [manual, declarative, terraform, discovery]
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+      unevaluatedProperties: false
+    MonitorPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Monitor"
+        next_cursor:
+          type: [string, "null"]
+    CheckSpec:
+      oneOf:
+        - $ref: "#/components/schemas/HttpCheckSpec"
+        - $ref: "#/components/schemas/TcpCheckSpec"
+        - $ref: "#/components/schemas/DnsCheckSpec"
+        - $ref: "#/components/schemas/IcmpCheckSpec"
+        - $ref: "#/components/schemas/TlsCheckSpec"
+        - $ref: "#/components/schemas/PushCheckSpec"
+        - $ref: "#/components/schemas/BrowserCheckSpec"
+      discriminator:
+        propertyName: type
+        mapping:
+          http: "#/components/schemas/HttpCheckSpec"
+          tcp: "#/components/schemas/TcpCheckSpec"
+          dns: "#/components/schemas/DnsCheckSpec"
+          icmp: "#/components/schemas/IcmpCheckSpec"
+          tls: "#/components/schemas/TlsCheckSpec"
+          push: "#/components/schemas/PushCheckSpec"
+          browser: "#/components/schemas/BrowserCheckSpec"
+    HttpCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, url]
+      properties:
+        type:
+          const: http
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+        method:
+          type: string
+          enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+          default: GET
+        expected_status_min:
+          type: integer
+          minimum: 100
+          maximum: 599
+          default: 200
+        expected_status_max:
+          type: integer
+          minimum: 100
+          maximum: 599
+          default: 399
+        follow_redirects:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 5
+        verify_tls:
+          type: boolean
+          default: true
+        body_contains:
+          type: string
+          maxLength: 4096
+    TcpCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, host, port]
+      properties:
+        type:
+          const: tcp
+        host:
+          type: string
+          minLength: 1
+          maxLength: 253
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        send_text:
+          type: string
+          maxLength: 4096
+        expect_prefix:
+          type: string
+          maxLength: 4096
+    DnsCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, name, record_type]
+      properties:
+        type:
+          const: dns
+        name:
+          type: string
+          minLength: 1
+          maxLength: 253
+        record_type:
+          type: string
+          enum: [A, AAAA, CNAME, MX, TXT, NS, SOA, CAA]
+        expected_values:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+    IcmpCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, host]
+      properties:
+        type:
+          const: icmp
+        host:
+          type: string
+          minLength: 1
+          maxLength: 253
+        packets:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 3
+    TlsCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, host]
+      properties:
+        type:
+          const: tls
+        host:
+          type: string
+          minLength: 1
+          maxLength: 253
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 443
+        warning_days:
+          type: integer
+          minimum: 1
+          maximum: 3650
+          default: 30
+        critical_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+          default: 7
+    PushCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, grace_ms]
+      properties:
+        type:
+          const: push
+        grace_ms:
+          type: integer
+          minimum: 0
+          maximum: 86400000
+    BrowserCheckSpec:
+      type: object
+      additionalProperties: false
+      required: [type, start_url, steps]
+      properties:
+        type:
+          const: browser
+        start_url:
+          type: string
+          format: uri
+          maxLength: 2048
+        steps:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            required: [action]
+            properties:
+              action:
+                type: string
+                enum: [navigate, click, fill, wait, assert_text, assert_url]
+              selector:
+                type: string
+                maxLength: 1000
+              value:
+                type: string
+                maxLength: 4096
+            additionalProperties: false
+    ObservationOutcome:
+      type: string
+      enum: [SUCCESS, TARGET_FAILURE, PROBE_FAILURE, CANCELLED]
+    Observation:
+      type: object
+      additionalProperties: false
+      required: [id, monitor_id, outcome, started_at, finished_at, duration_ms, late]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        monitor_id:
+          $ref: "#/components/schemas/Uuid"
+        probe_id:
+          type: [string, "null"]
+          format: uuid
+        outcome:
+          $ref: "#/components/schemas/ObservationOutcome"
+        error_code:
+          type: [string, "null"]
+        summary:
+          type: [string, "null"]
+          maxLength: 2000
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          minimum: 0
+        late:
+          type: boolean
+    ObservationPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Observation"
+        next_cursor:
+          type: [string, "null"]
+    UptimeSummary:
+      type: object
+      additionalProperties: false
+      required: [from, to, total_ms, included_ms, uptime_ratio, degraded_ratio, excluded_ratio, buckets]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        total_ms:
+          type: integer
+          minimum: 0
+        included_ms:
+          type: integer
+          minimum: 0
+        uptime_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        degraded_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        excluded_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        buckets:
+          type: array
+          items:
+            type: object
+            required: [from, to, state]
+            properties:
+              from:
+                type: string
+                format: date-time
+              to:
+                type: string
+                format: date-time
+              state:
+                $ref: "#/components/schemas/MonitorState"
+    Probe:
+      type: object
+      additionalProperties: false
+      required: [id, slug, display_name, labels, status, version]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        slug:
+          $ref: "#/components/schemas/Slug"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          type: string
+          enum: [pending, connected, disconnected, offline, revoked, incompatible]
+        last_seen_at:
+          type: [string, "null"]
+          format: date-time
+        version:
+          type: string
+    ProbePage:
+      type: object
+      required: [items, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Probe"
+        next_cursor:
+          type: [string, "null"]
+    ProbeEnrollmentCreate:
+      type: object
+      additionalProperties: false
+      required: [slug, display_name]
+      properties:
+        slug:
+          $ref: "#/components/schemas/Slug"
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        labels:
+          type: object
+          maxProperties: 50
+          additionalProperties:
+            type: string
+    ProbeEnrollment:
+      type: object
+      additionalProperties: false
+      required: [probe_id, enrollment_code, expires_at, server_url]
+      properties:
+        probe_id:
+          $ref: "#/components/schemas/Uuid"
+        enrollment_code:
+          type: string
+          writeOnly: true
+        expires_at:
+          type: string
+          format: date-time
+        server_url:
+          type: string
+          format: uri
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [id, kind, status, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        kind:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        progress:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: [string, "null"]
+          format: date-time
+    ValidationResult:
+      type: object
+      additionalProperties: false
+      required: [valid, warnings]
+      properties:
+        valid:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldIssue"
+    ConfigPlan:
+      type: object
+      additionalProperties: false
+      required: [plan_id, creates, updates, deletes, unchanged, warnings]
+      properties:
+        plan_id:
+          $ref: "#/components/schemas/Uuid"
+        creates:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanChange"
+        updates:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanChange"
+        deletes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlanChange"
+        unchanged:
+          type: integer
+          minimum: 0
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldIssue"
+    PlanChange:
+      type: object
+      additionalProperties: false
+      required: [resource_type, slug]
+      properties:
+        resource_type:
+          type: string
+        slug:
+          $ref: "#/components/schemas/Slug"
+        changes:
+          type: array
+          items:
+            type: object
+            required: [path, secret]
+            properties:
+              path:
+                type: string
+              before: {}
+              after: {}
+              secret:
+                type: boolean
+    PublicStatusPage:
+      type: object
+      additionalProperties: false
+      required: [slug, title, overall_state, components, incidents, updated_at]
+      properties:
+        slug:
+          $ref: "#/components/schemas/Slug"
+        title:
+          type: string
+        overall_state:
+          type: string
+          enum: [operational, degraded, major_outage, maintenance, unknown]
+        components:
+          type: array
+          items:
+            type: object
+            required: [name, state]
+            properties:
+              name:
+                type: string
+              state:
+                $ref: "#/components/schemas/MonitorState"
+              uptime_ratio:
+                type: [number, "null"]
+                minimum: 0
+                maximum: 1
+        incidents:
+          type: array
+          items:
+            type: object
+            required: [id, title, status, impact, updated_at]
+            properties:
+              id:
+                $ref: "#/components/schemas/Uuid"
+              title:
+                type: string
+              status:
+                type: string
+                enum: [INVESTIGATING, IDENTIFIED, MONITORING, RESOLVED]
+              impact:
+                type: string
+                enum: [none, minor, major, critical]
+              updated_at:
+                type: string
+                format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    FieldIssue:
+      type: object
+      additionalProperties: false
+      required: [path, code, message]
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    Problem:
+      type: object
+      additionalProperties: true
+      required: [type, title, status, code, request_id]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        code:
+          type: string
+          pattern: "^[a-z][a-z0-9_]*$"
+        detail:
+          type: string
+        instance:
+          type: string
+        request_id:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldIssue"

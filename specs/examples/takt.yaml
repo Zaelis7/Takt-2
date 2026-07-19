@@ -1,0 +1,154 @@
+apiVersion: takt.dev/v1alpha1
+kind: TaktProject
+metadata:
+  organization: acme
+  project: production
+  source: git:https://github.com/acme/platform//monitoring/takt.yaml
+spec:
+  notificationChannels:
+    - slug: operations-webhook
+      name: Operations Webhook
+      type: webhook
+      enabled: true
+      config:
+        url:
+          secretRef: operations-webhook
+          key: url
+        signingSecret:
+          secretRef: operations-webhook
+          key: signing-secret
+
+    - slug: on-call-email
+      name: On-call Email
+      type: smtp
+      enabled: true
+      config:
+        host: smtp.example.com
+        port: 587
+        username:
+          secretRef: smtp-credentials
+          key: username
+        password:
+          secretRef: smtp-credentials
+          key: password
+        from: takt@example.com
+        to: on-call@example.com
+
+  monitors:
+    - slug: public-api
+      name: Public API
+      description: Checks availability and the public health response.
+      type: http
+      enabled: true
+      interval: 30s
+      timeout: 8s
+      failureThreshold: 3
+      recoveryThreshold: 2
+      tags: [customer-facing, api]
+      probeSelector:
+        network: public
+      probePolicy:
+        mode: quorum
+        minSuccess: 2
+      notificationChannels: [operations-webhook, on-call-email]
+      target:
+        url: https://api.example.com/health
+        method: GET
+        expectedStatus:
+          min: 200
+          max: 299
+        followRedirects: 0
+        verifyTls: true
+        bodyContains: '"status":"ok"'
+        maxResponseTime: 2s
+
+    - slug: internal-postgres
+      name: PostgreSQL TCP
+      type: tcp
+      interval: 60s
+      timeout: 5s
+      tags: [internal, database]
+      probeSelector:
+        network: internal
+      probePolicy:
+        mode: any
+      notificationChannels: [operations-webhook]
+      target:
+        host: postgres.service.internal
+        port: 5432
+
+    - slug: certificate
+      name: Public certificate
+      type: tls
+      interval: 6h
+      timeout: 10s
+      tags: [customer-facing, certificate]
+      notificationChannels: [operations-webhook]
+      target:
+        host: example.com
+        port: 443
+        warningDays: 30
+        criticalDays: 7
+
+    - slug: nightly-backup
+      name: Nightly backup heartbeat
+      type: push
+      interval: 24h
+      timeout: 10s
+      failureThreshold: 1
+      recoveryThreshold: 1
+      tags: [backup]
+      notificationChannels: [on-call-email]
+      target:
+        grace: 2h
+        allowGet: false
+
+    - slug: customer-login
+      name: Customer login journey
+      type: browser
+      interval: 5m
+      timeout: 60s
+      failureThreshold: 2
+      recoveryThreshold: 1
+      tags: [customer-facing, browser]
+      probeSelector:
+        capability: browser
+        network: public
+      notificationChannels: [operations-webhook]
+      target:
+        startUrl: https://app.example.com/login
+        steps:
+          - action: fill
+            selector: label=Email
+            value:
+              secretRef: synthetic-login
+              key: username
+          - action: fill
+            selector: label=Password
+            value:
+              secretRef: synthetic-login
+              key: password
+          - action: click
+            selector: role=button[name="Sign in"]
+          - action: assertText
+            selector: role=heading
+            value: Dashboard
+
+  maintenances:
+    - slug: database-upgrade
+      name: Database upgrade
+      startsAt: "2026-08-02T00:00:00Z"
+      endsAt: "2026-08-02T02:00:00Z"
+      timezone: Europe/Berlin
+      behavior: markMaintenance
+      monitorSelector:
+        matchTags: [database]
+
+  statusPages:
+    - slug: service-status
+      title: ACME Service Status
+      visibility: public
+      locale: en
+      groups:
+        - name: Public services
+          monitors: [public-api, certificate, customer-login]

@@ -1,0 +1,283 @@
+syntax = "proto3";
+
+package takt.probe.v1;
+
+// Probe protocol major version 1. All timestamps are Unix epoch milliseconds.
+// IDs are canonical UUID strings. Secrets are never represented as string fields.
+
+service EnrollmentService {
+  // Uses server-authenticated TLS plus a one-time enrollment code.
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+}
+
+service ProbeService {
+  // After enrollment this stream requires mutual TLS.
+  rpc Connect(stream ProbeMessage) returns (stream ServerMessage);
+}
+
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+message EnrollRequest {
+  string enrollment_code = 1;
+  bytes certificate_signing_request_der = 2;
+  string agent_version = 3;
+  ProtocolVersion protocol_version = 4;
+}
+
+message EnrollResponse {
+  string probe_id = 1;
+  bytes client_certificate_chain_pem = 2;
+  bytes ca_certificate_pem = 3;
+  int64 certificate_expires_at_unix_ms = 4;
+  string connect_authority = 5;
+}
+
+message ProbeMessage {
+  oneof payload {
+    ProbeHello hello = 1;
+    ProbeHeartbeat heartbeat = 2;
+    JobAck job_ack = 3;
+    ObservationBatch observations = 4;
+    CertificateRotationRequest certificate_rotation = 5;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    ServerHello hello = 1;
+    CheckJob check_job = 2;
+    CancelJob cancel_job = 3;
+    ObservationAck observation_ack = 4;
+    CertificateRotationResponse certificate_rotation = 5;
+    Drain drain = 6;
+  }
+}
+
+message ProbeHello {
+  string probe_id = 1;
+  string agent_version = 2;
+  ProtocolVersion protocol_version = 3;
+  repeated string capabilities = 4;
+  map<string, string> labels = 5;
+  uint32 max_concurrency = 6;
+  uint64 offline_queue_items = 7;
+  uint64 offline_queue_bytes = 8;
+}
+
+message ServerHello {
+  string server_version = 1;
+  ProtocolVersion negotiated_protocol_version = 2;
+  int64 server_time_unix_ms = 3;
+  uint32 heartbeat_interval_ms = 4;
+  uint32 max_observation_batch_size = 5;
+}
+
+message ProbeHeartbeat {
+  int64 sent_at_unix_ms = 1;
+  uint32 running_jobs = 2;
+  uint32 available_slots = 3;
+  uint64 offline_queue_items = 4;
+  uint64 offline_queue_bytes = 5;
+}
+
+enum AckDisposition {
+  ACK_DISPOSITION_UNSPECIFIED = 0;
+  ACK_DISPOSITION_ACCEPTED = 1;
+  ACK_DISPOSITION_REJECTED_CAPABILITY = 2;
+  ACK_DISPOSITION_REJECTED_OVERLOADED = 3;
+  ACK_DISPOSITION_REJECTED_EXPIRED = 4;
+  ACK_DISPOSITION_REJECTED_INVALID = 5;
+}
+
+message JobAck {
+  string job_id = 1;
+  uint32 attempt = 2;
+  AckDisposition disposition = 3;
+  string reason_code = 4;
+}
+
+message CheckJob {
+  string job_id = 1;
+  string monitor_id = 2;
+  string monitor_revision_id = 3;
+  uint32 attempt = 4;
+  int64 scheduled_for_unix_ms = 5;
+  int64 deadline_unix_ms = 6;
+  uint32 timeout_ms = 7;
+  CheckSpec check = 8;
+
+  // Opaque, short-lived and bound to job_id. The server encrypts this bundle to
+  // the current probe certificate. A probe must keep it in memory only and wipe
+  // decrypted material after the check. It is never included in observations.
+  bytes sealed_ephemeral_secret_bundle = 9;
+}
+
+message CancelJob {
+  string job_id = 1;
+  string reason_code = 2;
+}
+
+message Drain {
+  string reason_code = 1;
+  int64 reconnect_not_before_unix_ms = 2;
+}
+
+message CheckSpec {
+  oneof kind {
+    HttpCheck http = 1;
+    TcpCheck tcp = 2;
+    DnsCheck dns = 3;
+    IcmpCheck icmp = 4;
+    TlsCheck tls = 5;
+    PushCheck push = 6;
+    BrowserCheck browser = 7;
+  }
+}
+
+message SecretValueRef {
+  // Key inside sealed_ephemeral_secret_bundle, never a persistent secret ID.
+  string ephemeral_key = 1;
+}
+
+message HeaderValue {
+  oneof value {
+    string literal = 1;
+    SecretValueRef secret = 2;
+  }
+}
+
+message HttpCheck {
+  string url = 1;
+  string method = 2;
+  map<string, HeaderValue> headers = 3;
+  oneof body {
+    bytes literal_body = 4;
+    SecretValueRef secret_body = 5;
+  }
+  uint32 expected_status_min = 6;
+  uint32 expected_status_max = 7;
+  uint32 follow_redirects = 8;
+  bool verify_tls = 9;
+  string body_contains = 10;
+  uint32 response_body_limit_bytes = 11;
+}
+
+message TcpCheck {
+  string host = 1;
+  uint32 port = 2;
+  bytes send_bytes = 3;
+  bytes expect_prefix = 4;
+}
+
+message DnsCheck {
+  string name = 1;
+  string record_type = 2;
+  repeated string expected_values = 3;
+  string resolver = 4;
+}
+
+message IcmpCheck {
+  string host = 1;
+  uint32 packets = 2;
+  uint32 required_successes = 3;
+  uint32 max_latency_ms = 4;
+}
+
+message TlsCheck {
+  string host = 1;
+  uint32 port = 2;
+  string server_name = 3;
+  uint32 warning_days = 4;
+  uint32 critical_days = 5;
+}
+
+message PushCheck {
+  // Push monitors are evaluated centrally. This message exists for exhaustive
+  // schema compatibility and must not be dispatched to a remote probe.
+  uint32 grace_ms = 1;
+}
+
+message BrowserStep {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_NAVIGATE = 1;
+    ACTION_CLICK = 2;
+    ACTION_FILL = 3;
+    ACTION_WAIT = 4;
+    ACTION_ASSERT_TEXT = 5;
+    ACTION_ASSERT_URL = 6;
+  }
+  Action action = 1;
+  string selector = 2;
+  oneof value {
+    string literal = 3;
+    SecretValueRef secret = 4;
+  }
+}
+
+message BrowserCheck {
+  string start_url = 1;
+  repeated BrowserStep steps = 2;
+  uint32 screenshot_on_failure_max_bytes = 3;
+}
+
+enum ObservationOutcome {
+  OBSERVATION_OUTCOME_UNSPECIFIED = 0;
+  OBSERVATION_OUTCOME_SUCCESS = 1;
+  OBSERVATION_OUTCOME_TARGET_FAILURE = 2;
+  OBSERVATION_OUTCOME_PROBE_FAILURE = 3;
+  OBSERVATION_OUTCOME_CANCELLED = 4;
+}
+
+message TimingPhases {
+  uint32 dns_ms = 1;
+  uint32 connect_ms = 2;
+  uint32 tls_ms = 3;
+  uint32 first_byte_ms = 4;
+  uint32 total_ms = 5;
+}
+
+message Observation {
+  string observation_id = 1;
+  string job_id = 2;
+  string monitor_revision_id = 3;
+  uint32 attempt = 4;
+  int64 started_at_unix_ms = 5;
+  int64 finished_at_unix_ms = 6;
+  ObservationOutcome outcome = 7;
+  string error_code = 8;
+  string summary = 9;
+  TimingPhases timings = 10;
+  map<string, string> redacted_details = 11;
+  bytes encrypted_failure_artifact = 12;
+}
+
+message ObservationBatch {
+  string batch_id = 1;
+  repeated Observation observations = 2;
+}
+
+message ObservationAck {
+  string batch_id = 1;
+  repeated string accepted_observation_ids = 2;
+  repeated RejectedObservation rejected = 3;
+}
+
+message RejectedObservation {
+  string observation_id = 1;
+  string reason_code = 2;
+  bool retryable = 3;
+}
+
+message CertificateRotationRequest {
+  bytes certificate_signing_request_der = 1;
+  string current_certificate_fingerprint = 2;
+}
+
+message CertificateRotationResponse {
+  bytes client_certificate_chain_pem = 1;
+  int64 certificate_expires_at_unix_ms = 2;
+}
