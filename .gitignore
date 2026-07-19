@@ -1,0 +1,7 @@
+/node_modules/
+/target/
+/playwright-report/
+/test-results/
+/coverage/
+/web/node_modules/
+

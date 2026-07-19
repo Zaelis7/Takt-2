@@ -1,0 +1,38 @@
+{
+  "name": "takt-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "24.15.0",
+    "pnpm": "11.7.0"
+  },
+  "scripts": {
+    "build": "pnpm --dir web build",
+    "check:architecture": "node tools/check-architecture.mjs",
+    "check:generated": "node tools/openapi-types.mjs check && cargo run --locked -p xtask -- check-proto && node tools/check-web-dist.mjs",
+    "contracts:gherkin": "node tools/validate-gherkin.mjs",
+    "contracts:openapi": "redocly lint specs/contracts/openapi.yaml",
+    "contracts:proto": "cargo run --locked -p xtask -- check-proto",
+    "contracts:schema": "node tools/validate-schema.mjs",
+    "contracts:validate": "pnpm contracts:openapi && pnpm contracts:schema && pnpm contracts:proto && pnpm contracts:gherkin",
+    "generate": "pnpm generate:openapi && pnpm generate:proto && pnpm build",
+    "generate:openapi": "node tools/openapi-types.mjs generate",
+    "generate:proto": "cargo run --locked -p xtask -- generate-proto",
+    "licenses": "pnpm licenses list --long",
+    "lint": "pnpm --dir web lint",
+    "test": "pnpm --dir web test",
+    "typecheck": "pnpm --dir web typecheck"
+  },
+  "devDependencies": {
+    "@cucumber/gherkin": "41.0.0",
+    "@cucumber/messages": "33.0.4",
+    "@playwright/test": "1.61.1",
+    "@redocly/cli": "2.39.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
+    "yaml": "2.9.0"
+  }
+}

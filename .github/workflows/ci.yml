@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Bootstrap quality gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.15.0
+
+      - name: Install pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.7.0 --activate
+
+      - name: Install pinned Rust components
+        run: rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
+
+      - name: Install pinned Rust policy tools
+        run: |
+          cargo install --locked cargo-deny --version 0.20.2
+          cargo install --locked cargo-audit --version 0.22.2
+
+      - name: Install locked Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Validate contracts
+        run: pnpm contracts:validate
+
+      - name: Check architecture and generated-code drift
+        run: |
+          pnpm check:architecture
+          pnpm check:generated
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test Rust
+        run: cargo test --workspace --all-features
+
+      - name: Check Rust dependencies
+        run: |
+          cargo deny check
+          cargo audit
+
+      - name: Check Node dependencies
+        run: |
+          pnpm audit --audit-level high
+          pnpm licenses list --long
+
+      - name: Lint and test web application
+        run: |
+          pnpm lint
+          pnpm typecheck
+          pnpm test --run
+
+      - name: Build and browser-test web application
+        run: |
+          pnpm build
+          pnpm playwright test
+
+      - name: Build embedded production server
+        run: cargo build --workspace --all-features --release --locked
+

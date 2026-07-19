@@ -1,0 +1,7 @@
+extends:
+  - recommended
+
+apis:
+  takt:
+    root: specs/contracts/openapi.yaml
+

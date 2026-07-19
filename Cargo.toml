@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/api",
+    "crates/domain",
+    "crates/probe-protocol",
+    "crates/server",
+    "tools/xtask",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "original-uri", "tokio"] }
+prost = "=0.14.4"
+prost-build = "=0.14.4"
+protox = "=0.9.1"
+rust-embed = { version = "=8.12.0", default-features = false, features = ["debug-embed", "deterministic-timestamps"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+tempfile = "=3.27.0"
+tokio = { version = "=1.53.0", features = ["io-util", "macros", "net", "rt-multi-thread", "signal"] }
+uuid = { version = "=1.24.0", features = ["v7"] }

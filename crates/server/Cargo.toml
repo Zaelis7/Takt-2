@@ -1,0 +1,16 @@
+[package]
+name = "takt-server"
+description = "Takt server composition root"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "takt-server"
+path = "src/main.rs"
+
+[dependencies]
+axum.workspace = true
+takt-api = { path = "../api", version = "=0.0.0" }
+tokio.workspace = true
