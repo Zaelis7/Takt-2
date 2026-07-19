@@ -5,10 +5,10 @@ mod common;
 use std::{env, error::Error, io};
 
 use sqlx::{PgPool, Row};
-use takt_application::{Argon2idConfig, BootstrapService, BootstrapStatus, PasswordHasher};
+use takt_application::{BootstrapService, BootstrapStatus};
 use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
 
-use common::{FixedClock, SequenceIds, TEST_PASSWORD};
+use common::{FixedClock, SequenceIds, TEST_PASSWORD, TestPasswordHasher};
 
 fn test_url() -> Result<String, Box<dyn Error>> {
     env::var("TAKT_TEST_POSTGRES_URL").map_err(|_| {
@@ -120,8 +120,50 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     reset_test_database(&url).await?;
     let database = connect(&url).await?;
     database.migrate().await?;
+    let raw = PgPool::connect(&url).await?;
+    sqlx::query(
+        "CREATE FUNCTION fail_bootstrap_membership() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'controlled failure'; END; $$",
+    )
+    .execute(&raw)
+    .await?;
+    sqlx::query(
+        "CREATE TRIGGER fail_bootstrap_membership BEFORE INSERT ON memberships FOR EACH ROW EXECUTE FUNCTION fail_bootstrap_membership()",
+    )
+    .execute(&raw)
+    .await?;
     let repository = SqlxRepository::new(database.clone());
-    let hasher = PasswordHasher::new(Argon2idConfig::testing());
+    let hasher = TestPasswordHasher::new();
+    let clock = FixedClock;
+    let ids = SequenceIds::new(9_000);
+    let service = BootstrapService::new(&repository, &hasher, &clock, &ids);
+    assert!(service.execute("admin", TEST_PASSWORD).await.is_err());
+    let row = sqlx::query(
+        "SELECT (SELECT COUNT(*) FROM organizations) AS organizations, (SELECT COUNT(*) FROM projects) AS projects, (SELECT COUNT(*) FROM users) AS users, (SELECT COUNT(*) FROM local_credentials) AS local_credentials, (SELECT COUNT(*) FROM memberships) AS memberships, (SELECT COUNT(*) FROM audit_events) AS audit_events",
+    )
+    .fetch_one(&raw)
+    .await?;
+    for column in [
+        "organizations",
+        "projects",
+        "users",
+        "local_credentials",
+        "memberships",
+        "audit_events",
+    ] {
+        assert_eq!(
+            row.try_get::<i64, _>(column)?,
+            0,
+            "{column} must be rolled back"
+        );
+    }
+    raw.close().await;
+    database.close().await?;
+
+    reset_test_database(&url).await?;
+    let database = connect(&url).await?;
+    database.migrate().await?;
+    let repository = SqlxRepository::new(database.clone());
+    let hasher = TestPasswordHasher::new();
     let clock = FixedClock;
     let ids = SequenceIds::new(10_000);
     let service = BootstrapService::new(&repository, &hasher, &clock, &ids);
@@ -156,6 +198,5 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     );
     assert!(database.migrate().await.is_err());
     raw.close().await;
-    database.close().await?;
-    Ok(())
+    common::run_shutdown_contract(database).await
 }

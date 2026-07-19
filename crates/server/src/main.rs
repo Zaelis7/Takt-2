@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    future::{Future, IntoFuture},
     io::{self, Read},
     net::SocketAddr,
     process::ExitCode,
@@ -12,7 +13,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use takt_api::{HealthMetrics, ReadinessCheck, ReadinessFailure};
 use takt_application::{
     ApplicationError, Argon2idConfig, BootstrapOutput, BootstrapService, BootstrapStatus,
-    PasswordHasher, RepositoryError, SystemClock, UuidV7Generator,
+    PasswordHash, PasswordHasher, PasswordHashing, RepositoryError, SystemClock, UuidV7Generator,
+    ValidationError,
 };
 use takt_persistence::{
     ConfigError, Database, DatabaseConfig, DatabaseError, ReadinessError, RuntimeProfile,
@@ -81,6 +83,32 @@ struct DatabaseReadiness {
     database: Database,
 }
 
+#[derive(Clone, Copy)]
+struct TokioPasswordHasher {
+    config: Argon2idConfig,
+}
+
+#[async_trait]
+impl PasswordHashing for TokioPasswordHasher {
+    async fn hash(&self, password: &str) -> Result<PasswordHash, ValidationError> {
+        let password = Zeroizing::new(password.to_owned());
+        let config = self.config;
+        tokio::task::spawn_blocking(move || PasswordHasher::new(config).hash(password.as_str()))
+            .await
+            .map_err(|_| ValidationError::PasswordHashFailed)?
+    }
+
+    async fn verify(&self, password: &str, hash: &PasswordHash) -> Result<bool, ValidationError> {
+        let password = Zeroizing::new(password.to_owned());
+        let hash = hash.clone();
+        tokio::task::spawn_blocking(move || {
+            PasswordHasher::new(Argon2idConfig::production()).verify(password.as_str(), &hash)
+        })
+        .await
+        .map_err(|_| ValidationError::PasswordHashFailed)?
+    }
+}
+
 #[async_trait]
 impl ReadinessCheck for DatabaseReadiness {
     async fn check(&self) -> Result<(), ReadinessFailure> {
@@ -132,6 +160,10 @@ async fn run(cli: Cli) -> Result<(), CliFailure> {
         .await
         .map_err(CliFailure::Database)?;
 
+    if !cli.migrate_only && cli.command.is_none() {
+        return serve(database, should_auto_migrate).await;
+    }
+
     let schema_result = if should_auto_migrate {
         database.migrate().await
     } else {
@@ -163,7 +195,7 @@ async fn run(cli: Cli) -> Result<(), CliFailure> {
             result?;
             close_result
         }
-        None => serve(database).await,
+        None => Err(CliFailure::Validation("server mode was already dispatched")),
     }
 }
 
@@ -179,7 +211,9 @@ async fn run_admin_bootstrap(
         .map_err(|_| CliFailure::Input)?
         .map_err(|_| CliFailure::Input)?;
     let repository = SqlxRepository::new(database.clone());
-    let hasher = PasswordHasher::new(Argon2idConfig::production());
+    let hasher = TokioPasswordHasher {
+        config: Argon2idConfig::production(),
+    };
     let clock = SystemClock;
     let ids = UuidV7Generator;
     let service = BootstrapService::new(&repository, &hasher, &clock, &ids);
@@ -192,8 +226,14 @@ async fn run_admin_bootstrap(
 }
 
 fn read_password_from_stdin() -> Result<Zeroizing<String>, io::Error> {
-    let mut bytes = Zeroizing::new(Vec::with_capacity(1_025));
-    io::stdin().take(1_026).read_to_end(&mut bytes)?;
+    let mut bytes = Zeroizing::new(Vec::with_capacity(1_027));
+    io::stdin().take(1_027).read_to_end(&mut bytes)?;
+    if bytes.len() > 1_026 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "password input exceeds the maximum framed length",
+        ));
+    }
     if bytes.ends_with(b"\n") {
         bytes.pop();
         if bytes.ends_with(b"\r") {
@@ -264,7 +304,7 @@ const fn status_name(status: BootstrapStatus) -> &'static str {
     }
 }
 
-async fn serve(database: Database) -> Result<(), CliFailure> {
+async fn serve(database: Database, should_auto_migrate: bool) -> Result<(), CliFailure> {
     let address = SocketAddr::from(([127, 0, 0, 1], 8080));
     let listener = TcpListener::bind(address)
         .await
@@ -279,16 +319,54 @@ async fn serve(database: Database) -> Result<(), CliFailure> {
         listen_address = %address,
         "Takt server is listening"
     );
-    let serve_result = axum::serve(
-        listener,
-        takt_api::router_with_readiness(readiness, metrics),
-    )
-    .with_graceful_shutdown(shutdown_signal())
-    .await
-    .map_err(|_| CliFailure::Network);
+    let application = takt_api::router_with_readiness(readiness, metrics);
+    let initialize_schema = async {
+        if should_auto_migrate {
+            database.migrate().await
+        } else {
+            database.require_current_schema().await
+        }
+    };
+    let serve_result =
+        serve_while_initializing(listener, application, initialize_schema, shutdown_signal())
+            .await
+            .map_err(|error| match error {
+                ServeWhileInitializingError::Initialization(error) => CliFailure::Database(error),
+                ServeWhileInitializingError::Network => CliFailure::Network,
+            });
     let close_result = database.close().await.map_err(CliFailure::Database);
     serve_result?;
     close_result
+}
+
+enum ServeWhileInitializingError<E> {
+    Initialization(E),
+    Network,
+}
+
+async fn serve_while_initializing<F, S, E>(
+    listener: TcpListener,
+    application: axum::Router,
+    initialize: F,
+    shutdown: S,
+) -> Result<(), ServeWhileInitializingError<E>>
+where
+    F: Future<Output = Result<(), E>>,
+    S: Future<Output = ()> + Send + 'static,
+{
+    let server = axum::serve(listener, application)
+        .with_graceful_shutdown(shutdown)
+        .into_future();
+    tokio::pin!(server);
+    tokio::pin!(initialize);
+
+    tokio::select! {
+        result = &mut server => result.map_err(|_| ServeWhileInitializingError::Network),
+        initialization = &mut initialize => match initialization {
+            Ok(()) => server.await.map_err(|_| ServeWhileInitializingError::Network),
+            Err(error) => Err(ServeWhileInitializingError::Initialization(error)),
+        },
+    }
 }
 
 async fn shutdown_signal() {
@@ -339,5 +417,99 @@ impl CliFailure {
             Self::Output => "failed to serialize command output".to_owned(),
             Self::Network => "server network operation failed".to_owned(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use async_trait::async_trait;
+    use takt_api::{HealthMetrics, ReadinessCheck, ReadinessFailure};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        sync::{Notify, oneshot},
+    };
+
+    use super::serve_while_initializing;
+
+    struct GatedReadiness(Arc<AtomicBool>);
+
+    #[async_trait]
+    impl ReadinessCheck for GatedReadiness {
+        async fn check(&self) -> Result<(), ReadinessFailure> {
+            if self.0.load(Ordering::Acquire) {
+                Ok(())
+            } else {
+                Err(ReadinessFailure::MigrationInProgress)
+            }
+        }
+    }
+
+    async fn http_get(address: std::net::SocketAddr, path: &str) -> Result<String, io::Error> {
+        let mut stream = TcpStream::connect(address).await?;
+        stream
+            .write_all(
+                format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await?;
+        Ok(response)
+    }
+
+    // PRD-API-002 / PRD-DATA-002: the production startup composition serves
+    // readiness while initialization is still in progress.
+    #[tokio::test]
+    async fn readiness_is_served_during_schema_initialization()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let ready = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new(Notify::new());
+        let application = takt_api::router_with_readiness(
+            Arc::new(GatedReadiness(ready.clone())),
+            Arc::new(HealthMetrics::default()),
+        );
+        let (shutdown_sender, shutdown_receiver) = oneshot::channel();
+        let initialization_gate = gate.clone();
+        let initialization_ready = ready.clone();
+
+        let server = tokio::spawn(async move {
+            serve_while_initializing(
+                listener,
+                application,
+                async move {
+                    initialization_gate.notified().await;
+                    initialization_ready.store(true, Ordering::Release);
+                    Ok::<(), io::Error>(())
+                },
+                async move {
+                    let _ = shutdown_receiver.await;
+                },
+            )
+            .await
+        });
+
+        let migrating = http_get(address, "/health/ready").await?;
+        assert!(migrating.contains(" 503 "), "response was: {migrating:?}");
+        assert!(migrating.contains("service_unavailable"));
+
+        gate.notify_one();
+        while !ready.load(Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+        let available = http_get(address, "/health/ready").await?;
+        assert!(available.starts_with("HTTP/1.1 200"));
+
+        let _ = shutdown_sender.send(());
+        assert!(server.await?.is_ok());
+        Ok(())
     }
 }

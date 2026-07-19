@@ -5,10 +5,10 @@ mod common;
 use std::error::Error;
 
 use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
-use takt_application::{Argon2idConfig, BootstrapService, BootstrapStatus, PasswordHasher};
+use takt_application::{BootstrapService, BootstrapStatus};
 use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
 
-use common::{FixedClock, SequenceIds, TEST_PASSWORD};
+use common::{FixedClock, SequenceIds, TEST_PASSWORD, TestPasswordHasher};
 
 async fn sqlite_database(
     directory: &tempfile::TempDir,
@@ -61,12 +61,7 @@ async fn sqlite_migrations_are_forward_only_and_repeatable() -> Result<(), Box<d
     assert_eq!(foreign_keys, 1);
     assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
 
-    database.close().await?;
-    assert_eq!(
-        database.readiness().await,
-        Err(ReadinessError::SchemaNotReady)
-    );
-    Ok(())
+    common::run_shutdown_contract(database).await
 }
 
 #[tokio::test]
@@ -149,7 +144,7 @@ async fn sqlite_concurrent_bootstraps_create_one_administrator() -> Result<(), B
     let (database, path) = sqlite_database(&directory, "concurrent.sqlite3").await?;
     database.migrate().await?;
     let repository = SqlxRepository::new(database);
-    let hasher = PasswordHasher::new(Argon2idConfig::testing());
+    let hasher = TestPasswordHasher::new();
     let clock = FixedClock;
     let ids = SequenceIds::new(1_000);
     let service = BootstrapService::new(&repository, &hasher, &clock, &ids);
@@ -189,7 +184,7 @@ async fn sqlite_bootstrap_rolls_back_a_mid_transaction_failure() -> Result<(), B
     .await?;
 
     let repository = SqlxRepository::new(database);
-    let hasher = PasswordHasher::new(Argon2idConfig::testing());
+    let hasher = TestPasswordHasher::new();
     let clock = FixedClock;
     let ids = SequenceIds::new(2_000);
     let service = BootstrapService::new(&repository, &hasher, &clock, &ids);

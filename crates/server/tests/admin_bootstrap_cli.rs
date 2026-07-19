@@ -17,6 +17,14 @@ fn run_server(
     arguments: &[&str],
     stdin: Option<&str>,
 ) -> Result<Output, Box<dyn Error>> {
+    run_server_bytes(data_directory, arguments, stdin.map(str::as_bytes))
+}
+
+fn run_server_bytes(
+    data_directory: &Path,
+    arguments: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<Output, Box<dyn Error>> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_takt-server"));
     command
         .args(arguments)
@@ -34,7 +42,7 @@ fn run_server(
         .stderr(Stdio::piped());
     let mut child = command.spawn()?;
     if let (Some(value), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        pipe.write_all(value.as_bytes())?;
+        pipe.write_all(value)?;
     }
     Ok(child.wait_with_output()?)
 }
@@ -116,6 +124,23 @@ fn bootstrap_cli_rejects_invalid_password_and_password_arguments() -> Result<(),
     let diagnostics = String::from_utf8(unsupported.stderr)?;
     assert!(diagnostics.contains("--password"));
     assert!(!diagnostics.contains("not-a-secret-fixture"));
+
+    let mut trailing_input = vec![b'a'; 1_024];
+    trailing_input.extend_from_slice(b"\r\nEXTRA");
+    let trailing_directory = tempfile::tempdir()?;
+    let trailing = run_server_bytes(
+        trailing_directory.path(),
+        &[
+            "admin",
+            "bootstrap",
+            "--username",
+            "admin",
+            "--password-stdin",
+        ],
+        Some(&trailing_input),
+    )?;
+    assert_eq!(trailing.status.code(), Some(3));
+    assert!(trailing.stdout.is_empty());
     Ok(())
 }
 
@@ -133,6 +158,39 @@ fn sqlite_configuration_refuses_the_working_directory() -> Result<(), Box<dyn Er
     assert_eq!(output.status.code(), Some(10));
     assert!(String::from_utf8(output.stderr)?.contains("must not be"));
     assert_eq!(database_path.exists(), existed_before);
+    Ok(())
+}
+
+#[test]
+fn sqlite_configuration_resolves_parent_components_before_safety_checks()
+-> Result<(), Box<dyn Error>> {
+    let current_directory = std::env::current_dir()?;
+    let repository = current_directory
+        .ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .ok_or("test must run below a repository root")?;
+    let repository_parent = repository.parent().ok_or("repository must have a parent")?;
+    let repository_name = repository
+        .file_name()
+        .ok_or("repository must have a directory name")?;
+    let protected_directory = tempfile::tempdir_in(repository.join("target"))?;
+    let sibling_directory = tempfile::tempdir_in(repository_parent)?;
+    let disguised_directory = sibling_directory
+        .path()
+        .join("..")
+        .join(repository_name)
+        .join("target")
+        .join(
+            protected_directory
+                .path()
+                .file_name()
+                .ok_or("temporary directory must have a name")?,
+        );
+
+    let output = run_server(&disguised_directory, &["--migrate-only"], None)?;
+    assert_eq!(output.status.code(), Some(10));
+    assert!(String::from_utf8(output.stderr)?.contains("must not be"));
+    assert!(!protected_directory.path().join("takt.sqlite3").exists());
     Ok(())
 }
 

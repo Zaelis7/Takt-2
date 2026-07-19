@@ -1,3 +1,5 @@
+-- Requirements: PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-IAM-001, PRD-IAM-003.
+-- Milestone: 0.1 persistent identity and local bootstrap.
 CREATE TABLE organizations (
     id UUID PRIMARY KEY CHECK (substring(id::text, 15, 1) = '7'),
     slug VARCHAR(63) NOT NULL UNIQUE,

@@ -1,7 +1,9 @@
+-- Requirements: PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-IAM-001, PRD-IAM-003.
+-- Milestone: 0.1 persistent identity and local bootstrap.
 CREATE TABLE organizations (
     id TEXT PRIMARY KEY CHECK (length(id) = 36 AND substr(id, 15, 1) = '7'),
     slug TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
+    name TEXT NOT NULL CHECK (length(name) <= 120),
     settings TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(settings)),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -19,8 +21,8 @@ CREATE TABLE projects (
     id TEXT PRIMARY KEY CHECK (length(id) = 36 AND substr(id, 15, 1) = '7'),
     organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     slug TEXT NOT NULL,
-    name TEXT NOT NULL,
-    default_timezone TEXT NOT NULL DEFAULT 'UTC',
+    name TEXT NOT NULL CHECK (length(name) <= 120),
+    default_timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (length(default_timezone) <= 100),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
@@ -38,7 +40,7 @@ CREATE TABLE projects (
 CREATE TABLE users (
     id TEXT PRIMARY KEY CHECK (length(id) = 36 AND substr(id, 15, 1) = '7'),
     normalized_username TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
+    display_name TEXT NOT NULL CHECK (length(display_name) <= 120),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
@@ -86,8 +88,8 @@ CREATE TABLE audit_events (
     project_id TEXT NULL,
     actor_type TEXT NOT NULL CHECK (actor_type IN ('system', 'local_cli')),
     actor_id TEXT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    action TEXT NOT NULL,
-    resource_type TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (length(action) <= 120),
+    resource_type TEXT NOT NULL CHECK (length(resource_type) <= 64),
     resource_id TEXT NOT NULL CHECK (length(resource_id) = 36 AND substr(resource_id, 15, 1) = '7'),
     request_id TEXT NOT NULL CHECK (length(request_id) = 36 AND substr(request_id, 15, 1) = '7'),
     source_ip_hash TEXT NULL,

@@ -41,6 +41,8 @@ impl OrganizationRepository for SqlxRepository {
         &self,
         organization: NewOrganization,
     ) -> Result<Organization, RepositoryError> {
+        validate_bounded_text(&organization.slug, 63)?;
+        validate_bounded_text(&organization.name, 120)?;
         match &self.database.pool {
             DatabasePool::PostgreSql(pool) => {
                 let now = postgres_time(organization.now)?;
@@ -120,11 +122,58 @@ impl OrganizationRepository for SqlxRepository {
             ),
         }
     }
+
+    async fn update_organization_name(
+        &self,
+        id: OrganizationId,
+        expected_version: i64,
+        name: &str,
+        now: UtcTimestamp,
+    ) -> Result<Organization, RepositoryError> {
+        validate_bounded_text(name, 120)?;
+        let updated = match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => sqlx::query(
+                "UPDATE organizations SET name = $1, updated_at = $2, version = version + 1 WHERE id = $3 AND version = $4 RETURNING id, slug, name, created_at, updated_at, version",
+            )
+            .bind(name)
+            .bind(postgres_time(now)?)
+            .bind(id.as_uuid())
+            .bind(expected_version)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .map(|row| organization_from_postgres(&row))
+            .transpose()?,
+            DatabasePool::Sqlite(pool) => sqlx::query(
+                "UPDATE organizations SET name = ?1, updated_at = ?2, version = version + 1 WHERE id = ?3 AND version = ?4 RETURNING id, slug, name, created_at, updated_at, version",
+            )
+            .bind(name)
+            .bind(now.unix_micros())
+            .bind(id.to_string())
+            .bind(expected_version)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .map(|row| organization_from_sqlite(&row))
+            .transpose()?,
+        };
+        if let Some(organization) = updated {
+            return Ok(organization);
+        }
+        match self.organization_by_id(id).await {
+            Ok(_) => Err(RepositoryError::VersionConflict),
+            Err(RepositoryError::NotFound) => Err(RepositoryError::NotFound),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[async_trait]
 impl ProjectRepository for SqlxRepository {
     async fn create_project(&self, project: NewProject) -> Result<Project, RepositoryError> {
+        validate_bounded_text(&project.slug, 63)?;
+        validate_bounded_text(&project.name, 120)?;
+        validate_bounded_text(&project.default_timezone, 100)?;
         match &self.database.pool {
             DatabasePool::PostgreSql(pool) => project_from_postgres(
                 &sqlx::query(
@@ -213,6 +262,8 @@ impl ProjectRepository for SqlxRepository {
 #[async_trait]
 impl LocalUserRepository for SqlxRepository {
     async fn create_local_user(&self, user: NewLocalUser) -> Result<LocalUser, RepositoryError> {
+        validate_bounded_text(&user.normalized_username, 64)?;
+        validate_bounded_text(&user.display_name, 120)?;
         match &self.database.pool {
             DatabasePool::PostgreSql(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
@@ -371,6 +422,8 @@ impl AuditRepository for SqlxRepository {
         &self,
         event: NewAuditEvent,
     ) -> Result<AuditEvent, RepositoryError> {
+        validate_bounded_text(&event.event.action, 120)?;
+        validate_bounded_text(&event.event.resource_type, 64)?;
         let metadata = audit_metadata_json(&event.event.metadata);
         match &self.database.pool {
             DatabasePool::PostgreSql(pool) => audit_from_postgres(
@@ -434,6 +487,34 @@ impl AuditRepository for SqlxRepository {
                 .await
                 .map_err(map_sqlx_error)?,
             ),
+        }
+    }
+
+    async fn audit_events_for_organization(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<Vec<AuditEvent>, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => sqlx::query(
+                "SELECT id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at FROM audit_events WHERE organization_id = $1 ORDER BY occurred_at ASC, id ASC",
+            )
+            .bind(organization_id.as_uuid())
+            .fetch_all(pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .iter()
+            .map(audit_from_postgres)
+            .collect(),
+            DatabasePool::Sqlite(pool) => sqlx::query(
+                "SELECT id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at FROM audit_events WHERE organization_id = ?1 ORDER BY occurred_at ASC, id ASC",
+            )
+            .bind(organization_id.to_string())
+            .fetch_all(pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .iter()
+            .map(audit_from_sqlite)
+            .collect(),
         }
     }
 }
@@ -1147,6 +1228,14 @@ where
         .map_err(|_| RepositoryError::UnknownInfrastructure)
 }
 
+fn validate_bounded_text(value: &str, maximum_characters: usize) -> Result<(), RepositoryError> {
+    if value.chars().count() > maximum_characters {
+        Err(RepositoryError::ConstraintViolation)
+    } else {
+        Ok(())
+    }
+}
+
 fn map_sqlx_error(error: sqlx::Error) -> RepositoryError {
     match error {
         sqlx::Error::RowNotFound => RepositoryError::NotFound,
@@ -1160,6 +1249,11 @@ fn map_sqlx_error(error: sqlx::Error) -> RepositoryError {
         }
         sqlx::Error::Database(database_error)
             if database_error.is_foreign_key_violation() || database_error.is_check_violation() =>
+        {
+            RepositoryError::ConstraintViolation
+        }
+        sqlx::Error::Database(database_error)
+            if database_error.code().as_deref() == Some("22001") =>
         {
             RepositoryError::ConstraintViolation
         }

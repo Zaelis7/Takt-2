@@ -2,7 +2,7 @@ use std::{
     env,
     error::Error,
     fmt, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::Duration,
 };
 
@@ -334,19 +334,62 @@ fn data_directory() -> Result<PathBuf, ConfigError> {
 }
 
 fn validate_sqlite_location(data_directory: &Path) -> Result<(), ConfigError> {
-    let current_directory =
-        env::current_dir().map_err(|_| ConfigError::DataDirectoryUnavailable)?;
+    let current_directory = resolve_path_for_comparison(
+        &env::current_dir().map_err(|_| ConfigError::DataDirectoryUnavailable)?,
+    )?;
+    let data_directory = resolve_path_for_comparison(data_directory)?;
     if data_directory == current_directory {
         return Err(ConfigError::UnsafeSqliteLocation);
     }
-    if let Some(repository_root) = current_directory
-        .ancestors()
-        .find(|ancestor| ancestor.join(".git").exists())
-        && data_directory.starts_with(repository_root)
-    {
-        return Err(ConfigError::UnsafeSqliteLocation);
+
+    let manifest_directory = resolve_path_for_comparison(Path::new(env!("CARGO_MANIFEST_DIR")))?;
+    for search_directory in [&current_directory, &manifest_directory] {
+        if let Some(repository_root) = search_directory
+            .ancestors()
+            .find(|ancestor| ancestor.join(".git").exists())
+            && data_directory.starts_with(repository_root)
+        {
+            return Err(ConfigError::UnsafeSqliteLocation);
+        }
     }
     Ok(())
+}
+
+fn resolve_path_for_comparison(path: &Path) -> Result<PathBuf, ConfigError> {
+    let mut existing_ancestor = path;
+    let mut missing_components = Vec::new();
+    while !existing_ancestor.exists() {
+        let name = existing_ancestor
+            .file_name()
+            .ok_or(ConfigError::DataDirectoryUnavailable)?;
+        missing_components.push(name.to_os_string());
+        existing_ancestor = existing_ancestor
+            .parent()
+            .ok_or(ConfigError::DataDirectoryUnavailable)?;
+    }
+
+    let mut resolved =
+        fs::canonicalize(existing_ancestor).map_err(|_| ConfigError::DataDirectoryUnavailable)?;
+    for component in missing_components.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(normalize_absolute_path(&resolved))
+}
+
+fn normalize_absolute_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 fn parse_u32(name: &str, default: u32, minimum: u32, maximum: u32) -> Result<u32, ConfigError> {

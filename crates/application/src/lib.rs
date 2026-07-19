@@ -256,6 +256,13 @@ pub trait OrganizationRepository: Send + Sync {
     async fn organization_by_id(&self, id: OrganizationId)
     -> Result<Organization, RepositoryError>;
     async fn organization_by_slug(&self, slug: &str) -> Result<Organization, RepositoryError>;
+    async fn update_organization_name(
+        &self,
+        id: OrganizationId,
+        expected_version: i64,
+        name: &str,
+        now: UtcTimestamp,
+    ) -> Result<Organization, RepositoryError>;
 }
 
 #[async_trait]
@@ -300,6 +307,10 @@ pub trait AuditRepository: Send + Sync {
     async fn append_audit_event(&self, event: NewAuditEvent)
     -> Result<AuditEvent, RepositoryError>;
     async fn audit_event_by_id(&self, id: AuditEventId) -> Result<AuditEvent, RepositoryError>;
+    async fn audit_events_for_organization(
+        &self,
+        organization_id: OrganizationId,
+    ) -> Result<Vec<AuditEvent>, RepositoryError>;
 }
 
 #[derive(Clone, Debug)]
@@ -359,6 +370,14 @@ pub trait IdGenerator: Send + Sync {
     fn next_resource_id(&self) -> Result<ResourceId, ApplicationError>;
 }
 
+/// Port for CPU-intensive password operations. Runtime adapters must execute
+/// these operations away from asynchronous executor worker threads.
+#[async_trait]
+pub trait PasswordHashing: Send + Sync {
+    async fn hash(&self, password: &str) -> Result<PasswordHash, ValidationError>;
+    async fn verify(&self, password: &str, hash: &PasswordHash) -> Result<bool, ValidationError>;
+}
+
 pub struct SystemClock;
 
 impl Clock for SystemClock {
@@ -414,26 +433,22 @@ impl From<RepositoryError> for ApplicationError {
     }
 }
 
-pub struct BootstrapService<'a, R, C, I> {
+pub struct BootstrapService<'a, R, H, C, I> {
     repository: &'a R,
-    password_hasher: &'a PasswordHasher,
+    password_hasher: &'a H,
     clock: &'a C,
     ids: &'a I,
 }
 
-impl<'a, R, C, I> BootstrapService<'a, R, C, I>
+impl<'a, R, H, C, I> BootstrapService<'a, R, H, C, I>
 where
     R: BootstrapRepository,
+    H: PasswordHashing,
     C: Clock,
     I: IdGenerator,
 {
     #[must_use]
-    pub const fn new(
-        repository: &'a R,
-        password_hasher: &'a PasswordHasher,
-        clock: &'a C,
-        ids: &'a I,
-    ) -> Self {
+    pub const fn new(repository: &'a R, password_hasher: &'a H, clock: &'a C, ids: &'a I) -> Self {
         Self {
             repository,
             password_hasher,
@@ -448,7 +463,7 @@ where
         password: &str,
     ) -> Result<BootstrapOutput, ApplicationError> {
         let normalized_username = normalize_local_username(username)?;
-        let password_hash = self.password_hasher.hash(password)?;
+        let password_hash = self.password_hasher.hash(password).await?;
         let now = self.clock.now()?;
         let organization_id = OrganizationId::from_resource_id(self.ids.next_resource_id()?);
         let project_id = ProjectId::from_resource_id(self.ids.next_resource_id()?);
@@ -527,7 +542,8 @@ where
                 if existing.resources.user.normalized_username == normalized_username
                     && self
                         .password_hasher
-                        .verify(password, &existing.password_hash)?
+                        .verify(password, &existing.password_hash)
+                        .await?
                 {
                     Ok(BootstrapOutput {
                         status: BootstrapStatus::AlreadyPresent,
