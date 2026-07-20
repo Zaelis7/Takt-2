@@ -19,6 +19,7 @@
 - `findings.yaml` records eight initial Spec, decision and evidence problems without silently changing public semantics.
 - `pnpm check:tracking` validates IDs, enums, evidence presence, package/finding references, a cycle-free package graph, referenced files and narrowly scoped legacy unknown-ID exceptions.
 - CI and local development gates run the tracking check; `pnpm test:tools` includes its negative tests.
+- Root `AGENTS.md` now requires deterministic automatic package selection when the user asks only for the next open task; the agent derives scope, tests, gates and tracking updates without another detailed prompt.
 
 ### Exact commands and exit codes
 

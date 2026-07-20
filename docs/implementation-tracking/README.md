@@ -68,6 +68,13 @@ Ein Paket wechselt nie direkt von `planned` zu `verified`. Ein rotes, nicht ausg
 9. Im selben Change Evidence, Requirement-Ledger, Paketstatus und neue/gelöste Findings aktualisieren. Historische fehlgeschlagene Evidence wird ergänzt, nicht überschrieben.
 10. Release-Status wird nur aus Exit-Kriterien und Release Evidence bestimmt, nie aus der Anzahl vorhandener Dateien oder geschlossener Issues.
 
+`AGENTS.md` macht diese Auswahl für allgemeine Fortsetzungsaufträge verbindlich.
+Ein Prompt wie „Fahre mit der nächsten offenen Aufgabe fort“ genügt: Der Agent
+wählt das nächste ausführbare Paket deterministisch nach Release, Blockern und
+Dateireihenfolge, arbeitet genau dieses Paket ab und pflegt Register und Evidence
+im selben Change. Eine Rückfrage ist nur bei einer echten Owner-Entscheidung oder
+einem nicht innerhalb des Scopes lösbaren Blocker vorgesehen.
+
 ## Finding-Triage
 
 `decision` legt fest, wie weitergearbeitet wird:
@@ -142,4 +149,3 @@ Eine Ausnahme ist kein gültiger Requirement-Ersatz. Sie verhindert lediglich, d
 - wöchentlich oder vor Backlog-Planung: Baseline-Commit und Abhängigkeits-DAG auditieren
 - vor jedem Release Candidate: vollständige Neuberechnung aus sauberem Checkout, keine `evidence_only`-Einstufung für Release-Muss-Anforderungen
 - nach jeder Spec-Änderung: Gate laufen lassen und Paketzuordnung/Acceptance anpassen, bevor Feature-Code folgt
-

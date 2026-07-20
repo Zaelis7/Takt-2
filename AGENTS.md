@@ -54,6 +54,41 @@ Never silently reinterpret a contract.
 
 Do not disable, weaken, delete or blindly update tests to obtain a pass. A skipped or unavailable check is not a pass.
 
+## Implementation tracking and automatic next-task selection
+
+The operational implementation state is maintained in `docs/implementation-tracking/`.
+Before selecting or changing a work package, read its `README.md`,
+`requirements.yaml`, `work-packages.yaml`, `findings.yaml` and
+`current-status.md`, then run `pnpm check:tracking`.
+
+When the user asks to continue with the next open task without naming a package,
+select it autonomously. Do not ask the user to choose between ordinary in-scope
+packages. Apply this deterministic order:
+
+1. Resume an `in_progress` package whose blockers are resolved.
+2. Otherwise consider only `planned` packages whose `depends_on` packages are
+   `implemented` or `verified` and whose referenced findings do not require an
+   unresolved owner decision.
+3. Prefer packages for the earliest unfinished release: `0.1`, then `0.2`, then
+   `0.3`, then `post-0.3`. A `cross-release` package is considered at the earliest
+   release that depends on it.
+4. Within the same release, first resolve open critical/high contract, security,
+   migration or evidence findings that block implementation; otherwise use file
+   order in `work-packages.yaml`.
+5. Work on exactly one package at a time. If its estimated implementation or
+   validation size violates the package limits in `specs/09-ai-implementation.md`,
+   split it in the tracking files first and execute only the first new unblocked
+   package.
+
+For the selected package, derive the complete prompt content from its registry
+entry and the specs: scope, exclusions, contracts, risks, acceptance, gates and
+evidence. Perform the normal test-first workflow without requiring the user to
+repeat these instructions. In the same change, update affected requirement
+coverage/verification, package status, findings and Implementation Evidence.
+Never mark a package `verified` without the required independent review and
+commit-bound validation. Stop for user input only when the specs require an
+owner decision or the selected package cannot be made unblocked within scope.
+
 ## Rust rules
 
 - Stable pinned toolchain and committed `Cargo.lock`.
