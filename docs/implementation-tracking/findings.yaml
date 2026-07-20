@@ -1,0 +1,137 @@
+schema_version: 1
+findings:
+  - id: SPEC-001
+    status: open
+    severity: high
+    kind: error
+    decision: spec_change
+    summary: PRD-DATA-001, PRD-DATA-002 and PRD-DATA-004 are used as requirement IDs but do not exist in the canonical product requirements or traceability table.
+    locations:
+      - specs/00-product-requirements.md
+      - specs/10-traceability.md
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+    affects:
+      - PRD-IAM-001
+      - PRD-IAM-003
+      - PRD-NFR-002
+      - PRD-NFR-005
+      - PRD-NFR-007
+    resolution: Decide whether normative DATA requirements are added to chapter 00 and traceability, or replace every invalid reference with existing IDs that actually express the tested behavior.
+
+  - id: SPEC-002
+    status: open
+    severity: high
+    kind: gap
+    decision: spec_change
+    summary: Monitor dependencies are required by the 0.3 roadmap and have an acceptance scenario, but no Requirement ID or traceability entry.
+    locations:
+      - specs/08-roadmap.md
+      - specs/acceptance/v0.3.feature
+      - specs/10-traceability.md
+    affects: []
+    resolution: Add a canonical requirement, tag the Gherkin scenario and place it in the release traceability table before implementation begins.
+
+  - id: SPEC-003
+    status: open
+    severity: high
+    kind: gap
+    decision: spec_change
+    summary: The normative OpenAPI omits required 0.1 operations for login/session/token management, monitor transitions and pause/resume, operation lookup, notification-channel management, status-page management and authenticated SSE.
+    locations:
+      - specs/contracts/openapi.yaml
+      - specs/03-api-and-automation.md
+      - specs/08-roadmap.md
+      - specs/acceptance/v0.1.feature
+    affects:
+      - PRD-API-001
+      - PRD-IAM-001
+      - PRD-MON-001
+      - PRD-MON-005
+      - PRD-NOT-001
+      - PRD-NOT-002
+      - PRD-NOT-003
+      - PRD-NOT-004
+      - PRD-STA-001
+    resolution: Review contract changes in feature-sized packages before implementing the respective endpoint; do not infer response or error semantics from prose alone.
+
+  - id: SPEC-004
+    status: open
+    severity: high
+    kind: conflict
+    decision: spec_change
+    summary: OpenAPI, the declarative JSON Schema, Proto and chapter 04 expose different option sets and naming for the same check types, most visibly HTTP headers, body, auth, assertions and response limits.
+    locations:
+      - specs/contracts/openapi.yaml
+      - specs/contracts/takt-config.schema.json
+      - specs/contracts/probe.proto
+      - specs/04-probes-and-checks.md
+    affects:
+      - PRD-API-002
+      - PRD-MON-002
+    resolution: Define one canonical typed CheckSpec mapping and compatibility tests across all three contracts before building monitor persistence or executors.
+
+  - id: SPEC-005
+    status: open
+    severity: medium
+    kind: error
+    decision: spec_change
+    summary: The specification index lists AGENTS.template.md, but that file is not present in the specification package.
+    locations:
+      - specs/README.md
+    affects: []
+    resolution: Add the promised template or remove the index entry in a reviewed specification-only change.
+
+  - id: EVID-001
+    status: open
+    severity: high
+    kind: evidence_gap
+    decision: implementation
+    summary: Existing evidence is not a current independent verdict; bootstrap evidence records a failed validator result and persistence evidence targets an older base while explicitly leaving post-remediation validation pending.
+    locations:
+      - docs/implementation-evidence/bootstrap.md
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+    affects:
+      - PRD-API-002
+      - PRD-IAM-001
+      - PRD-IAM-003
+      - PRD-IAM-005
+      - PRD-NFR-001
+      - PRD-NFR-002
+      - PRD-NFR-008
+      - PRD-NFR-010
+    resolution: Validate the current committed target from a clean checkout, append a commit-bound independent verdict, and never overwrite the historical failed verdict.
+
+  - id: EVID-002
+    status: open
+    severity: high
+    kind: evidence_gap
+    decision: implementation
+    summary: The 37 Gherkin scenarios are syntax-checked only; there is no executable step binding or generated requirement-to-test evidence, so green contract validation is not product acceptance.
+    locations:
+      - tools/validate-gherkin.mjs
+      - specs/acceptance/v0.1.feature
+      - specs/acceptance/v0.2.feature
+      - specs/acceptance/v0.3.feature
+      - specs/07-quality-acceptance.md
+    affects:
+      - PRD-API-002
+      - PRD-NFR-002
+      - PRD-NFR-007
+      - PRD-NFR-009
+    resolution: Add an executable acceptance harness or an explicit scenario-to-automated-test manifest that fails when a release scenario has no runnable implementation.
+
+  - id: DEC-001
+    status: open
+    severity: high
+    kind: ambiguity
+    decision: owner_decision
+    summary: License model, Takt name/package availability and official security/signing channels still require owner confirmation before a public 0.1 release.
+    locations:
+      - specs/README.md
+      - specs/06-security-operations.md
+      - specs/08-roadmap.md
+    affects:
+      - PRD-NFR-003
+    resolution: Record owner decisions in versioned ADRs or specification decisions before public packaging and signing work is approved.

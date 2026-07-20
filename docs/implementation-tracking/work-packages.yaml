@@ -1,0 +1,849 @@
+schema_version: 1
+packages:
+  - id: GOV-001
+    release: cross-release
+    status: implemented
+    requirements: [PRD-API-002]
+    findings: []
+    depends_on: []
+    outcome: Versionierte Requirement-, Work-Package- und Findings-Register mit automatischem Konsistenz-Gate.
+    acceptance:
+      - Alle 54 kanonischen PRD-IDs kommen im Ledger genau einmal vor.
+      - Unbekannte IDs, fehlende Pakete, unbekannte Abhängigkeiten und Paketzyklen lassen den Gate-Test fehlschlagen.
+    evidence:
+      - node --test tools/check-implementation-tracking.test.mjs
+      - pnpm check:tracking
+
+  - id: CORE-001
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-002, PRD-MON-007, PRD-NFR-001, PRD-NFR-003, PRD-NFR-008, PRD-NFR-010]
+    findings: [EVID-001]
+    depends_on: []
+    outcome: Gepinnter Monorepo-Bootstrap mit Health/Readiness, eingebettetem Web-Build und generierten OpenAPI-/Proto-Typen.
+    acceptance:
+      - Health-Endpunkte antworten über einen echten TCP-Listener vertragstreu und redigiert.
+      - Contract-, Architektur- und Generated-Drift-Gates laufen reproduzierbar.
+    evidence:
+      - docs/implementation-evidence/bootstrap.md
+      - Aktueller unabhängiger Clean-Checkout-Verdict ist wegen EVID-001 nachzuliefern.
+
+  - id: DATA-001
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-IAM-001, PRD-IAM-003, PRD-IAM-004, PRD-IAM-005, PRD-NFR-001, PRD-NFR-002, PRD-NFR-005, PRD-NFR-007, PRD-NFR-008, PRD-NFR-010]
+    findings: [SPEC-001, EVID-001]
+    depends_on: [CORE-001]
+    outcome: Äquivalente PostgreSQL-/SQLite-Identitätspersistenz, Default-Kontext, lokaler Owner-Bootstrap und append-only Bootstrap-Audit.
+    acceptance:
+      - Dieselbe Repository-Suite läuft auf SQLite und echtem PostgreSQL 16.
+      - Bootstrap ist atomar, idempotent, nebenläufig sicher und gibt keine Zugangsdaten aus.
+    evidence:
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - Aktueller unabhängiger Clean-Checkout-Verdict ist wegen EVID-001 nachzuliefern.
+
+  - id: SPEC-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-001, PRD-IAM-003, PRD-NFR-002, PRD-NFR-005, PRD-NFR-007]
+    findings: [SPEC-001]
+    depends_on: [GOV-001]
+    outcome: Kanonische, durchgängig verwendete Requirement-IDs für Daten- und Migrationsverhalten.
+    acceptance:
+      - SPEC-001 ist durch einen reviewten Spec-Change entschieden.
+      - Keine nicht kanonische PRD-ID bleibt außerhalb historischer Evidence übrig.
+    evidence:
+      - pnpm check:tracking ohne unknown-requirement-Ausnahmen
+      - Review-Diff von Kapitel 00, Kapitel 10, Migrationen und betroffenen Tests
+
+  - id: SPEC-011
+    release: "0.3"
+    status: planned
+    requirements: []
+    findings: [SPEC-002]
+    depends_on: [GOV-001]
+    outcome: Normative Requirement-ID und Acceptance-Tag für Monitorabhängigkeiten.
+    acceptance:
+      - Kapitel 00, Kapitel 10 und v0.3.feature referenzieren dieselbe neue ID.
+      - DAG-, Sichtbarkeits- und Notification-Suppression-Semantik bleiben unverändert beschrieben.
+    evidence:
+      - pnpm contracts:gherkin
+      - pnpm check:tracking
+
+  - id: SPEC-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-IAM-001, PRD-MON-001, PRD-MON-005, PRD-NOT-001, PRD-NOT-002, PRD-NOT-003, PRD-NOT-004, PRD-STA-001]
+    findings: [SPEC-003]
+    depends_on: [GOV-001]
+    outcome: Featureweise ergänzte OpenAPI-Verträge für alle fehlenden 0.1-Verwaltungs- und Operationspfade.
+    acceptance:
+      - Jede 0.1-Operation besitzt Auth-, Permission-, Erfolgs- und Problem-Responses im Vertrag.
+      - Operationen werden nur in dem Paket ergänzt, das ihre Laufzeitimplementierung unmittelbar vorbereitet.
+    evidence:
+      - pnpm contracts:openapi
+      - Review der Breaking-Change-Ausgabe gegen den letzten freigegebenen Vertrag
+
+  - id: SPEC-013
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [GOV-001]
+    outcome: Ein kanonisches CheckSpec-Mapping zwischen OpenAPI, Config Schema, Proto und Rust-Domäne.
+    acceptance:
+      - Alle gemeinsamen Check-Felder besitzen dokumentierte 1:1-Namen, Einheiten, Defaults und Grenzen.
+      - Positive und negative Golden-Fixtures werden gegen alle drei Maschinenverträge geprüft.
+    evidence:
+      - pnpm contracts:validate
+      - Cross-contract Golden-Test für alle sieben Check-Arten
+
+  - id: SPEC-014
+    release: "0.1"
+    status: planned
+    requirements: []
+    findings: [SPEC-005]
+    depends_on: [GOV-001]
+    outcome: Korrigierter Spezifikationsindex ohne Verweis auf ein fehlendes Artefakt.
+    acceptance:
+      - Jeder in specs/README.md gelistete Pfad existiert.
+    evidence:
+      - Index-Link-Check
+
+  - id: QA-001
+    release: cross-release
+    status: planned
+    requirements: [PRD-API-002, PRD-NFR-002, PRD-NFR-007, PRD-NFR-009]
+    findings: [EVID-002]
+    depends_on: [GOV-001]
+    outcome: Ausführbare Zuordnung jedes release-relevanten Gherkin-Szenarios zu automatisierten Tests.
+    acceptance:
+      - Ein Release-Szenario ohne ausführbaren Test lässt CI fehlschlagen.
+      - Syntaxvalidierung und Verhaltensausführung werden getrennt berichtet.
+    evidence:
+      - Szenario-zu-Test-Manifest oder Cucumber-Ausführungsbericht
+      - Negativtest für ein absichtlich ungebundenes Szenario
+
+  - id: IAM-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-002, PRD-API-005, PRD-IAM-001]
+    findings: [SPEC-003]
+    depends_on: [DATA-001, SPEC-012]
+    outcome: Reviewte Verträge und Domänenregeln für Login, Logout, Session, Recovery und CSRF.
+    acceptance:
+      - Cookie-, CSRF-, Rotations-, Ablauf- und generische Login-Fehlerregeln sind vertraglich testbar.
+      - Ungültige oder zu große Eingaben liefern stabile Problem Codes.
+    evidence:
+      - OpenAPI-Contract-Tests für Auth-Operationen
+      - Domain-Tests für Session-Laufzeiten und Rotation
+
+  - id: IAM-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [IAM-010]
+    outcome: Engine-paritäre Session-/Recovery-Persistenz und atomare Auditwirkung.
+    acceptance:
+      - Session- und Recovery-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
+      - Tokenwerte werden nur gehasht gespeichert und nie ausgelesen oder geloggt.
+    evidence:
+      - Gemeinsame Repository-Suite beider Engines
+      - Migration-, Redaction- und Rollback-Tests
+
+  - id: IAM-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-011]
+    outcome: Login-/Logout-/Session-HTTP-Pfad mit sicherem Cookie, CSRF und Rate Limit.
+    acceptance:
+      - Login rotiert die Session und verrät nicht, ob ein Nutzer existiert.
+      - Schreibzugriffe ohne gültiges CSRF oder mit abgelaufener Session ändern keine Daten.
+    evidence:
+      - Laufzeitantworten gegen OpenAPI validiert
+      - HTTP-Integrationstests für CSRF, Fixation, Ablauf und Rate Limit
+
+  - id: IAM-013
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: [SPEC-003]
+    depends_on: [IAM-012]
+    outcome: API-Token-CRUD, einmalige Ausgabe, Hashspeicherung und serverseitige Scope-Prüfung.
+    acceptance:
+      - Ein monitors:read-Token kann lesen, aber weder erstellen noch Rechte ableiten.
+      - Tokenwert erscheint nur bei Erzeugung und in keinem Log, Audit oder Listen-Response.
+    evidence:
+      - v0.1 Token-Scope-Acceptance
+      - Negative Permission- und Secret-Scan-Tests
+
+  - id: MON-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-MON-001, PRD-MON-002, PRD-MON-003, PRD-MON-004, PRD-MON-006]
+    findings: [SPEC-004]
+    depends_on: [SPEC-013]
+    outcome: Abgestimmter Monitor-/Check-Vertrag einschließlich Revision, Zeitplan und Grenzen.
+    acceptance:
+      - OpenAPI und Config Schema drücken dieselben gültigen 0.1-Monitorwerte aus.
+      - Unbekannte Felder und ungültige Kombinationen werden an jeder Eingabegrenze abgelehnt.
+    evidence:
+      - Cross-contract Monitor-Fixtures
+      - Generated-code-Drift-Check
+
+  - id: MON-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-001, PRD-ALT-002, PRD-ALT-006, PRD-MON-002, PRD-MON-003, PRD-MON-004, PRD-MON-006, PRD-NFR-010]
+    findings: []
+    depends_on: [MON-010]
+    outcome: Frameworkfreie Domain-Typen für Monitor, CheckSpec, Revision, Observation und Evaluation.
+    acceptance:
+      - IDs, Slugs, Intervalle, Timeouts, Thresholds und Checkvarianten besitzen positive/negative Unit-Tests.
+      - Uhr und ID-Quelle sind injizierbar; Domain importiert kein I/O-Framework.
+    evidence:
+      - Domain Unit-/Property-Tests mit Requirement-IDs
+      - pnpm check:architecture
+
+  - id: DATA-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-MON-001, PRD-MON-003, PRD-MON-006, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [DATA-001, MON-011]
+    outcome: Monitor- und unveränderliche Revisionspersistenz mit Engine-Parität und optimistischer Versionierung.
+    acceptance:
+      - Slug-Eindeutigkeit, Revisionserzeugung, ETag-Konflikt und Mandantenschlüssel laufen auf beiden Engines.
+      - Migrationen sind forward-only und alte Jobs referenzieren stabile Revisionen.
+    evidence:
+      - Gemeinsame PostgreSQL-/SQLite-Repository-Suite
+      - Migrations- und Rollback-Failpoint-Test
+
+  - id: API-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-004, PRD-IAM-005, PRD-MON-001, PRD-MON-003, PRD-MON-004, PRD-MON-006]
+    findings: []
+    depends_on: [DATA-010, IAM-013]
+    outcome: Monitor-CRUD über die öffentliche API mit Idempotenz, ETag und stabiler Cursor-Pagination.
+    acceptance:
+      - Create/replay/reused-key und konkurrierendes If-Match erfüllen v0.1.feature.
+      - Auth-, Permission-, Erfolgs- und Problem-Responses werden gegen OpenAPI geprüft.
+    evidence:
+      - API-Contract-Suite auf PostgreSQL und SQLite
+      - Audit- und Negative-Permission-Tests
+
+  - id: WEB-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-MON-001, PRD-NFR-006, PRD-NFR-009]
+    findings: []
+    depends_on: [API-010]
+    outcome: Monitorliste und Create/Edit-Formular als ausschließliche Clients der öffentlichen API.
+    acceptance:
+      - Loading, Empty, Error und Success sind getestet.
+      - Tastatur, sichtbarer Fokus, Accessible Names und URL-stabile Filter sind abgedeckt.
+    evidence:
+      - Vitest-Komponententests
+      - Playwright- und axe-Bericht in Deutsch und Englisch
+
+  - id: CHECK-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-MON-004, PRD-MON-005, PRD-NFR-010]
+    findings: []
+    depends_on: [DATA-010]
+    outcome: Deterministischer Scheduler, CheckJobs und Leases ohne kumulativen Drift oder parallele Überschneidung.
+    acceptance:
+      - Jitter, Pause, verspäteter Start, superseded Revision und Lease-Rennen sind kontrolliert getestet.
+      - Überlast oder interner Fehler erzeugt keinen Target-Ausfall.
+    evidence:
+      - Scheduler Property-/Concurrency-Tests mit injizierter Uhr
+      - Gemeinsame Lease-Repository-Suite
+
+  - id: CHECK-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-002, PRD-MON-005]
+    findings: [SPEC-004]
+    depends_on: [MON-011]
+    outcome: HTTP(S)-Executor mit getrennten Budgets, sicheren Redirects, SSRF-Regeln und redigierter Observation.
+    acceptance:
+      - Kontrollierte Ziele decken DNS, TLS, Redirect, Timeout, Bodylimit und Assertion ab.
+      - Infrastruktur-/Capability-Fehler werden nie TARGET_FAILURE und Secrets erscheinen in keiner Observation.
+    evidence:
+      - Lokale Zielserver-Integrationstests ohne öffentliches Internet
+      - SSRF- und Secret-Redaction-Testkorpus
+
+  - id: ALERT-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-001, PRD-ALT-002, PRD-ALT-006, PRD-NFR-010]
+    findings: []
+    depends_on: [MON-011]
+    outcome: Deterministischer Evaluator und Zustandsautomat für Thresholds, Recovery und UNKNOWN.
+    acceptance:
+      - Drei Target-Ausfälle und zwei Erfolge erzeugen genau die spezifizierten Transitionen.
+      - Beliebige Sequenzen interner/Probe-Fehler erzeugen allein niemals DOWN.
+    evidence:
+      - Unit-, Property- und Mutationstests des Zustandsautomaten
+      - v0.1 Threshold-/Internal-Error-Szenarien
+
+  - id: DATA-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-003, PRD-ALT-004, PRD-ALT-006, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [ALERT-010, DATA-010]
+    outcome: Atomare Speicherung von Observation, Evaluation, Transition, Uptime-Bucket und Outbox-Event.
+    acceptance:
+      - Failpoints beweisen vollständigen Commit oder vollständigen Rollback auf beiden Engines.
+      - Doppelte Observationen haben höchstens eine Zustandswirkung.
+    evidence:
+      - Gemeinsame Transaktions-/Idempotenz-Suite
+      - DB-Ausfall-Chaostest
+
+  - id: CHECK-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-MON-005]
+    findings: [SPEC-003]
+    depends_on: [API-010, CHECK-010, CHECK-011, DATA-011]
+    outcome: Vollständiger HTTP-Pfad schedule/run → execute → evaluate → store → observation/transition/uptime API.
+    acceptance:
+      - Ein sofortiger Check ist über Operation und Check-ID bis zum Ergebnis verfolgbar.
+      - Ein DB-Ausfall bleibt sichtbar und erzeugt keine DOWN-Transition oder Notification.
+    evidence:
+      - End-to-End-Integration auf beiden Datenbanken
+      - v0.1 HTTP- und DB-Ausfall-Szenarien
+
+  - id: WEB-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-MON-005, PRD-NFR-009]
+    findings: [SPEC-003]
+    depends_on: [CHECK-012, WEB-010]
+    outcome: Monitor-Detail, Timeline, zeitgewichtete Uptime und SSE-Live-Aktualisierung.
+    acceptance:
+      - UI erklärt Zustand und UNKNOWN-Ursache und stellt UNKNOWN niemals grün dar.
+      - SSE-Lücke führt zu REST-Refetch; Scroll-/Filterzustand bleibt stabil.
+    evidence:
+      - Playwright Run/Failure/Recovery-Flow
+      - Accessibility- und SSE-Reconnect-Tests
+
+  - id: CHECK-013
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [CHECK-012]
+    outcome: Typisierter TCP-Check mit 4-KiB-Sende-/Antwortgrenzen.
+    acceptance: [Erfolg, Prefix-Mismatch, Timeout, Cancel und Redaction laufen gegen kontrollierte TCP-Ziele.]
+    evidence: [TCP-Integrationstests und Check-Outline-Acceptance]
+
+  - id: CHECK-014
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [CHECK-012]
+    outcome: Typisierter DNS-Check für alle normativen Record-Typen und Resolvermodi.
+    acceptance: [RCODE, normalisierte Werte, Timeout, DoT/UDP/TCP und Redaction laufen gegen kontrollierte DNS-Ziele.]
+    evidence: [DNS-Integrationstests und Check-Outline-Acceptance]
+
+  - id: CHECK-015
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [CHECK-012]
+    outcome: Typisierter ICMP-Check mit expliziter Capability-Fehlerklassifikation.
+    acceptance: [Fehlende OS-Capability ergibt UNKNOWN/capability_missing und niemals DOWN.]
+    evidence: [Privilegierte und unprivilegierte Container-Integrationstests]
+
+  - id: CHECK-016
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [CHECK-012]
+    outcome: Typisierter TLS-Zertifikatscheck für Kette, Hostname und Ablaufgrenzen.
+    acceptance: [Kontrollierte Zertifikate beweisen UP, DEGRADED, DOWN und Infrastrukturfehlerklassifikation.]
+    evidence: [Lokale TLS-Fixtures und Check-Outline-Acceptance]
+
+  - id: CHECK-017
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [CHECK-012]
+    outcome: Push-Heartbeat mit starkem rotierbarem Token, Grace Window und begrenzter Payload.
+    acceptance: [Token erscheint einmal, Rotation überlappt höchstens 24 Stunden und fehlender Push wird fachlich korrekt ausgewertet.]
+    evidence: [Push-API-, Rotation-, Rate-Limit- und Secret-Leak-Tests]
+
+  - id: NOTIFY-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-ALT-003, PRD-ALT-004, PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-004, PRD-IAM-005, PRD-NOT-001, PRD-NOT-002, PRD-NOT-003, PRD-NOT-004]
+    findings: [SPEC-003]
+    depends_on: [DATA-011, IAM-013, SPEC-012]
+    outcome: Verschlüsselte Notification-Channel-Ressource, Webhook-Adapter und unabhängiger Outbox-Worker.
+    acceptance:
+      - Channel-Test erzeugt keinen künstlichen Monitor-Ausfall.
+      - Zwei 500er und ein 204 liefern dieselbe Event-ID, steigenden Backoff und erfolgreichen dritten Versuch.
+    evidence:
+      - v0.1 Notification-Szenario
+      - Retry-, Dead-Letter-, HMAC-, Redaction- und Atomizitätstests
+
+  - id: NOTIFY-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-NOT-001, PRD-NOT-002, PRD-NOT-003, PRD-NOT-004]
+    findings: []
+    depends_on: [NOTIFY-010]
+    outcome: SMTP-, Slack-, Discord- und Telegram-Adapter auf demselben Delivery-Vertrag.
+    acceptance: ["Jeder Adapter deckt Erfolg, 4xx, 429, 5xx, Timeout, Redaction und Deduplizierung ab."]
+    evidence: [Adapter-Golden-Tests mit lokalen Fake-Endpunkten]
+
+  - id: AUTO-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-API-005, PRD-AUT-001, PRD-AUT-002, PRD-AUT-003]
+    findings: [SPEC-004]
+    depends_on: [MON-010, SPEC-012]
+    outcome: Typisierte Config-Normalisierung und redigierter Diff-/Plan-Vertrag.
+    acceptance: [Beispiel und negative Fixtures validieren; Secret-Diffs zeigen nur changed true.]
+    evidence: [JSON-Schema-, Normalisierungs-, Property- und Golden-Diff-Tests]
+
+  - id: AUTO-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-AUT-001, PRD-AUT-002, PRD-AUT-003, PRD-IAM-004, PRD-IAM-005, PRD-NFR-010]
+    findings: []
+    depends_on: [API-010, AUTO-010]
+    outcome: Atomarer serverseitiger Plan/Apply mit Quellbesitz, Idempotenz und source-scoped prune.
+    acceptance: [Plan/apply/plan für 500 Monitore ist beim zweiten Plan leer; manuelle und fremde Ressourcen bleiben unverändert.]
+    evidence: [v0.1 Apply-/Prune-Szenarien auf beiden Datenbanken]
+
+  - id: AUTO-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-005, PRD-AUT-001, PRD-AUT-002, PRD-AUT-003, PRD-MON-001, PRD-MON-005]
+    findings: []
+    depends_on: [AUTO-011]
+    outcome: taktctl validate/plan/apply/export/monitor run mit stabilen Exit Codes und sauberer stdout/stderr-Trennung.
+    acceptance: [Alle dokumentierten Exit Codes, JSON-Ausgabe, non-interactive Verhalten und restriktive Tokenablage sind getestet.]
+    evidence: [CLI-Integrationstests und UI/API/CLI-Sichtbarkeitsszenario]
+
+  - id: STATUS-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-IAM-004, PRD-IAM-005, PRD-STA-001, PRD-STA-002, PRD-STA-006]
+    findings: [SPEC-003]
+    depends_on: [API-010, SPEC-012]
+    outcome: Statusseiten-Domäne, Persistenz und Management-API mit Gruppen, Sichtbarkeit und Auswahl.
+    acceptance: [CRUD, Token-Sichtbarkeit, Referenzkonflikte und Audit laufen auf beiden Datenbanken.]
+    evidence: [Contract-/Repository-/Permission-Tests]
+
+  - id: STATUS-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-NFR-009, PRD-STA-001, PRD-STA-002, PRD-STA-006]
+    findings: []
+    depends_on: [CHECK-012, STATUS-010]
+    outcome: Redigierte, cachebare öffentliche Projektion und ohne JavaScript lesbarer Erstinhalt.
+    acceptance: [Interne URL, Probe-ID, Header, Secret und Fehlerdetails fehlen in API, HTML und Cache.]
+    evidence: [v0.1 Public-Projection-Szenario und negative Leak-Fixtures]
+
+  - id: WEB-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-MON-001, PRD-NFR-006, PRD-NFR-009]
+    findings: []
+    depends_on: [WEB-010, WEB-011]
+    outcome: Authentifizierter UI-Shell, Setup-Wizard, Deutsch/Englisch und Light/Dark-Grundlagen.
+    acceptance: [Setup kann übersprungen/fortgesetzt werden; Strings sind lokalisiert, Fokus bleibt sichtbar und Secrets landen nicht in URL oder Browserpersistenz.]
+    evidence: [Setup-/Login-Playwright, i18n-Key-Test und Theme-Accessibility-Test]
+
+  - id: WEB-013
+    release: "0.1"
+    status: planned
+    requirements: [PRD-NFR-006, PRD-NFR-009, PRD-NOT-003, PRD-STA-001, PRD-STA-002]
+    findings: []
+    depends_on: [NOTIFY-011, STATUS-011, WEB-012]
+    outcome: Notification-Channel- und Statusseiten-Admin-Ansichten über die öffentliche API.
+    acceptance: [Loading, Empty, Error und Success sowie Keyboard-Sortierung, Test-Feedback und redigierte Vorschau sind abgedeckt.]
+    evidence: [Vitest-Komponententests und Playwright Channel-/Statusseiten-Flows]
+
+  - id: WEB-014
+    release: "0.1"
+    status: planned
+    requirements: [PRD-AUT-001, PRD-NFR-006, PRD-NFR-009]
+    findings: []
+    depends_on: [AUTO-012, WEB-013]
+    outcome: Automation-/Plan-UI und abschließende 0.1-Accessibility-/Performance-Regression.
+    acceptance: [Secret-Diffs bleiben redigiert; alle 0.1-Async-Views haben vier Zustände, Browsermatrix/Axe, 320px-Statusseite und Bundlebudget bestehen.]
+    evidence: [Automation-E2E, Playwright-Browsermatrix, axe-Bericht und Performancebudgets]
+
+  - id: OPS-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-NFR-004, PRD-NFR-008]
+    findings: []
+    depends_on: [CHECK-012, NOTIFY-010]
+    outcome: Strukturierte Logs, geschützte Prometheus-Metriken und OpenTelemetry-Traces für alle Kernpfade.
+    acceptance: [Pflichtmetriken existieren ohne Monitor-ID-Labels; Traces/Logs enthalten Request-ID und keine Secrets.]
+    evidence: [Observability-Integrationstests und Cardinality-/Redaction-Golden-Tests]
+
+  - id: OPS-011
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-005, PRD-NFR-002, PRD-NFR-007]
+    findings: []
+    depends_on: [DATA-011]
+    outcome: SQLite-Backup/Restore, PostgreSQL-Hooks/Verify und Backup-Bestätigung vor Migration.
+    acceptance: [Backup einer gefüllten Instanz restauriert IDs, Historie und nutzbare, nicht auslesbare Secrets.]
+    evidence: [v0.1 Backup-/Restore-Szenario beider Betriebsprofile]
+
+  - id: OPS-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-NFR-001, PRD-NFR-003, PRD-NFR-004]
+    findings: [DEC-001]
+    depends_on: [OPS-010, WEB-014]
+    outcome: Non-root OCI-Image und Linux-amd64/arm64-Serverartefakte mit Healthcheck und ohne externe Telemetrie.
+    acceptance: [Container läuft read-only-fähig, non-root und startet Home-Profil mit einem dokumentierten Befehl.]
+    evidence: [Multi-Arch-Build, Container-Scan und Installations-Smoke-Test]
+
+  - id: QA-010
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-NFR-002, PRD-NFR-007, PRD-NFR-009]
+    findings: [EVID-002]
+    depends_on: [CHECK-013, CHECK-014, CHECK-015, CHECK-016, CHECK-017, OPS-011, OPS-012, QA-001]
+    outcome: Vollständige 0.1-Abnahme inklusive 37-Szenario-Harness-Anteil, Last, Security, Upgrade/Restore und Evidence Bundle.
+    acceptance: [Alle @v0.1-Szenarien und Exit-Kriterien sind grün; kein Gate ist übersprungen und kein hoher Security-Befund offen.]
+    evidence: [Unveränderliches 0.1 Release Evidence Bundle nach Kapitel 07]
+
+  - id: PROBE-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-API-002, PRD-MON-007]
+    findings: []
+    depends_on: [QA-010]
+    outcome: Probe-Simulator und Proto-Kompatibilitätstests für Server N mit Probe N und N-1.
+    acceptance: [Hello, Ack, Observation, Cancel, Drain und inkompatible Version sind deterministisch simuliert.]
+    evidence: [Proto-Golden-/Compatibility-Suite]
+
+  - id: PROBE-021
+    release: "0.2"
+    status: planned
+    requirements: [PRD-IAM-004, PRD-IAM-005, PRD-MON-007]
+    findings: []
+    depends_on: [IAM-013, PROBE-020]
+    outcome: Einmal-Enrollment, CSR, mTLS-Identität, Sperrung und rate-limited Audit.
+    acceptance: [Code ist höchstens 15 Minuten und genau einmal nutzbar; Client ohne Zertifikat erhält keine Jobs.]
+    evidence: [Erste zwei v0.2-Probe-Szenarien und PKI-Negativtests]
+
+  - id: PROBE-022
+    release: "0.2"
+    status: planned
+    requirements: [PRD-MON-007]
+    findings: []
+    depends_on: [PROBE-021]
+    outcome: Ausgehend initiierte Probe-Verbindung mit Heartbeat, Capabilities und ehrlichem Offline-Status.
+    acceptance: [15s Heartbeat, 45s disconnected und konfigurierbares offline werden mit kontrollierter Uhr getestet.]
+    evidence: [Gateway-/Heartbeat-Integrationstests]
+
+  - id: PROBE-023
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-007, PRD-NFR-010]
+    findings: []
+    depends_on: [CHECK-010, PROBE-022]
+    outcome: Autorisierter Job-Dispatch, Leases und idempotenter Observation-Ingest.
+    acceptance: [Doppelte, späte und ungeordnete Observationen haben höchstens eine Zustandswirkung und sichtbare Reason Codes.]
+    evidence: [v0.2 Duplicate/Late-Szenario und Failpoint-Suite]
+
+  - id: PROBE-024
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-007]
+    findings: []
+    depends_on: [PROBE-023]
+    outcome: Verschlüsselte Offline-Queue, acknowledgement-basiertes Löschen und Zertifikatsrotation.
+    acceptance: [100 angenommene Ergebnisse über 15 Minuten Disconnect werden vollständig und idempotent angeliefert.]
+    evidence: [v0.2 Queue-Szenario sowie Disk-full-/Rotation-Tests]
+
+  - id: PROBE-025
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-001, PRD-ALT-002, PRD-ALT-006, PRD-API-001, PRD-API-004, PRD-API-005, PRD-MON-007, PRD-NFR-010]
+    findings: []
+    depends_on: [ALERT-010, PROBE-024, WEB-014]
+    outcome: Labelselektion, any/all/quorum-Auswertung, Probe-Matrix und Standortursachen in API/UI.
+    acceptance: [Zwei Erfolge, echte Target-Ausfälle und fehlende Evidenz ergeben exakt UP/DEGRADED/DOWN/UNKNOWN gemäß Szenario.]
+    evidence: [Quorum Property-/Acceptance-Tests und UI-Probe-Matrix-E2E]
+
+  - id: ALERT-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-005, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [PROBE-025]
+    outcome: Acknowledgements und zeitbegrenzte Silences mit Permission- und Auditwirkung.
+    acceptance: [Operator kann quittieren/silencen, Viewer nicht; Zustand und Observation bleiben unverändert sichtbar.]
+    evidence: [API-/Permission-/Audit-Tests]
+
+  - id: ALERT-021
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-005, PRD-NFR-005, PRD-STA-002]
+    findings: []
+    depends_on: [ALERT-020]
+    outcome: Einmalige und wiederkehrende Wartung mit IANA-Zeitzone und wahrheitsgemäßer Evaluation.
+    acceptance: [Während Maintenance werden Observation/Evaluation gespeichert und Notifications unterdrückt; danach entscheidet ein neues Ergebnis.]
+    evidence: [v0.2 Maintenance-Szenario und DST-Property-Tests]
+
+  - id: ALERT-022
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-004, PRD-ALT-005]
+    findings: []
+    depends_on: [ALERT-021]
+    outcome: Flapping-Erkennung und Notification-Drosselung ohne Verfälschung des sichtbaren Zustands.
+    acceptance: [Vier echte Wechsel in zehn Fenstern aktivieren einen erklärbaren Throttle bei weiterhin korrektem Zustand.]
+    evidence: [v0.2 Flapping-Szenario und State-Sequence-Property-Tests]
+
+  - id: STATUS-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-IAM-004, PRD-IAM-005, PRD-STA-003, PRD-STA-004]
+    findings: []
+    depends_on: [ALERT-021, STATUS-011]
+    outcome: Manuelle Incidents mit unveränderlicher Timeline und optionaler Monitorverknüpfung.
+    acceptance: [INVESTIGATING bis RESOLVED bleibt geordnet, öffentlich sichtbar und nicht in-place editierbar.]
+    evidence: [v0.2 Incident-Szenario und Repository-Immutability-Tests]
+
+  - id: STATUS-021
+    release: "0.2"
+    status: planned
+    requirements: [PRD-STA-002]
+    findings: []
+    depends_on: [STATUS-020]
+    outcome: Frei wählbare Uptime-Zeiträume und erweiterte Statusseitenprojektion.
+    acceptance: [UP/DOWN/UNKNOWN/Maintenance-Dauern liefern zeitgewichtete, numerisch stabile Anteile.]
+    evidence: [v0.1 Uptime-Szenario plus 0.2 Zeitraum-/Bucket-Tests]
+
+  - id: DATA-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-NFR-002, PRD-NFR-005, PRD-STA-002]
+    findings: []
+    depends_on: [STATUS-021]
+    outcome: Retention, Rollups und PostgreSQL-Partitionen mit fachlicher SQLite-Parität.
+    acceptance: [Retention unter Schreiblast bewahrt Transitionen/Rollups und hält Batch-/Partition-Grenzen ein.]
+    evidence: [Engine-spezifische Last-/Retention-Tests mit gemeinsamem Ergebnisvertrag]
+
+  - id: MIG-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-API-002, PRD-API-005, PRD-MIG-001, PRD-MIG-002, PRD-MIG-003]
+    findings: []
+    depends_on: [AUTO-012]
+    outcome: Versionierter Uptime-Kuma-Fixture-Vertrag und verlusttransparente Analyze-Ausgabe.
+    acceptance: [Unterstützte, transformierte, verlorene und secret-bedürftige Felder werden vollständig klassifiziert.]
+    evidence: [Golden-Fixture und Import-Analyze-Contract-Test]
+
+  - id: MIG-021
+    release: "0.2"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-IAM-005, PRD-MIG-001, PRD-MIG-002, PRD-MIG-003, PRD-MIG-004, PRD-NFR-010]
+    findings: []
+    depends_on: [DATA-020, MIG-020]
+    outcome: Uptime-Kuma Plan/Apply mit stabiler Herkunft und idempotentem Re-Import.
+    acceptance: [Erneuter Import erzeugt keine Duplikate und fehlende Secrets bleiben sichtbar erforderliche Nacharbeit.]
+    evidence: [v0.2 Import-Szenario auf beiden Datenbanken]
+
+  - id: AUTO-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-ALT-004, PRD-API-002, PRD-NOT-004]
+    findings: []
+    depends_on: [NOTIFY-010, STATUS-020]
+    outcome: CloudEvents-1.0-Webhooks für Monitor, Alert, Incident und Maintenance.
+    acceptance: [Golden Bodies, HMAC über unveränderten Body und stabile Event-ID bei Retries bestehen.]
+    evidence: [CloudEvents-/Signatur-Golden-Tests]
+
+  - id: OPS-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-NFR-002, PRD-NFR-003, PRD-NFR-007]
+    findings: []
+    depends_on: [ALERT-022, AUTO-020, MIG-021, PROBE-025]
+    outcome: Probe-Artefakt, 0.1→0.2-Upgrade, Disconnect-/Queue-Last und Restore-Fallback.
+    acceptance: [Fünf Probes und 5.000 Monitore erfüllen Ziele; Upgrade bewahrt IDs/Historie und Restore-Fallback funktioniert.]
+    evidence: [0.2 Performance-, Disconnect-, Upgrade- und Restore-Berichte]
+
+  - id: QA-020
+    release: "0.2"
+    status: planned
+    requirements: [PRD-NFR-002, PRD-NFR-007]
+    findings: [EVID-002]
+    depends_on: [OPS-020, QA-001]
+    outcome: Vollständige 0.2-Abnahme einschließlich aller 0.1-Regressionen und Release Evidence.
+    acceptance: [Alle @v0.1/@v0.2-Szenarien und 0.2-Exit-Kriterien sind ohne Skip grün.]
+    evidence: [Unveränderliches 0.2 Release Evidence Bundle]
+
+  - id: IAM-030
+    release: "0.3"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-003, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [QA-020]
+    outcome: Organisations-, Projekt-, Mitgliedschafts- und Einladungsverträge samt vollständiger Permission-Matrix.
+    acceptance: [Jede Ressourcenart und Rolle besitzt positive Eigenkontext- und negative Cross-Tenant-Fälle.]
+    evidence: [Generierte Contract-/Permission-Matrix]
+
+  - id: IAM-031
+    release: "0.3"
+    status: planned
+    requirements: [PRD-IAM-003, PRD-IAM-004]
+    findings: []
+    depends_on: [IAM-030]
+    outcome: Sichtbare Multi-Organisation/-Projekt-Verwaltung und serverseitige RBAC-Durchsetzung.
+    acceptance: [Bekannte fremde IDs ändern nichts und verraten keine Ressource; UI-Hiding ist nicht die Grenze.]
+    evidence: [v0.3 Rollen-Szenario und vollständige Cross-Tenant-Suite]
+
+  - id: IAM-032
+    release: "0.3"
+    status: planned
+    requirements: [PRD-IAM-002, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-031]
+    outcome: OIDC Authorization Code mit PKCE, state, nonce, Gruppenmapping und Break-glass-Regeln.
+    acceptance: [Issuer/Audience/Signatur/Nonce/Zeitfehler erzeugen generischen Loginfehler; Gruppenentzug wirkt nach Revalidation.]
+    evidence: [Beide v0.3 OIDC-Szenarien mit Test-IdP]
+
+  - id: IAM-033
+    release: "0.3"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-032]
+    outcome: Vollständiges Audit, Export und manipulationserschwerende Hash-Verkettung ohne Secrets.
+    acceptance: [Alle normativen Aktionen tragen Actor, Resource, Request-ID und Zeit; Secretrotation zeigt weder alten noch neuen Wert.]
+    evidence: [v0.3 Audit-Szenario, Export-Contract und Chain-Tamper-Test]
+
+  - id: STATUS-030
+    release: "0.3"
+    status: planned
+    requirements: [PRD-IAM-005, PRD-NOT-002, PRD-NOT-004, PRD-STA-005]
+    findings: []
+    depends_on: [IAM-033, NOTIFY-011, STATUS-021]
+    outcome: Statusseiten-Abonnenten mit Double-Opt-in, scoped Unsubscribe und minimaler Datenspeicherung.
+    acceptance: [Pending erhält keine Incidents; Bestätigung aktiviert; Abmeldung wirkt ohne Login und verrät keine Fremdadresse.]
+    evidence: [v0.3 Subscriber-Szenario und Privacy-/Token-Tests]
+
+  - id: AUTO-030
+    release: "0.3"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-AUT-004, PRD-IAM-004, PRD-NFR-010]
+    findings: []
+    depends_on: [AUTO-012, IAM-031]
+    outcome: Terraform Provider für den normativen Ressourcenumfang ohne Secret-Readback.
+    acceptance: [plan/apply/plan ist driftfrei; Import ist dokumentiert und Diagnostik enthält keine Secrets.]
+    evidence: [v0.3 Terraform-Szenario und Provider-Acceptance]
+
+  - id: AUTO-031
+    release: "0.3"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-AUT-005, PRD-IAM-004, PRD-IAM-005, PRD-NFR-010]
+    findings: []
+    depends_on: [DATA-020, IAM-031]
+    outcome: Read-only Kubernetes Discovery mit Opt-in, stabiler Herkunft, Grace Period und Löschplan.
+    acceptance: [Nicht opt-in Ressourcen werden nicht übernommen; Löschung erscheint erst nach mindestens zwei Zyklen im Plan.]
+    evidence: [v0.3 Discovery-Szenario mit Testcluster]
+
+  - id: ALERT-030
+    release: "0.3"
+    status: blocked
+    requirements: [PRD-ALT-004]
+    findings: [SPEC-002]
+    depends_on: [ALERT-022, IAM-031, SPEC-011]
+    outcome: Zyklusfreie Monitorabhängigkeiten unterdrücken nur nachgelagerte Notifications und nie Zustände.
+    acceptance: [DAG-Grenzen 100 Kanten/20 Ebenen, Zyklusfehler, sichtbare Suppression und unveränderte DOWN-Zustände sind getestet.]
+    evidence: [Getaggtes v0.3 Dependency-Szenario nach Auflösung von SPEC-002]
+
+  - id: CHECK-030
+    release: "0.3"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-API-002, PRD-MON-008]
+    findings: [SPEC-004]
+    depends_on: [PROBE-025, SPEC-013]
+    outcome: Deklarativer BrowserCheck-Vertrag und Worker-Protokoll ohne beliebiges JavaScript.
+    acceptance: [Maximal 20 Schritte/60 Sekunden/10 MiB und SecretRefs sind in allen Maschinenverträgen konsistent.]
+    evidence: [Cross-contract Browser-Fixtures]
+
+  - id: CHECK-031
+    release: "0.3"
+    status: planned
+    requirements: [PRD-ALT-006, PRD-MON-008, PRD-NFR-004]
+    findings: []
+    depends_on: [CHECK-030]
+    outcome: Isolierter non-root Browserworker mit read-only Root-FS, Egress-Policy und kurzlebigen verschlüsselten Artefakten.
+    acceptance: [Hostdatei, Control Plane und Metadata bleiben unerreichbar; Chromium-Crash ist PROBE_FAILURE und nie allein DOWN.]
+    evidence: [Beide v0.3 Browser-Szenarien und Sandbox-Isolationstest]
+
+  - id: WEB-030
+    release: "0.3"
+    status: planned
+    requirements: [PRD-IAM-004, PRD-NFR-006, PRD-NFR-009]
+    findings: []
+    depends_on: [ALERT-030, AUTO-030, AUTO-031, CHECK-031, IAM-033, STATUS-030]
+    outcome: Stabile deutsch-/englischsprachige Admin-UI für den vollständigen 0.3-Umfang.
+    acceptance: [Alle Rollen, Organisationen, Probes, Incidents, Discovery, Audit und Browserchecks besitzen vier Async-Zustände und Accessibility-Gates.]
+    evidence: [Playwright-Browsermatrix, Keyboard-Smoke und WCAG-2.2-AA-Bericht]
+
+  - id: OPS-030
+    release: "0.3"
+    status: blocked
+    requirements: [PRD-NFR-003, PRD-NFR-004]
+    findings: [DEC-001]
+    depends_on: [CHECK-031, WEB-030]
+    outcome: Gehärtete Produktionsprofile, SBOM, SHA-256-Prüfsummen und Sigstore/cosign-Signaturen.
+    acceptance: [Server/Probe/Browserworker laufen mit minimalen Rechten; Artefakte sind signiert und Provenance verweist auf den Commit.]
+    evidence: [SBOM-, Signatur-, Container- und Supply-Chain-Berichte]
+
+  - id: OPS-031
+    release: "0.3"
+    status: planned
+    requirements: [PRD-NFR-002, PRD-NFR-003, PRD-NFR-007]
+    findings: []
+    depends_on: [OPS-030]
+    outcome: Unterstützter 0.1→0.2→0.3-Upgradepfad und 0.3-Backup/Restore ohne Datenverlust.
+    acceptance: [IDs, Historie, Mandantengrenzen und entschlüsselbare Secrets bleiben erhalten; Readiness wird grün.]
+    evidence: [v0.3 Upgrade-Szenario und Restore-Bericht]
+
+  - id: QA-030
+    release: "0.3"
+    status: planned
+    requirements: [PRD-API-002, PRD-NFR-002, PRD-NFR-007, PRD-NFR-009]
+    findings: [EVID-002]
+    depends_on: [OPS-031, QA-001]
+    outcome: Vollständige 0.3-Abnahme und finales Release Evidence Bundle.
+    acceptance: [Alle Szenarien 0.1–0.3, Cross-Tenant-/OIDC-, Terraform-/Discovery-, Isolation-, Upgrade- und Signatur-Gates sind grün.]
+    evidence: [Unveränderliches 0.3 Release Evidence Bundle nach Kapitel 07]
+
+  - id: EXT-040
+    release: post-0.3
+    status: planned
+    requirements: [PRD-NOT-005]
+    findings: []
+    depends_on: [QA-030]
+    outcome: Nutzungsgestützte Entscheidung über einen stabilen, sicheren Notification-Pluginvertrag nach 0.3.
+    acceptance: [Kein Drittcode-Plugin wird vor Threat Model, Versionierung, Isolation und Kompatibilitätsvertrag aufgenommen.]
+    evidence: [Post-0.3 ADR und Plugin-Contract-Review]

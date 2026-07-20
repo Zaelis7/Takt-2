@@ -103,11 +103,16 @@ pnpm contracts:schema
 pnpm contracts:proto
 pnpm contracts:gherkin
 pnpm check:architecture
+pnpm check:tracking
 ```
 
 The architecture check rejects unknown workspace crates, forbidden internal
 dependency directions, runtime/web/database frameworks in `takt-domain`, and a
-missing `#![forbid(unsafe_code)]` crate attribute.
+missing `#![forbid(unsafe_code)]` crate attribute. The implementation-tracking
+gate keeps the canonical requirement ledger, work-package dependency graph,
+findings and repository requirement references consistent. The workflow and
+current baseline are documented in `docs/implementation-tracking/README.md` and
+`docs/implementation-tracking/current-status.md`.
 
 ## Complete local gates
 
@@ -115,6 +120,7 @@ missing `#![forbid(unsafe_code)]` crate attribute.
 pnpm install --frozen-lockfile
 pnpm contracts:validate
 pnpm check:architecture
+pnpm check:tracking
 pnpm check:generated
 pnpm check:secrets
 pnpm test:tools

@@ -1,0 +1,460 @@
+schema_version: 1
+as_of: "2026-07-20"
+baseline_commit: f6039b00d374628432aa4af7f2db6d6723af6d00
+
+# coverage measures product behavior: none, partial, full.
+# verification measures evidence strength independently from coverage.
+requirements:
+  - id: PRD-MON-001
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: No monitor behavior exists through UI, API, CLI or declarative apply.
+  - id: PRD-MON-002
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: conflict
+    evidence: []
+    note: Check implementations are absent; the three machine contracts disagree on supported options (SPEC-004).
+  - id: PRD-MON-003
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: General UUIDv7 and project slug foundations exist, but no Monitor entity exists.
+  - id: PRD-MON-004
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Monitor schedules and the resource-intensive warning are absent.
+  - id: PRD-MON-005
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: The OpenAPI can queue a check but cannot retrieve the returned operation or check result (SPEC-003).
+  - id: PRD-MON-006
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Monitor revisions and monitor-change audit events are absent.
+  - id: PRD-MON-007
+    release: "0.2"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - specs/contracts/probe.proto
+      - crates/probe-protocol/tests/generated_contract.rs
+      - docs/implementation-evidence/bootstrap.md
+    note: Proto generation is reproducible; probe runtime, enrollment, dispatch, queueing and quorum behavior are absent.
+  - id: PRD-MON-008
+    release: "0.3"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Only contract shapes exist; there is no isolated browser worker.
+
+  - id: PRD-API-001
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Only health endpoints are implemented; required 0.1 management contracts are incomplete (SPEC-003).
+  - id: PRD-API-002
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: conflict
+    evidence:
+      - specs/contracts/openapi.yaml
+      - tools/openapi-types.mjs
+      - docs/implementation-evidence/bootstrap.md
+      - docs/implementation-evidence/implementation-tracking.md
+    note: OpenAPI lint and generated-type drift checks pass; runtime conformance and compatibility against a released baseline are absent, and CheckSpec contracts conflict (SPEC-004).
+  - id: PRD-API-003
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Idempotency keys and HTTP ETag behavior are not implemented.
+  - id: PRD-API-004
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: No production list endpoint implements cursor pagination, filtering or stable sorting.
+  - id: PRD-API-005
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - crates/api/src/lib.rs
+      - crates/api/tests/health_http.rs
+    note: Readiness emits a redacted Problem Details response; the general API error boundary is absent.
+
+  - id: PRD-AUT-001
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: taktctl and declarative validate, plan, apply and export behavior are absent.
+  - id: PRD-AUT-002
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Declarative ownership is not implemented.
+  - id: PRD-AUT-003
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Source-scoped prune is not implemented.
+  - id: PRD-AUT-004
+    release: "0.3"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: No Terraform provider exists.
+  - id: PRD-AUT-005
+    release: "0.3"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: No Kubernetes discovery implementation exists.
+
+  - id: PRD-ALT-001
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: The monitor state model and state machine are absent.
+  - id: PRD-ALT-002
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Failure and recovery threshold evaluation are absent.
+  - id: PRD-ALT-003
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: No evaluation transaction or outbox exists.
+  - id: PRD-ALT-004
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Stable notification event IDs, at-least-once delivery and deduplication are absent.
+  - id: PRD-ALT-005
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Acknowledgements, silences, maintenance and flapping are absent and require OpenAPI extensions before implementation.
+  - id: PRD-ALT-006
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Readiness distinguishes database failure, but no evaluator exists that can prove infrastructure failure never becomes DOWN.
+
+  - id: PRD-NOT-001
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Notification channel contracts and all five adapters are absent (SPEC-003).
+  - id: PRD-NOT-002
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Credential hashing is present for passwords, but there is no encrypted notification secret store or masking API.
+  - id: PRD-NOT-003
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Channel test behavior and its public contract are absent.
+  - id: PRD-NOT-004
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Delivery attempts, exponential backoff and dead-letter state are absent.
+  - id: PRD-NOT-005
+    release: post-0.3
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Intentionally deferred until a stable post-0.3 plugin contract is designed.
+
+  - id: PRD-STA-001
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Only a public projection schema exists; management contracts and behavior are absent (SPEC-003).
+  - id: PRD-STA-002
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Status history, uptime and active maintenance presentation are absent.
+  - id: PRD-STA-003
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Incident contracts and behavior must be added before implementation.
+  - id: PRD-STA-004
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: No separate incident timeline model or monitor link exists.
+  - id: PRD-STA-005
+    release: "0.3"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Subscriber contracts and Double-Opt-in behavior are absent.
+  - id: PRD-STA-006
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: A redacted schema exists, but no public projection implementation or negative leak test exists.
+
+  - id: PRD-IAM-001
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: gap
+    evidence:
+      - docs/persistence.md
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - crates/server/tests/admin_bootstrap_cli.rs
+    note: Local owner bootstrap and Argon2id credentials exist; sessions, recovery, API tokens and scopes are absent, with missing OpenAPI operations (SPEC-003).
+  - id: PRD-IAM-002
+    release: "0.3"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: OIDC and group mapping are absent.
+  - id: PRD-IAM-003
+    release: "0.3"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - docs/persistence.md
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+    note: Default organization/project, membership storage and role values exist; visible multi-organization management is absent.
+  - id: PRD-IAM-004
+    release: "0.3"
+    coverage: partial
+    verification: evidence_only
+    spec_health: gap
+    evidence:
+      - crates/application/src/lib.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+    note: Application and repository boundaries are prepared, but no resource API performs server-side authorization.
+  - id: PRD-IAM-005
+    release: "0.3"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+      - crates/persistence/tests/common/mod.rs
+    note: Bootstrap writes one append-only redacted audit event; full action coverage, export and tamper evidence are absent.
+
+  - id: PRD-MIG-001
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: No supported Uptime Kuma input contract or importer exists.
+  - id: PRD-MIG-002
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: gap
+    evidence: []
+    note: Analyze, plan and apply contracts are absent.
+  - id: PRD-MIG-003
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Missing-secret reporting in imports is absent.
+  - id: PRD-MIG-004
+    release: "0.2"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: Stable import origin and idempotent re-apply are absent.
+
+  - id: PRD-NFR-001
+    release: "0.1"
+    coverage: full
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - docs/development.md
+      - crates/server/tests/admin_bootstrap_cli.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+    note: The local profile starts with SQLite and no external database; release-level installation evidence remains future release work.
+  - id: PRD-NFR-002
+    release: "0.1"
+    coverage: partial
+    verification: evidence_only
+    spec_health: clear
+    evidence:
+      - docs/persistence.md
+      - crates/persistence/tests/postgres_contract.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+    note: PostgreSQL 16 migration and identity repository evidence exists; the remaining product repositories and release matrix are absent, and PostgreSQL was not available during this inventory run.
+  - id: PRD-NFR-003
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - docs/implementation-evidence/bootstrap.md
+      - crates/server/src/main.rs
+    note: A release-buildable server embeds the web shell; probe binary, containers and Linux amd64/arm64 publication are absent.
+  - id: PRD-NFR-004
+    release: "0.1"
+    coverage: partial
+    verification: evidence_only
+    spec_health: clear
+    evidence:
+      - docs/dependencies.md
+      - crates/server/src/main.rs
+    note: The current foundation makes no third-party telemetry call; explicit production configuration and regression evidence remain absent.
+  - id: PRD-NFR-005
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - docs/persistence.md
+      - crates/persistence/tests/common/mod.rs
+    note: Persistence uses UTC microseconds; IANA timezone selection and UI display are absent.
+  - id: PRD-NFR-006
+    release: "0.1"
+    coverage: none
+    verification: none
+    spec_health: clear
+    evidence: []
+    note: The web shell is English-only and has no internationalization framework.
+  - id: PRD-NFR-007
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - docs/persistence.md
+      - crates/persistence/tests/sqlite_contract.rs
+      - crates/persistence/tests/postgres_contract.rs
+    note: Forward migration modes and newer-schema rejection exist; pre-migration backup confirmation, backup and restore are absent.
+  - id: PRD-NFR-008
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - crates/api/src/lib.rs
+      - crates/api/tests/health_http.rs
+      - crates/server/src/main.rs
+    note: Structured logging plus live/ready behavior and in-process failure counters exist; Prometheus exposure, required metrics and OpenTelemetry traces are absent.
+  - id: PRD-NFR-009
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - web/src/App.test.tsx
+      - tests/e2e/bootstrap.spec.ts
+    note: The static shell has semantic landmarks and an accessible heading; no primary keyboard flow, focus audit or axe gate exists.
+  - id: PRD-NFR-010
+    release: "0.1"
+    coverage: partial
+    verification: focused_local
+    spec_health: clear
+    evidence:
+      - crates/domain/tests/resource_id.rs
+      - crates/application/src/lib.rs
+      - crates/persistence/tests/common/mod.rs
+    note: UUID, clock and ID sources are injectable in the implemented foundation; scheduler, evaluator and config diff do not yet exist.
+
+# These references already exist outside the canonical PRD catalog. They remain
+# narrowly excepted so the gate prevents new invalid uses while SPEC-001 is open.
+known_unknown_requirement_refs:
+  - id: PRD-DATA-001
+    finding: SPEC-001
+    paths:
+      - crates/persistence/tests/common/mod.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+  - id: PRD-DATA-002
+    finding: SPEC-001
+    paths:
+      - crates/server/src/main.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+  - id: PRD-DATA-004
+    finding: SPEC-001
+    paths:
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
