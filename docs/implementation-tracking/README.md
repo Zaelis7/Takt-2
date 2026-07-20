@@ -133,7 +133,7 @@ pnpm test:tools
 
 Der Gate prüft derzeit:
 
-- alle 54 kanonischen Requirements genau einmal im Ledger
+- alle 57 kanonischen Requirements genau einmal im Ledger
 - nur erlaubte Coverage-/Verification-/Finding-/Paketstatuswerte
 - Evidence für jede nicht leere Coverage
 - vollständige Requirement-Zuordnung zu mindestens einem Arbeitspaket

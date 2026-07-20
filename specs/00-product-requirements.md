@@ -123,7 +123,13 @@ Legt Monitore aus CI/CD, Terraform oder Kubernetes-Discovery an. Erwartet Idempo
 - **PRD-IAM-004:** Rechte MÜSSEN serverseitig auf jede Ressourcenoperation angewendet werden; ausgeblendete UI-Elemente genügen nicht.
 - **PRD-IAM-005:** Sicherheitsrelevante und schreibende Aktionen MÜSSEN in einem manipulationserschwerenden Audit-Log erscheinen.
 
-### 6.7 Migration
+### 6.7 Datenhaltung
+
+- **PRD-DATA-001:** Fachliche Repository-Semantik MUSS auf PostgreSQL 16+ und SQLite gleich sein. Engine-spezifische Einschränkungen MÜSSEN als explizite, getestete Kapazitätsgrenzen dokumentiert werden und DÜRFEN das fachliche Ergebnis nicht still verändern.
+- **PRD-DATA-002:** Schemaänderungen MÜSSEN als vorwärtsgerichtete, nummerierte Migrationen ausgeliefert werden, nach Veröffentlichung unveränderlich bleiben und transaktional laufen, sofern die Engine dies erlaubt. Ein unbekanntes neueres Schema MUSS den Start ablehnen; während einer Migration MUSS Readiness fehlschlagen.
+- **PRD-DATA-004:** Persistente öffentliche Entitäten MÜSSEN unveränderliche UUIDv7-IDs verwenden. Zeitpunkte MÜSSEN als UTC mit Mikrosekundenpräzision gespeichert werden; jede änderbare Ressource MUSS `created_at`, `updated_at` und eine monoton steigende `version` besitzen.
+
+### 6.8 Importmigration
 
 - **PRD-MIG-001:** 0.2 MUSS einen Importer für einen dokumentierten, unterstützten Uptime-Kuma-Datenexport bereitstellen.
 - **PRD-MIG-002:** Der Import MUSS als `analyze`, `plan` und `apply` ablaufen und nicht unterstützte Felder transparent melden.

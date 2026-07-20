@@ -181,7 +181,7 @@ pub mod check_spec {
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Kind {
         #[prost(message, tag = "1")]
-        Http(super::HttpCheck),
+        Http(::prost::alloc::boxed::Box<super::HttpCheck>),
         #[prost(message, tag = "2")]
         Tcp(super::TcpCheck),
         #[prost(message, tag = "3")]
@@ -217,6 +217,49 @@ pub mod header_value {
         Secret(super::SecretValueRef),
     }
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HttpBasicAuth {
+    #[prost(message, optional, tag = "1")]
+    pub username: ::core::option::Option<SecretValueRef>,
+    #[prost(message, optional, tag = "2")]
+    pub password: ::core::option::Option<SecretValueRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HttpBearerAuth {
+    #[prost(message, optional, tag = "1")]
+    pub token: ::core::option::Option<SecretValueRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HttpMtlsAuth {
+    #[prost(message, optional, tag = "1")]
+    pub client_certificate: ::core::option::Option<SecretValueRef>,
+    #[prost(message, optional, tag = "2")]
+    pub client_key: ::core::option::Option<SecretValueRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HttpAuth {
+    #[prost(oneof = "http_auth::Kind", tags = "1, 2, 3")]
+    pub kind: ::core::option::Option<http_auth::Kind>,
+}
+/// Nested message and enum types in `HttpAuth`.
+pub mod http_auth {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Kind {
+        #[prost(message, tag = "1")]
+        Basic(super::HttpBasicAuth),
+        #[prost(message, tag = "2")]
+        Bearer(super::HttpBearerAuth),
+        #[prost(message, tag = "3")]
+        Mtls(super::HttpMtlsAuth),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct JsonPointerAssertion {
+    #[prost(string, tag = "1")]
+    pub pointer: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub value: ::prost::alloc::string::String,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct HttpCheck {
     #[prost(string, tag = "1")]
@@ -232,14 +275,29 @@ pub struct HttpCheck {
     pub expected_status_min: u32,
     #[prost(uint32, tag = "7")]
     pub expected_status_max: u32,
-    #[prost(uint32, tag = "8")]
-    pub follow_redirects: u32,
-    #[prost(bool, tag = "9")]
-    pub verify_tls: bool,
+    /// Presence distinguishes the canonical default 5 from an explicit zero.
+    #[prost(uint32, optional, tag = "8")]
+    pub follow_redirects: ::core::option::Option<u32>,
+    /// Presence distinguishes the canonical default true from an explicit false.
+    #[prost(bool, optional, tag = "9")]
+    pub verify_tls: ::core::option::Option<bool>,
     #[prost(string, tag = "10")]
     pub body_contains: ::prost::alloc::string::String,
+    /// Defaults to and may not exceed 1 MiB after zero-value normalization.
     #[prost(uint32, tag = "11")]
     pub response_body_limit_bytes: u32,
+    #[prost(enumeration = "HttpVersion", tag = "12")]
+    pub http_version: i32,
+    #[prost(string, tag = "13")]
+    pub body_matches: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "14")]
+    pub json_pointer_equals: ::core::option::Option<JsonPointerAssertion>,
+    #[prost(message, optional, tag = "15")]
+    pub json_pointer_contains: ::core::option::Option<JsonPointerAssertion>,
+    #[prost(uint32, tag = "16")]
+    pub max_response_time_ms: u32,
+    #[prost(message, optional, tag = "17")]
+    pub auth: ::core::option::Option<HttpAuth>,
     #[prost(oneof = "http_check::Body", tags = "4, 5")]
     pub body: ::core::option::Option<http_check::Body>,
 }
@@ -272,8 +330,16 @@ pub struct DnsCheck {
     pub record_type: ::prost::alloc::string::String,
     #[prost(string, repeated, tag = "3")]
     pub expected_values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    /// URI using udp, tcp, or tls scheme.
     #[prost(string, tag = "4")]
     pub resolver: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub expected_rcode: ::prost::alloc::string::String,
+    /// Presence distinguishes the canonical default 1 from an explicit zero.
+    #[prost(uint32, optional, tag = "6")]
+    pub minimum_answers: ::core::option::Option<u32>,
+    #[prost(enumeration = "DnsValueMatch", tag = "7")]
+    pub value_match: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IcmpCheck {
@@ -296,15 +362,19 @@ pub struct TlsCheck {
     pub server_name: ::prost::alloc::string::String,
     #[prost(uint32, tag = "4")]
     pub warning_days: u32,
-    #[prost(uint32, tag = "5")]
-    pub critical_days: u32,
+    /// Presence distinguishes the canonical default 7 from an explicit zero.
+    #[prost(uint32, optional, tag = "5")]
+    pub critical_days: ::core::option::Option<u32>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PushCheck {
     /// Push monitors are evaluated centrally. This message exists for exhaustive
     /// schema compatibility and must not be dispatched to a remote probe.
-    #[prost(uint32, tag = "1")]
-    pub grace_ms: u32,
+    /// Presence distinguishes the canonical default 60000 from an explicit zero.
+    #[prost(uint32, optional, tag = "1")]
+    pub grace_ms: ::core::option::Option<u32>,
+    #[prost(bool, tag = "2")]
+    pub allow_get: bool,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BrowserStep {
@@ -337,6 +407,7 @@ pub mod browser_step {
         Wait = 4,
         AssertText = 5,
         AssertUrl = 6,
+        AssertStatus = 7,
     }
     impl Action {
         /// String value of the enum field names used in the ProtoBuf definition.
@@ -352,6 +423,7 @@ pub mod browser_step {
                 Self::Wait => "ACTION_WAIT",
                 Self::AssertText => "ACTION_ASSERT_TEXT",
                 Self::AssertUrl => "ACTION_ASSERT_URL",
+                Self::AssertStatus => "ACTION_ASSERT_STATUS",
             }
         }
         /// Creates an enum from field names used in the ProtoBuf definition.
@@ -364,6 +436,7 @@ pub mod browser_step {
                 "ACTION_WAIT" => Some(Self::Wait),
                 "ACTION_ASSERT_TEXT" => Some(Self::AssertText),
                 "ACTION_ASSERT_URL" => Some(Self::AssertUrl),
+                "ACTION_ASSERT_STATUS" => Some(Self::AssertStatus),
                 _ => None,
             }
         }
@@ -382,8 +455,11 @@ pub struct BrowserCheck {
     pub start_url: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "2")]
     pub steps: ::prost::alloc::vec::Vec<BrowserStep>,
-    #[prost(uint32, tag = "3")]
-    pub screenshot_on_failure_max_bytes: u32,
+    /// Presence distinguishes the canonical default 1 MiB from an explicit zero.
+    #[prost(uint32, optional, tag = "3")]
+    pub screenshot_on_failure_max_bytes: ::core::option::Option<u32>,
+    #[prost(uint32, tag = "4")]
+    pub max_network_response_bytes: u32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimingPhases {
@@ -503,6 +579,61 @@ impl AckDisposition {
             "ACK_DISPOSITION_REJECTED_OVERLOADED" => Some(Self::RejectedOverloaded),
             "ACK_DISPOSITION_REJECTED_EXPIRED" => Some(Self::RejectedExpired),
             "ACK_DISPOSITION_REJECTED_INVALID" => Some(Self::RejectedInvalid),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum HttpVersion {
+    Auto = 0,
+    HttpVersion11 = 1,
+    HttpVersion2 = 2,
+}
+impl HttpVersion {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Auto => "HTTP_VERSION_AUTO",
+            Self::HttpVersion11 => "HTTP_VERSION_1_1",
+            Self::HttpVersion2 => "HTTP_VERSION_2",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "HTTP_VERSION_AUTO" => Some(Self::Auto),
+            "HTTP_VERSION_1_1" => Some(Self::HttpVersion11),
+            "HTTP_VERSION_2" => Some(Self::HttpVersion2),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DnsValueMatch {
+    Contains = 0,
+    Exact = 1,
+}
+impl DnsValueMatch {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Contains => "DNS_VALUE_MATCH_CONTAINS",
+            Self::Exact => "DNS_VALUE_MATCH_EXACT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DNS_VALUE_MATCH_CONTAINS" => Some(Self::Contains),
+            "DNS_VALUE_MATCH_EXACT" => Some(Self::Exact),
             _ => None,
         }
     }

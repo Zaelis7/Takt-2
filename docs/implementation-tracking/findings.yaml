@@ -13,12 +13,15 @@ findings:
       - migrations/sqlite/0001_persistent_identity.sql
       - docs/implementation-evidence/persistence-admin-bootstrap.md
     affects:
+      - PRD-DATA-001
+      - PRD-DATA-002
+      - PRD-DATA-004
       - PRD-IAM-001
       - PRD-IAM-003
       - PRD-NFR-002
       - PRD-NFR-005
       - PRD-NFR-007
-    resolution: Decide whether normative DATA requirements are added to chapter 00 and traceability, or replace every invalid reference with existing IDs that actually express the tested behavior.
+    resolution: Canonical definitions for the three already-used stable IDs were added to chapter 00 by lifting existing engine-parity, migration-lifecycle and persistent-identity rules without changing their semantics; chapter 10 and v0.1 acceptance now trace them, and the temporary unknown-ID exceptions were removed. No additional DATA identifier was invented.
 
   - id: SPEC-002
     status: open
@@ -38,7 +41,7 @@ findings:
     severity: high
     kind: gap
     decision: spec_change
-    summary: The normative OpenAPI omits required 0.1 operations for login/session/token management, monitor transitions and pause/resume, operation lookup, notification-channel management, status-page management and authenticated SSE.
+    summary: Browser login, logout, session and recovery are now contracted, but the normative OpenAPI still omits required 0.1 operations for API-token management, monitor transitions and pause/resume, operation lookup, notification-channel management, status-page management and authenticated SSE.
     locations:
       - specs/contracts/openapi.yaml
       - specs/03-api-and-automation.md
@@ -54,10 +57,10 @@ findings:
       - PRD-NOT-003
       - PRD-NOT-004
       - PRD-STA-001
-    resolution: Review contract changes in feature-sized packages before implementing the respective endpoint; do not infer response or error semantics from prose alone.
+    resolution: The oversized package was split into SPEC-012 and dependency-gated SPEC-015 through SPEC-018. SPEC-012 now defines browser auth/session/recovery; the finding remains open until the token, monitor/SSE, notification and status-page contract packages are implemented. Do not infer response or error semantics from prose alone.
 
   - id: SPEC-004
-    status: open
+    status: resolved
     severity: high
     kind: conflict
     decision: spec_change
@@ -70,7 +73,7 @@ findings:
     affects:
       - PRD-API-002
       - PRD-MON-002
-    resolution: Define one canonical typed CheckSpec mapping and compatibility tests across all three contracts before building monitor persistence or executors.
+    resolution: SPEC-013 defines and tests the normative per-kind field, unit, default, limit and SecretRef-to-ephemeral-key mapping across all seven variants. SPEC-019 must still align common proxy, resolver and address-family options before this finding can be resolved. Framework-free Rust domain types remain explicitly scoped to MON-011.
 
   - id: SPEC-005
     status: open
@@ -135,3 +138,16 @@ findings:
     affects:
       - PRD-NFR-003
     resolution: Record owner decisions in versioned ADRs or specification decisions before public packaging and signing work is approved.
+
+  - id: SEC-001
+    status: open
+    severity: high
+    kind: gap
+    decision: implementation
+    summary: The OpenAPI code-generation toolchain resolves js-yaml 4.2.0 through openapi-typescript and is affected by GHSA-52cp-r559-cp3m, causing the mandatory full Node audit gate to fail.
+    locations:
+      - package.json
+      - pnpm-lock.yaml
+    affects:
+      - PRD-API-002
+    resolution: Update or override the OpenAPI tooling dependency so the lockfile resolves js-yaml 4.3.0 or newer, then rerun contract, generated-drift, license and full Node audit gates without weakening audit policy.

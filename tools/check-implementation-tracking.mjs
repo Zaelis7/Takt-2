@@ -298,8 +298,11 @@ export function validateTrackingModel(canonicalRequirements, model) {
       if (canonicalRequirements.has(entry?.id)) {
         errors.push(`${label} is canonical and must not be excepted`);
       }
-      if (!findingsById.has(entry?.finding)) {
+      const finding = findingsById.get(entry?.finding);
+      if (finding === undefined) {
         errors.push(`${label} references unknown finding ${entry?.finding}`);
+      } else if (finding.status !== "open") {
+        errors.push(`${label} must reference an open finding`);
       }
     }
   }

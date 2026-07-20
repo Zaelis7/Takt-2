@@ -44,8 +44,9 @@ async fn connect(url: &str) -> Result<Database, Box<dyn Error>> {
     Ok(Database::connect(&config).await?)
 }
 
-// PRD-NFR-002 / PRD-IAM-001: this test requires a real PostgreSQL 16+ service;
-// it is intentionally not skipped when the service configuration is absent.
+// PRD-DATA-001 / PRD-DATA-002 / PRD-DATA-004 / PRD-NFR-002 / PRD-IAM-001:
+// this test requires a real PostgreSQL 16+ service; it is intentionally not
+// skipped when the service configuration is absent.
 #[tokio::test]
 async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), Box<dyn Error>> {
     let url = test_url()?;

@@ -29,7 +29,7 @@ async fn raw_connection(path: &std::path::Path) -> Result<SqliteConnection, Box<
     .await?)
 }
 
-// PRD-NFR-001 / PRD-NFR-002: a fresh SQLite file migrates, repeats without
+// PRD-DATA-002 / PRD-NFR-001: a fresh SQLite file migrates, repeats without
 // drift, and is never created in the repository working directory.
 #[tokio::test]
 async fn sqlite_migrations_are_forward_only_and_repeatable() -> Result<(), Box<dyn Error>> {
@@ -65,6 +65,7 @@ async fn sqlite_migrations_are_forward_only_and_repeatable() -> Result<(), Box<d
 }
 
 #[tokio::test]
+// PRD-DATA-002: newer schema versions fail closed and never become ready.
 async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
@@ -89,6 +90,7 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
 }
 
 #[tokio::test]
+// PRD-DATA-001: SQLite executes the same repository behavior as PostgreSQL.
 async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let (database, _) = sqlite_database(&directory, "repository.sqlite3").await?;
@@ -97,6 +99,7 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
 }
 
 #[tokio::test]
+// PRD-DATA-004 / PRD-IAM-001: bootstrap persists typed identity metadata.
 async fn sqlite_bootstrap_is_atomic_idempotent_and_redacted() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
     let (database, path) = sqlite_database(&directory, "bootstrap.sqlite3").await?;

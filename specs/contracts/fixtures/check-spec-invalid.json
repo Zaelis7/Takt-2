@@ -1,0 +1,72 @@
+[
+  {
+    "name": "http response body limit exceeds one MiB",
+    "kind": "http",
+    "api": { "type": "http", "url": "https://example.test", "response_body_limit_bytes": 1048577 },
+    "config_target": { "url": "https://example.test", "responseBodyLimitBytes": 1048577 },
+    "proto": { "url": "https://example.test", "response_body_limit_bytes": 1048577 }
+  },
+  {
+    "name": "HTTP response-time assertion exceeds five minutes",
+    "kind": "http",
+    "api": { "type": "http", "url": "https://example.test", "max_response_time_ms": 300001 },
+    "config_target": { "url": "https://example.test", "maxResponseTime": "300001ms" },
+    "proto": { "url": "https://example.test", "max_response_time_ms": 300001 }
+  },
+  {
+    "name": "tcp port zero",
+    "kind": "tcp",
+    "api": { "type": "tcp", "host": "example.test", "port": 0 },
+    "config_target": { "host": "example.test", "port": 0 },
+    "proto": { "host": "example.test", "port": 0 }
+  },
+  {
+    "name": "unsupported DNS record type",
+    "kind": "dns",
+    "api": { "type": "dns", "name": "example.test", "record_type": "PTR" },
+    "config_target": { "name": "example.test", "recordType": "PTR" },
+    "proto": { "name": "example.test", "record_type": "PTR" }
+  },
+  {
+    "name": "too many ICMP packets",
+    "kind": "icmp",
+    "api": { "type": "icmp", "host": "192.0.2.1", "packets": 6 },
+    "config_target": { "host": "192.0.2.1", "packets": 6 },
+    "proto": { "host": "192.0.2.1", "packets": 6 }
+  },
+  {
+    "name": "TLS port exceeds u16",
+    "kind": "tls",
+    "api": { "type": "tls", "host": "example.test", "port": 65536 },
+    "config_target": { "host": "example.test", "port": 65536 },
+    "proto": { "host": "example.test", "port": 65536 }
+  },
+  {
+    "name": "push grace exceeds one day",
+    "kind": "push",
+    "api": { "type": "push", "grace_ms": 86400001 },
+    "config_target": { "grace": "86400001ms" },
+    "proto": { "grace_ms": 86400001 }
+  },
+  {
+    "name": "browser arbitrary JavaScript action",
+    "kind": "browser",
+    "api": { "type": "browser", "start_url": "https://example.test", "steps": [{ "action": "javascript", "value": "return true" }] },
+    "config_target": { "startUrl": "https://example.test", "steps": [{ "action": "javascript", "value": "return true" }] },
+    "proto": { "start_url": "https://example.test", "steps": [{ "action": "ACTION_JAVASCRIPT" }] }
+  },
+  {
+    "name": "browser fill contains a literal secret",
+    "kind": "browser",
+    "api": { "type": "browser", "start_url": "https://example.test", "steps": [{ "action": "fill", "selector": "#password", "value": "raw-password" }] },
+    "config_target": { "startUrl": "https://example.test", "steps": [{ "action": "fill", "selector": "#password", "value": "raw-password" }] },
+    "proto": { "start_url": "https://example.test", "steps": [{ "action": "ACTION_FILL", "literal": "raw-password" }] }
+  },
+  {
+    "name": "HTTP bearer auth contains a literal secret",
+    "kind": "http",
+    "api": { "type": "http", "url": "https://example.test", "auth": { "type": "bearer", "token": "raw-token" } },
+    "config_target": { "url": "https://example.test", "auth": { "type": "bearer", "token": "raw-token" } },
+    "proto": { "url": "https://example.test", "auth": { "bearer": { "literal": "raw-token" } } }
+  }
+]

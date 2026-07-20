@@ -464,7 +464,7 @@ mod tests {
         Ok(response)
     }
 
-    // PRD-API-002 / PRD-DATA-002: the production startup composition serves
+    // PRD-DATA-002 / PRD-NFR-008: the production startup composition serves
     // readiness while initialization is still in progress.
     #[tokio::test]
     async fn readiness_is_served_during_schema_initialization()

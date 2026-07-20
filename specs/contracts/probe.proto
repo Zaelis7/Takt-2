@@ -149,6 +149,39 @@ message HeaderValue {
   }
 }
 
+enum HttpVersion {
+  HTTP_VERSION_AUTO = 0;
+  HTTP_VERSION_1_1 = 1;
+  HTTP_VERSION_2 = 2;
+}
+
+message HttpBasicAuth {
+  SecretValueRef username = 1;
+  SecretValueRef password = 2;
+}
+
+message HttpBearerAuth {
+  SecretValueRef token = 1;
+}
+
+message HttpMtlsAuth {
+  SecretValueRef client_certificate = 1;
+  SecretValueRef client_key = 2;
+}
+
+message HttpAuth {
+  oneof kind {
+    HttpBasicAuth basic = 1;
+    HttpBearerAuth bearer = 2;
+    HttpMtlsAuth mtls = 3;
+  }
+}
+
+message JsonPointerAssertion {
+  string pointer = 1;
+  string value = 2;
+}
+
 message HttpCheck {
   string url = 1;
   string method = 2;
@@ -159,10 +192,19 @@ message HttpCheck {
   }
   uint32 expected_status_min = 6;
   uint32 expected_status_max = 7;
-  uint32 follow_redirects = 8;
-  bool verify_tls = 9;
+  // Presence distinguishes the canonical default 5 from an explicit zero.
+  optional uint32 follow_redirects = 8;
+  // Presence distinguishes the canonical default true from an explicit false.
+  optional bool verify_tls = 9;
   string body_contains = 10;
+  // Defaults to and may not exceed 1 MiB after zero-value normalization.
   uint32 response_body_limit_bytes = 11;
+  HttpVersion http_version = 12;
+  string body_matches = 13;
+  JsonPointerAssertion json_pointer_equals = 14;
+  JsonPointerAssertion json_pointer_contains = 15;
+  uint32 max_response_time_ms = 16;
+  HttpAuth auth = 17;
 }
 
 message TcpCheck {
@@ -176,7 +218,17 @@ message DnsCheck {
   string name = 1;
   string record_type = 2;
   repeated string expected_values = 3;
+  // URI using udp, tcp, or tls scheme.
   string resolver = 4;
+  string expected_rcode = 5;
+  // Presence distinguishes the canonical default 1 from an explicit zero.
+  optional uint32 minimum_answers = 6;
+  DnsValueMatch value_match = 7;
+}
+
+enum DnsValueMatch {
+  DNS_VALUE_MATCH_CONTAINS = 0;
+  DNS_VALUE_MATCH_EXACT = 1;
 }
 
 message IcmpCheck {
@@ -191,13 +243,16 @@ message TlsCheck {
   uint32 port = 2;
   string server_name = 3;
   uint32 warning_days = 4;
-  uint32 critical_days = 5;
+  // Presence distinguishes the canonical default 7 from an explicit zero.
+  optional uint32 critical_days = 5;
 }
 
 message PushCheck {
   // Push monitors are evaluated centrally. This message exists for exhaustive
   // schema compatibility and must not be dispatched to a remote probe.
-  uint32 grace_ms = 1;
+  // Presence distinguishes the canonical default 60000 from an explicit zero.
+  optional uint32 grace_ms = 1;
+  bool allow_get = 2;
 }
 
 message BrowserStep {
@@ -209,6 +264,7 @@ message BrowserStep {
     ACTION_WAIT = 4;
     ACTION_ASSERT_TEXT = 5;
     ACTION_ASSERT_URL = 6;
+    ACTION_ASSERT_STATUS = 7;
   }
   Action action = 1;
   string selector = 2;
@@ -221,7 +277,9 @@ message BrowserStep {
 message BrowserCheck {
   string start_url = 1;
   repeated BrowserStep steps = 2;
-  uint32 screenshot_on_failure_max_bytes = 3;
+  // Presence distinguishes the canonical default 1 MiB from an explicit zero.
+  optional uint32 screenshot_on_failure_max_bytes = 3;
+  uint32 max_network_response_bytes = 4;
 }
 
 enum ObservationOutcome {

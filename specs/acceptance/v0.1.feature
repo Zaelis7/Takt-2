@@ -126,11 +126,14 @@ Feature: Takt 0.1 API-first monitoring core
     Then the response status is 403
     And no monitor is created
 
-  @PRD-NFR-002
-  Scenario Outline: Core repository behavior is identical across databases
+  @PRD-DATA-001 @PRD-DATA-002 @PRD-DATA-004 @PRD-NFR-002
+  Scenario Outline: Core persistence behavior is identical across databases
     Given Takt is configured with <database>
-    When the shared repository contract suite runs
-    Then all repository contract cases pass
+    When the migration and shared repository contract suites run
+    Then migrations are forward-only and repeatable
+    And an unknown newer schema is rejected while readiness remains unavailable
+    And all repository contract cases pass
+    And persistent ids, UTC timestamps and resource versions satisfy their shared contract
 
     Examples:
       | database   |

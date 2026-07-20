@@ -1,6 +1,6 @@
 schema_version: 1
 as_of: "2026-07-20"
-baseline_commit: f6039b00d374628432aa4af7f2db6d6723af6d00
+baseline_commit: 53be57ab890391c887719a7eaa380cde8e4770d6
 
 # coverage measures product behavior: none, partial, full.
 # verification measures evidence strength independently from coverage.
@@ -14,11 +14,19 @@ requirements:
     note: No monitor behavior exists through UI, API, CLI or declarative apply.
   - id: PRD-MON-002
     release: "0.1"
-    coverage: none
-    verification: none
+    coverage: partial
+    verification: focused_local
     spec_health: conflict
-    evidence: []
-    note: Check implementations are absent; the three machine contracts disagree on supported options (SPEC-004).
+    evidence:
+      - specs/04-probes-and-checks.md
+      - specs/contracts/openapi.yaml
+      - specs/contracts/takt-config.schema.json
+      - specs/contracts/probe.proto
+      - specs/contracts/fixtures/check-spec-valid.json
+      - specs/contracts/fixtures/check-spec-invalid.json
+      - tools/check-spec-contract.test.mjs
+      - docs/implementation-evidence/spec-013-check-spec-contract.md
+    note: All seven per-kind CheckSpec shapes now share a tested canonical mapping; common proxy, resolver and address-family options remain in SPEC-019, while Rust domain types, executors and typed observations remain in MON-011 and later CHECK packages (SPEC-004).
   - id: PRD-MON-003
     release: "0.1"
     coverage: none
@@ -71,7 +79,7 @@ requirements:
     verification: none
     spec_health: gap
     evidence: []
-    note: Only health endpoints are implemented; required 0.1 management contracts are incomplete (SPEC-003).
+    note: Only health endpoints are implemented; browser auth/session/recovery now has an OpenAPI contract, but the remaining required 0.1 management contracts and all resource runtimes are incomplete (SPEC-003).
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
@@ -80,9 +88,15 @@ requirements:
     evidence:
       - specs/contracts/openapi.yaml
       - tools/openapi-types.mjs
+      - tools/openapi-auth-contract.test.mjs
+      - tools/check-spec-contract.test.mjs
+      - specs/contracts/fixtures/check-spec-valid.json
+      - specs/contracts/fixtures/check-spec-invalid.json
       - docs/implementation-evidence/bootstrap.md
       - docs/implementation-evidence/implementation-tracking.md
-    note: OpenAPI lint and generated-type drift checks pass; runtime conformance and compatibility against a released baseline are absent, and CheckSpec contracts conflict (SPEC-004).
+      - docs/implementation-evidence/spec-012-auth-contract.md
+      - docs/implementation-evidence/spec-013-check-spec-contract.md
+    note: OpenAPI lint, generated-type drift, browser-auth and per-kind cross-contract CheckSpec checks pass; common network options remain in SPEC-019, runtime conformance and compatibility against a released baseline are absent, and the OpenAPI codegen toolchain has an open transitive high advisory (SPEC-004, SEC-001).
   - id: PRD-API-003
     release: "0.1"
     coverage: none
@@ -105,7 +119,9 @@ requirements:
     evidence:
       - crates/api/src/lib.rs
       - crates/api/tests/health_http.rs
-    note: Readiness emits a redacted Problem Details response; the general API error boundary is absent.
+      - tools/openapi-auth-contract.test.mjs
+      - docs/implementation-evidence/spec-012-auth-contract.md
+    note: Readiness emits a redacted Problem Details response and auth operations contractually expose bounded Problem responses; the general runtime API error boundary is absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -274,7 +290,10 @@ requirements:
       - docs/persistence.md
       - docs/implementation-evidence/persistence-admin-bootstrap.md
       - crates/server/tests/admin_bootstrap_cli.rs
-    note: Local owner bootstrap and Argon2id credentials exist; sessions, recovery, API tokens and scopes are absent, with missing OpenAPI operations (SPEC-003).
+      - specs/contracts/openapi.yaml
+      - tools/openapi-auth-contract.test.mjs
+      - docs/implementation-evidence/spec-012-auth-contract.md
+    note: Local owner bootstrap and Argon2id credentials exist, and browser session/recovery contracts are explicit; their runtime plus API-token contract/runtime and scopes are absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -311,6 +330,45 @@ requirements:
       - migrations/sqlite/0001_persistent_identity.sql
       - crates/persistence/tests/common/mod.rs
     note: Bootstrap writes one append-only redacted audit event; full action coverage, export and tamper evidence are absent.
+
+  - id: PRD-DATA-001
+    release: "0.1"
+    coverage: partial
+    verification: evidence_only
+    spec_health: clear
+    evidence:
+      - specs/acceptance/v0.1.feature
+      - crates/persistence/tests/common/mod.rs
+      - crates/persistence/tests/postgres_contract.rs
+      - crates/persistence/tests/sqlite_contract.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - docs/implementation-evidence/spec-010-data-requirements.md
+    note: Identity and bootstrap repositories share one engine contract; monitor, observation, outbox, retention and later repositories are still absent.
+  - id: PRD-DATA-002
+    release: "0.1"
+    coverage: partial
+    verification: evidence_only
+    spec_health: clear
+    evidence:
+      - specs/acceptance/v0.1.feature
+      - crates/persistence/tests/postgres_contract.rs
+      - crates/persistence/tests/sqlite_contract.rs
+      - crates/server/src/main.rs
+      - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - docs/implementation-evidence/spec-010-data-requirements.md
+    note: Initial forward/repeated migration, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
+  - id: PRD-DATA-004
+    release: "0.1"
+    coverage: partial
+    verification: evidence_only
+    spec_health: clear
+    evidence:
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+      - crates/persistence/tests/common/mod.rs
+      - crates/persistence/tests/sqlite_contract.rs
+      - docs/implementation-evidence/spec-010-data-requirements.md
+    note: Persisted identity entities use UUIDv7, UTC microseconds and versions; the remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -435,26 +493,4 @@ requirements:
       - crates/persistence/tests/common/mod.rs
     note: UUID, clock and ID sources are injectable in the implemented foundation; scheduler, evaluator and config diff do not yet exist.
 
-# These references already exist outside the canonical PRD catalog. They remain
-# narrowly excepted so the gate prevents new invalid uses while SPEC-001 is open.
-known_unknown_requirement_refs:
-  - id: PRD-DATA-001
-    finding: SPEC-001
-    paths:
-      - crates/persistence/tests/common/mod.rs
-      - docs/implementation-evidence/persistence-admin-bootstrap.md
-      - migrations/postgres/0001_persistent_identity.sql
-      - migrations/sqlite/0001_persistent_identity.sql
-  - id: PRD-DATA-002
-    finding: SPEC-001
-    paths:
-      - crates/server/src/main.rs
-      - docs/implementation-evidence/persistence-admin-bootstrap.md
-      - migrations/postgres/0001_persistent_identity.sql
-      - migrations/sqlite/0001_persistent_identity.sql
-  - id: PRD-DATA-004
-    finding: SPEC-001
-    paths:
-      - docs/implementation-evidence/persistence-admin-bootstrap.md
-      - migrations/postgres/0001_persistent_identity.sql
-      - migrations/sqlite/0001_persistent_identity.sql
+known_unknown_requirement_refs: []

@@ -63,8 +63,9 @@ fn compile_proto(output_directory: &Path) -> Result<(), Box<dyn Error>> {
 
     let mut configuration = prost_build::Config::new();
     // Preserve the wire contract while avoiding a disproportionately large
-    // ServerMessage oneof in generated Rust code.
+    // oneof in generated Rust code.
     configuration.boxed(".takt.probe.v1.ServerMessage.payload.check_job");
+    configuration.boxed(".takt.probe.v1.CheckSpec.kind.http");
     configuration.out_dir(output_directory);
     configuration.compile_fds(descriptors)?;
     Ok(())

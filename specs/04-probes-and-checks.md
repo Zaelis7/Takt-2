@@ -69,6 +69,34 @@ Zertifikate laufen standardmäßig nach 30 Tagen ab und werden ab sieben Tagen v
 
 ## 5. Check-Typen für 0.1
 
+### 5.0 Kanonisches CheckSpec-Mapping
+
+Die Rust-Domäne und OpenAPI verwenden `snake_case`; das deklarative Schema behält seine vorhandene `camelCase`-Konvention. Proto verwendet dieselben `snake_case`-Feldnamen wie die Domäne. Die folgende Abbildung ist normativ; ein Adapter darf keine weitere Option oder abweichende Einheit einführen:
+
+| Typ | Domäne/OpenAPI/Proto | Deklarative Config | Einheit, Default und Grenze |
+|---|---|---|---|
+| HTTP | `url`, `method` | `url`, `method` | URL maximal 2048 Zeichen; Methode `GET` |
+| HTTP | `headers`, `body` | `headers`, `body` | höchstens 50 Header; Literalwerte maximal 8192 Zeichen, Body maximal 1 MiB; alternativ Secret-Referenz |
+| HTTP | `expected_status_min`, `expected_status_max` | `expectedStatus.min`, `.max` | `200`/`399`, jeweils 100–599 und Minimum nicht größer als Maximum |
+| HTTP | `follow_redirects`, `verify_tls`, `http_version` | `followRedirects`, `verifyTls`, `httpVersion` | `5` (0–10), `true`, `auto`; Version `auto`, `http1_1` oder `http2` |
+| HTTP | `body_contains`, `body_matches` | `bodyContains`, `bodyMatches` | optional; Assertionseingabe jeweils maximal 4 MiB |
+| HTTP | `json_pointer_equals`, `json_pointer_contains` | `jsonPointerEquals`, `jsonPointerContains` | optionales Paar aus Pointer (1–1024 Zeichen) und Vergleichswert (maximal 4 MiB) |
+| HTTP | `max_response_time_ms` | `maxResponseTime` | optional; Millisekunden beziehungsweise Config-Dauer, 1–300000 ms |
+| HTTP | `response_body_limit_bytes` | `responseBodyLimitBytes` | Bytes, Standard und Maximum 1048576 |
+| HTTP | `auth` | `auth` | `basic`, `bearer` oder `mtls`; Zugangsdaten ausschließlich als Secret-Referenzen |
+| HTTP Auth | `username`, `password`, `token`, `client_certificate`, `client_key` | `username`, `password`, `token`, `clientCertificate`, `clientKey` | genau die zur gewählten Auth-Art gehörenden SecretRefs; keine Literalwerte |
+| TCP | `host`, `port`, `send_bytes`, `expect_prefix` | `host`, `port`, `sendText`, `expectPrefix` | Port 1–65535; Config-Text wird UTF-8-kodiert, je maximal 4096 Bytes |
+| DNS | `name`, `record_type`, `expected_values`, `resolver` | `name`, `recordType`, `expectedValues`, `resolver` | Typ A/AAAA/CNAME/MX/TXT/NS/SOA/CAA; maximal 100 Werte zu je 4096 Zeichen; Resolver-URI mit `udp`/`tcp`/`tls` |
+| DNS | `expected_rcode`, `minimum_answers`, `value_match` | `expectedRcode`, `minimumAnswers`, `valueMatch` | Defaults `NOERROR`, `1`, `contains`; Antworten 0–100 |
+| ICMP | `host`, `packets`, `required_successes`, `max_latency_ms` | `host`, `packets`, `requiredSuccesses`, `maxLatencyMs` | Pakete `3` (1–5), Erfolge `1` (1–Pakete), optionale Latenz 1–300000 ms |
+| TLS | `host`, `port`, `server_name`, `warning_days`, `critical_days` | `host`, `port`, `serverName`, `warningDays`, `criticalDays` | Port `443`; Schwellen `30`/`7` Tage, 0–3650 und kritisch nicht größer als Warnung |
+| Push | `grace_ms`, `allow_get` | `grace`, `allowGet` | 60000 ms beziehungsweise `60s`, 0–86400000 ms; `false` |
+| Browser | `start_url`, `steps` | `startUrl`, `steps` | 1–20 deklarative Schritte; Action-Namen sind in Config camelCase und sonst snake_case |
+| Browser Step | `action`, `selector`, `value` | `action`, `selector`, `value` | `navigate`, `click`, `fill`, `wait`, Text-/URL-/Status-Assertion; `fill` erfordert Selector und SecretRef |
+| Browser | `max_network_response_bytes`, `screenshot_on_failure_max_bytes` | `maxNetworkResponseBytes`, `screenshotOnFailureMaxBytes` | Defaults 10 MiB/1 MiB, Maximum jeweils 10 MiB; Screenshotwert 0 deaktiviert das Artefakt |
+
+Config-Secret-Referenzen bestehen aus `secretRef` und optionalem `key` (Standard `value`), OpenAPI aus `secret_ref` und `key`. Vor Probe-Dispatch MUSS der Server sie zuletzt verantwortlich auflösen und nur den kurzlebigen `ephemeral_key` im versiegelten Secret-Bundle und in Proto-Nachrichten verwenden. Literal-Secrets in `auth` oder Browser-`fill` sind ungültig. Proto-Felder mit einem von null verschiedenen Standard und zugleich sinnvoller expliziter Null-/False-Semantik verwenden `optional`; andere fehlende numerische Werte und leere optionale String-Defaults werden vor Eintritt in die Domäne auf die Tabelle normalisiert. Leere Pflichtstrings bleiben ungültig. Ungültige Proto-Werte ergeben `ACK_DISPOSITION_REJECTED_INVALID`, niemals eine Observation mit `TARGET_FAILURE`.
+
 ### 5.1 HTTP/HTTPS
 
 Pflicht: `url`.

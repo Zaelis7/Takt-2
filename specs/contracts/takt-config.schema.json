@@ -59,6 +59,21 @@
       "type": "string",
       "pattern": "^[1-9][0-9]*(ms|s|m|h|d)$"
     },
+    "checkDuration": {
+      "type": "string",
+      "pattern": "^(?:(?:[1-9]|[1-9][0-9]{1,4}|[12][0-9]{5}|300000)ms|(?:[1-9]|[1-9][0-9]|[12][0-9]{2}|300)s|[1-5]m)$",
+      "description": "Duration from 1 millisecond through 5 minutes."
+    },
+    "pushGraceDuration": {
+      "oneOf": [
+        { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,6}|[1-7][0-9]{7}|8[0-5][0-9]{6}|86[0-3][0-9]{5}|86400000)ms$" },
+        { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,3}|[1-7][0-9]{4}|8[0-5][0-9]{3}|86[0-3][0-9]{2}|86400)s$" },
+        { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,2}|1[0-3][0-9]{2}|14[0-3][0-9]|1440)m$" },
+        { "type": "string", "pattern": "^(?:0|[1-9]|1[0-9]|2[0-4])h$" },
+        { "type": "string", "pattern": "^[01]d$" }
+      ],
+      "description": "Duration from zero through 24 hours."
+    },
     "secretRef": {
       "type": "object",
       "additionalProperties": false,
@@ -72,6 +87,54 @@
           "default": "value"
         }
       }
+    },
+    "httpValue": {
+      "oneOf": [
+        { "type": "string", "maxLength": 1048576 },
+        { "$ref": "#/$defs/secretRef" }
+      ]
+    },
+    "jsonPointerAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer", "value"],
+      "properties": {
+        "pointer": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "value": { "type": "string", "maxLength": 4194304 }
+      }
+    },
+    "httpAuth": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "username", "password"],
+          "properties": {
+            "type": { "const": "basic" },
+            "username": { "$ref": "#/$defs/secretRef" },
+            "password": { "$ref": "#/$defs/secretRef" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "token"],
+          "properties": {
+            "type": { "const": "bearer" },
+            "token": { "$ref": "#/$defs/secretRef" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "clientCertificate", "clientKey"],
+          "properties": {
+            "type": { "const": "mtls" },
+            "clientCertificate": { "$ref": "#/$defs/secretRef" },
+            "clientKey": { "$ref": "#/$defs/secretRef" }
+          }
+        }
+      ]
     },
     "labelSelector": {
       "type": "object",
@@ -169,11 +232,12 @@
       "additionalProperties": false,
       "required": ["url"],
       "properties": {
-        "url": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "url": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 },
         "method": { "enum": ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], "default": "GET" },
         "headers": {
           "type": "object",
           "maxProperties": 50,
+          "propertyNames": { "minLength": 1, "maxLength": 256 },
           "additionalProperties": {
             "oneOf": [
               { "type": "string", "maxLength": 8192 },
@@ -182,10 +246,7 @@
           }
         },
         "body": {
-          "oneOf": [
-            { "type": "string", "maxLength": 1048576 },
-            { "$ref": "#/$defs/secretRef" }
-          ]
+          "$ref": "#/$defs/httpValue"
         },
         "expectedStatus": {
           "type": "object",
@@ -198,8 +259,14 @@
         },
         "followRedirects": { "type": "integer", "minimum": 0, "maximum": 10, "default": 5 },
         "verifyTls": { "type": "boolean", "default": true },
-        "bodyContains": { "type": "string", "maxLength": 4096 },
-        "maxResponseTime": { "$ref": "#/$defs/duration" }
+        "httpVersion": { "enum": ["auto", "http1_1", "http2"], "default": "auto" },
+        "bodyContains": { "type": "string", "maxLength": 4194304 },
+        "bodyMatches": { "type": "string", "maxLength": 4194304 },
+        "jsonPointerEquals": { "$ref": "#/$defs/jsonPointerAssertion" },
+        "jsonPointerContains": { "$ref": "#/$defs/jsonPointerAssertion" },
+        "maxResponseTime": { "$ref": "#/$defs/checkDuration" },
+        "responseBodyLimitBytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 1048576 },
+        "auth": { "$ref": "#/$defs/httpAuth" }
       }
     },
     "tcpTarget": {
@@ -224,7 +291,11 @@
           "type": "array",
           "maxItems": 100,
           "items": { "type": "string", "maxLength": 4096 }
-        }
+        },
+        "resolver": { "type": "string", "format": "uri", "pattern": "^(?:udp|tcp|tls)://", "maxLength": 2048, "description": "Resolver URI using udp, tcp, or tls scheme." },
+        "expectedRcode": { "enum": ["NOERROR", "NXDOMAIN", "SERVFAIL", "REFUSED"], "default": "NOERROR" },
+        "minimumAnswers": { "type": "integer", "minimum": 0, "maximum": 100, "default": 1 },
+        "valueMatch": { "enum": ["exact", "contains"], "default": "contains" }
       }
     },
     "icmpTarget": {
@@ -233,7 +304,9 @@
       "required": ["host"],
       "properties": {
         "host": { "type": "string", "minLength": 1, "maxLength": 253 },
-        "packets": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 }
+        "packets": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 },
+        "requiredSuccesses": { "type": "integer", "minimum": 1, "maximum": 5, "default": 1 },
+        "maxLatencyMs": { "type": "integer", "minimum": 1, "maximum": 300000 }
       }
     },
     "tlsTarget": {
@@ -243,6 +316,7 @@
       "properties": {
         "host": { "type": "string", "minLength": 1, "maxLength": 253 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 443 },
+        "serverName": { "type": "string", "minLength": 1, "maxLength": 253 },
         "warningDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
         "criticalDays": { "type": "integer", "minimum": 0, "maximum": 3650, "default": 7 }
       }
@@ -251,7 +325,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "grace": { "$ref": "#/$defs/duration", "default": "60s" },
+        "grace": { "$ref": "#/$defs/pushGraceDuration", "default": "60s" },
         "allowGet": { "type": "boolean", "default": false }
       }
     },
@@ -260,7 +334,7 @@
       "additionalProperties": false,
       "required": ["action"],
       "properties": {
-        "action": { "enum": ["navigate", "click", "fill", "wait", "assertText", "assertUrl"] },
+        "action": { "enum": ["navigate", "click", "fill", "wait", "assertText", "assertUrl", "assertStatus"] },
         "selector": { "type": "string", "maxLength": 1000 },
         "value": {
           "oneOf": [
@@ -268,20 +342,31 @@
             { "$ref": "#/$defs/secretRef" }
           ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "action": { "const": "fill" } }, "required": ["action"] },
+          "then": {
+            "required": ["selector", "value"],
+            "properties": { "value": { "$ref": "#/$defs/secretRef" } }
+          }
+        }
+      ]
     },
     "browserTarget": {
       "type": "object",
       "additionalProperties": false,
       "required": ["startUrl", "steps"],
       "properties": {
-        "startUrl": { "type": "string", "format": "uri", "maxLength": 2048 },
+        "startUrl": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 },
         "steps": {
           "type": "array",
           "minItems": 1,
           "maxItems": 20,
           "items": { "$ref": "#/$defs/browserStep" }
-        }
+        },
+        "maxNetworkResponseBytes": { "type": "integer", "minimum": 1, "maximum": 10485760, "default": 10485760 },
+        "screenshotOnFailureMaxBytes": { "type": "integer", "minimum": 0, "maximum": 10485760, "default": 1048576 }
       }
     },
     "notificationChannel": {

@@ -106,3 +106,17 @@ test("rejects unknown requirement IDs and package dependency cycles", () => {
   );
 });
 
+test("rejects unknown requirement exceptions after their finding is resolved", () => {
+  const model = validModel();
+  model.requirements.known_unknown_requirement_refs.push({
+    id: "PRD-UNKNOWN-001",
+    finding: "SPEC-001",
+    paths: ["docs/historical-evidence.md"],
+  });
+  model.findings.findings[0].status = "resolved";
+
+  assert.throws(
+    () => validateTrackingModel(canonicalRequirements, model),
+    /unknown requirement exception PRD-UNKNOWN-001 must reference an open finding/,
+  );
+});

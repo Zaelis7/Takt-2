@@ -50,6 +50,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a browser session with local credentials
+         * @description Invalid credentials use an identical response for an unknown username and an invalid password.
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revoke the current browser session */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the current browser session and CSRF token */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/recovery/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request a one-time password recovery token
+         * @description The response is identical whether or not the account exists.
+         */
+        post: operations["requestPasswordRecovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/recovery/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replace a local password with a one-time recovery token */
+        post: operations["completePasswordRecovery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/monitors": {
         parameters: {
             query?: never;
@@ -259,6 +350,41 @@ export interface components {
             database: "postgresql" | "sqlite";
             capabilities: string[];
         };
+        LoginRequest: {
+            username: string;
+            /** @description Password input; the runtime enforces a maximum of 1024 UTF-8 bytes. */
+            password: string;
+        };
+        PasswordRecoveryRequest: {
+            username: string;
+        };
+        PasswordRecoveryComplete: {
+            /** @description Opaque, one-time and short-lived recovery token. */
+            token: string;
+            /** @description Replacement password; the runtime enforces a maximum of 1024 UTF-8 bytes. */
+            new_password: string;
+        };
+        SessionUser: {
+            id: components["schemas"]["Uuid"];
+            username: string;
+            display_name: string;
+        };
+        Session: {
+            user: components["schemas"]["SessionUser"];
+            permissions: string[];
+            /** @description Session-bound token for the X-CSRF-Token request header. */
+            csrf_token: string;
+            /**
+             * Format: date-time
+             * @description Inactivity expiry, 12 hours by default and configurable by the operator.
+             */
+            expires_at: string;
+            /**
+             * Format: date-time
+             * @description Absolute expiry, 7 days by default and configurable by the operator.
+             */
+            absolute_expires_at: string;
+        };
         /** @enum {string} */
         MonitorKind: "http" | "tcp" | "dns" | "icmp" | "tls" | "push" | "browser";
         /** @enum {string} */
@@ -320,6 +446,44 @@ export interface components {
             next_cursor: string | null;
         };
         CheckSpec: components["schemas"]["HttpCheckSpec"] | components["schemas"]["TcpCheckSpec"] | components["schemas"]["DnsCheckSpec"] | components["schemas"]["IcmpCheckSpec"] | components["schemas"]["TlsCheckSpec"] | components["schemas"]["PushCheckSpec"] | components["schemas"]["BrowserCheckSpec"];
+        /** @description Persistent secret reference resolved only at the execution boundary; secret values are never returned. */
+        SecretRef: {
+            secret_ref: components["schemas"]["Slug"];
+            /** @default value */
+            key: string;
+        };
+        HttpValue: string | components["schemas"]["SecretRef"];
+        JsonPointerAssertion: {
+            pointer: string;
+            value: string;
+        };
+        HttpBasicAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "HttpBasicAuth";
+            username: components["schemas"]["SecretRef"];
+            password: components["schemas"]["SecretRef"];
+        };
+        HttpBearerAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "HttpBearerAuth";
+            token: components["schemas"]["SecretRef"];
+        };
+        HttpMtlsAuth: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "HttpMtlsAuth";
+            client_certificate: components["schemas"]["SecretRef"];
+            client_key: components["schemas"]["SecretRef"];
+        };
+        HttpAuth: components["schemas"]["HttpBasicAuth"] | components["schemas"]["HttpBearerAuth"] | components["schemas"]["HttpMtlsAuth"];
         HttpCheckSpec: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -333,6 +497,10 @@ export interface components {
              * @enum {string}
              */
             method: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+            headers?: {
+                [key: string]: string | components["schemas"]["SecretRef"];
+            };
+            body?: components["schemas"]["HttpValue"];
             /** @default 200 */
             expected_status_min: number;
             /** @default 399 */
@@ -341,7 +509,19 @@ export interface components {
             follow_redirects: number;
             /** @default true */
             verify_tls: boolean;
+            /**
+             * @default auto
+             * @enum {string}
+             */
+            http_version: "auto" | "http1_1" | "http2";
             body_contains?: string;
+            body_matches?: string;
+            json_pointer_equals?: components["schemas"]["JsonPointerAssertion"];
+            json_pointer_contains?: components["schemas"]["JsonPointerAssertion"];
+            max_response_time_ms?: number;
+            /** @default 1048576 */
+            response_body_limit_bytes: number;
+            auth?: components["schemas"]["HttpAuth"];
         };
         TcpCheckSpec: {
             /**
@@ -351,7 +531,9 @@ export interface components {
             type: "tcp";
             host: string;
             port: number;
+            /** @description UTF-8 text encoded to send_bytes for the Probe contract; the runtime enforces the 4096-byte limit. */
             send_text?: string;
+            /** @description UTF-8 text encoded to bytes for the Probe contract; the runtime enforces the 4096-byte limit. */
             expect_prefix?: string;
         };
         DnsCheckSpec: {
@@ -364,6 +546,23 @@ export interface components {
             /** @enum {string} */
             record_type: "A" | "AAAA" | "CNAME" | "MX" | "TXT" | "NS" | "SOA" | "CAA";
             expected_values?: string[];
+            /**
+             * Format: uri
+             * @description Resolver URI using udp, tcp, or tls scheme.
+             */
+            resolver?: string;
+            /**
+             * @default NOERROR
+             * @enum {string}
+             */
+            expected_rcode: "NOERROR" | "NXDOMAIN" | "SERVFAIL" | "REFUSED";
+            /** @default 1 */
+            minimum_answers: number;
+            /**
+             * @default contains
+             * @enum {string}
+             */
+            value_match: "exact" | "contains";
         };
         IcmpCheckSpec: {
             /**
@@ -374,6 +573,9 @@ export interface components {
             host: string;
             /** @default 3 */
             packets: number;
+            /** @default 1 */
+            required_successes: number;
+            max_latency_ms?: number;
         };
         TlsCheckSpec: {
             /**
@@ -384,6 +586,7 @@ export interface components {
             host: string;
             /** @default 443 */
             port: number;
+            server_name?: string;
             /** @default 30 */
             warning_days: number;
             /** @default 7 */
@@ -395,7 +598,10 @@ export interface components {
              * @enum {string}
              */
             type: "push";
+            /** @default 60000 */
             grace_ms: number;
+            /** @default false */
+            allow_get: boolean;
         };
         BrowserCheckSpec: {
             /**
@@ -405,12 +611,16 @@ export interface components {
             type: "browser";
             /** Format: uri */
             start_url: string;
-            steps: {
+            steps: ({
                 /** @enum {string} */
-                action: "navigate" | "click" | "fill" | "wait" | "assert_text" | "assert_url";
+                action: "navigate" | "click" | "fill" | "wait" | "assert_text" | "assert_url" | "assert_status";
                 selector?: string;
-                value?: string;
-            }[];
+                value?: string | components["schemas"]["SecretRef"];
+            } & unknown)[];
+            /** @default 10485760 */
+            max_network_response_bytes: number;
+            /** @default 1048576 */
+            screenshot_on_failure_max_bytes: number;
         };
         /** @enum {string} */
         ObservationOutcome: "SUCCESS" | "TARGET_FAILURE" | "PROBE_FAILURE" | "CANCELLED";
@@ -557,15 +767,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        RateLimitProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            code?: "rate_limit_exceeded";
+        };
     };
     responses: {
         /** @description Problem Details response */
         Problem: {
             headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
                 [name: string]: unknown;
             };
             content: {
                 "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Rate limit exceeded */
+        RateLimitProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                "Retry-After": components["headers"]["RetryAfter"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["RateLimitProblem"];
             };
         };
     };
@@ -576,11 +802,21 @@ export interface components {
         Cursor: string;
         IdempotencyKey: string;
         IfMatch: string;
+        /** @description Session-bound token required for browser state changes. */
+        CsrfToken: string;
     };
     requestBodies: never;
     headers: {
         /** @description Quoted resource version */
         ETag: string;
+        /** @description Rotated opaque session cookie using HttpOnly, SameSite=Lax, Path=/ and Secure outside explicit localhost mode. */
+        SessionCookie: string;
+        /** @description Expired HttpOnly, SameSite=Lax, Path=/ session cookie, retaining Secure outside explicit localhost mode, used to clear browser state. */
+        ExpiredSessionCookie: string;
+        /** @description UUIDv7 request correlation identifier. */
+        RequestId: components["schemas"]["Uuid"];
+        /** @description Seconds until the client should retry. */
+        RetryAfter: number;
     };
     pathItems: never;
 }
@@ -648,6 +884,137 @@ export interface operations {
                 };
             };
             401: components["responses"]["Problem"];
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Authenticated session with a rotated session cookie */
+            200: {
+                headers: {
+                    "Set-Cookie": components["headers"]["SessionCookie"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            400: components["responses"]["Problem"];
+            401: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["RateLimitProblem"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token required for browser state changes. */
+                "X-CSRF-Token": components["parameters"]["CsrfToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session revoked */
+            204: {
+                headers: {
+                    "Set-Cookie": components["headers"]["ExpiredSessionCookie"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Problem"];
+            403: components["responses"]["Problem"];
+            429: components["responses"]["RateLimitProblem"];
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current browser session */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Session"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            429: components["responses"]["RateLimitProblem"];
+        };
+    };
+    requestPasswordRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordRecoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Recovery request accepted without disclosing account existence */
+            202: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["RateLimitProblem"];
+        };
+    };
+    completePasswordRecovery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordRecoveryComplete"];
+            };
+        };
+        responses: {
+            /** @description Password replaced and existing sessions revoked */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["RateLimitProblem"];
         };
     };
     listMonitors: {

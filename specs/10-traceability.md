@@ -25,6 +25,7 @@ Jede Muss-Anforderung muss in Code, Tests und Release Evidence nachverfolgbar se
 | PRD-STA-005 | 0.3 | OpenAPI-Erweiterung vor Umsetzung | `v0.3.feature` Subscriber |
 | PRD-IAM-001 | 0.1 | OpenAPI Security Schemes | `v0.1.feature` Token Scope |
 | PRD-IAM-002, PRD-IAM-003, PRD-IAM-004, PRD-IAM-005 | 0.3 | OpenAPI-Erweiterung vor Umsetzung | `v0.3.feature` IAM/Audit |
+| PRD-DATA-001, PRD-DATA-002, PRD-DATA-004 | 0.1 Basis, fortlaufend | Repository- und Migrationsverträge | `v0.1.feature` Persistenzparität/Migration |
 | PRD-MIG-001, PRD-MIG-002, PRD-MIG-003, PRD-MIG-004 | 0.2 | Import Plan Contract vor Umsetzung | `v0.2.feature` Import |
 | PRD-NFR-001, PRD-NFR-002, PRD-NFR-003, PRD-NFR-004, PRD-NFR-005, PRD-NFR-006, PRD-NFR-007, PRD-NFR-008, PRD-NFR-009, PRD-NFR-010 | 0.1 Basis, fortlaufend | Build/Operations | alle Suites + Evidence |
 

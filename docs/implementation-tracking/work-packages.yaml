@@ -8,11 +8,25 @@ packages:
     depends_on: []
     outcome: Versionierte Requirement-, Work-Package- und Findings-Register mit automatischem Konsistenz-Gate.
     acceptance:
-      - Alle 54 kanonischen PRD-IDs kommen im Ledger genau einmal vor.
+      - Alle 57 kanonischen PRD-IDs kommen im Ledger genau einmal vor.
       - Unbekannte IDs, fehlende Pakete, unbekannte Abhängigkeiten und Paketzyklen lassen den Gate-Test fehlschlagen.
     evidence:
       - node --test tools/check-implementation-tracking.test.mjs
       - pnpm check:tracking
+
+  - id: GOV-002
+    release: cross-release
+    status: planned
+    requirements: [PRD-API-002]
+    findings: [SEC-001]
+    depends_on: [GOV-001]
+    outcome: Gepatchter YAML-Parser im OpenAPI-Codegen-Tooling ohne High-Severity-Advisory.
+    acceptance:
+      - Der transitive `js-yaml`-Pfad verwendet mindestens Version 4.3.0.
+      - Contract-, Generated-Drift- und vollständiger Node-Audit-Gate bleiben grün.
+    evidence:
+      - pnpm audit --audit-level high
+      - pnpm contracts:validate und pnpm check:generated
 
   - id: CORE-001
     release: "0.1"
@@ -31,7 +45,7 @@ packages:
   - id: DATA-001
     release: "0.1"
     status: implemented
-    requirements: [PRD-IAM-001, PRD-IAM-003, PRD-IAM-004, PRD-IAM-005, PRD-NFR-001, PRD-NFR-002, PRD-NFR-005, PRD-NFR-007, PRD-NFR-008, PRD-NFR-010]
+    requirements: [PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-IAM-001, PRD-IAM-003, PRD-IAM-004, PRD-IAM-005, PRD-NFR-001, PRD-NFR-002, PRD-NFR-005, PRD-NFR-007, PRD-NFR-008, PRD-NFR-010]
     findings: [SPEC-001, EVID-001]
     depends_on: [CORE-001]
     outcome: Äquivalente PostgreSQL-/SQLite-Identitätspersistenz, Default-Kontext, lokaler Owner-Bootstrap und append-only Bootstrap-Audit.
@@ -44,8 +58,8 @@ packages:
 
   - id: SPEC-010
     release: "0.1"
-    status: planned
-    requirements: [PRD-IAM-001, PRD-IAM-003, PRD-NFR-002, PRD-NFR-005, PRD-NFR-007]
+    status: implemented
+    requirements: [PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-IAM-001, PRD-IAM-003, PRD-NFR-002, PRD-NFR-005, PRD-NFR-007]
     findings: [SPEC-001]
     depends_on: [GOV-001]
     outcome: Kanonische, durchgängig verwendete Requirement-IDs für Daten- und Migrationsverhalten.
@@ -53,6 +67,7 @@ packages:
       - SPEC-001 ist durch einen reviewten Spec-Change entschieden.
       - Keine nicht kanonische PRD-ID bleibt außerhalb historischer Evidence übrig.
     evidence:
+      - docs/implementation-evidence/spec-010-data-requirements.md
       - pnpm check:tracking ohne unknown-requirement-Ausnahmen
       - Review-Diff von Kapitel 00, Kapitel 10, Migrationen und betroffenen Tests
 
@@ -72,31 +87,48 @@ packages:
 
   - id: SPEC-012
     release: "0.1"
-    status: planned
-    requirements: [PRD-API-001, PRD-IAM-001, PRD-MON-001, PRD-MON-005, PRD-NOT-001, PRD-NOT-002, PRD-NOT-003, PRD-NOT-004, PRD-STA-001]
+    status: implemented
+    requirements: [PRD-API-001, PRD-API-002, PRD-API-005, PRD-IAM-001, PRD-IAM-005]
     findings: [SPEC-003]
     depends_on: [GOV-001]
-    outcome: Featureweise ergänzte OpenAPI-Verträge für alle fehlenden 0.1-Verwaltungs- und Operationspfade.
+    outcome: Reviewter OpenAPI-Vertrag für Browser-Login, Logout, Session, Recovery und CSRF.
     acceptance:
-      - Jede 0.1-Operation besitzt Auth-, Permission-, Erfolgs- und Problem-Responses im Vertrag.
-      - Operationen werden nur in dem Paket ergänzt, das ihre Laufzeitimplementierung unmittelbar vorbereitet.
+      - Cookie-, CSRF-, Rotations-, Ablauf-, Rate-Limit- und generische Login-/Recovery-Fehlerregeln sind vertraglich testbar.
+      - Auth-Eingaben sind geschlossen und größenbegrenzt; JSON-Antwortschemas enthalten weder Passwort noch Recovery-Token oder Session-ID.
     evidence:
-      - pnpm contracts:openapi
+      - docs/implementation-evidence/spec-012-auth-contract.md
+      - Auth-spezifischer OpenAPI-Contract-Test
+      - pnpm contracts:openapi und pnpm check:generated
       - Review der Breaking-Change-Ausgabe gegen den letzten freigegebenen Vertrag
 
   - id: SPEC-013
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-002, PRD-MON-002]
     findings: [SPEC-004]
     depends_on: [GOV-001]
-    outcome: Ein kanonisches CheckSpec-Mapping zwischen OpenAPI, Config Schema, Proto und Rust-Domäne.
+    outcome: Ein kanonisches Mapping der prüfungsspezifischen CheckSpec-Felder zwischen OpenAPI, Config Schema und Proto; gemeinsame Netzwerkoptionen folgen in SPEC-019 und Rust-Domänentypen in MON-011.
     acceptance:
-      - Alle gemeinsamen Check-Felder besitzen dokumentierte 1:1-Namen, Einheiten, Defaults und Grenzen.
+      - Alle prüfungsspezifischen Check-Felder besitzen dokumentierte 1:1-Namen, Einheiten, Defaults und Grenzen.
       - Positive und negative Golden-Fixtures werden gegen alle drei Maschinenverträge geprüft.
     evidence:
+      - docs/implementation-evidence/spec-013-check-spec-contract.md
       - pnpm contracts:validate
       - Cross-contract Golden-Test für alle sieben Check-Arten
+
+  - id: SPEC-019
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-MON-002]
+    findings: [SPEC-004]
+    depends_on: [SPEC-013]
+    outcome: Kanonisches Mapping gemeinsamer Proxy-, Resolver- und Adressfamilienoptionen für alle aktiven Netzwerkchecks.
+    acceptance:
+      - OpenAPI, Config Schema und Proto besitzen dieselben Netzwerkfelder, SecretRef-Grenzen und Namen.
+      - Positive und negative Golden-Fixtures prüfen Proxy-URLs, Proxy-Auth, Resolver und Adressfamilien.
+    evidence:
+      - Cross-contract Netzwerkoptionen-Golden-Test
+      - pnpm contracts:validate und pnpm check:generated
 
   - id: SPEC-014
     release: "0.1"
@@ -171,7 +203,7 @@ packages:
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-012]
+    depends_on: [IAM-012, SPEC-015]
     outcome: API-Token-CRUD, einmalige Ausgabe, Hashspeicherung und serverseitige Scope-Prüfung.
     acceptance:
       - Ein monitors:read-Token kann lesen, aber weder erstellen noch Rechte ableiten.
@@ -180,12 +212,26 @@ packages:
       - v0.1 Token-Scope-Acceptance
       - Negative Permission- und Secret-Scan-Tests
 
+  - id: SPEC-015
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-002, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: [SPEC-003]
+    depends_on: [IAM-012]
+    outcome: Reviewter OpenAPI-Vertrag für API-Token-CRUD, einmalige Wertausgabe, Scopes und Listenfilter.
+    acceptance:
+      - Tokenwerte erscheinen nur in der Create-Antwort und nie in Listen-, Get-, Audit- oder Fehler-Schemas.
+      - CRUD besitzt Idempotenz, ETag, Pagination sowie Auth-, Permission-, Erfolgs- und Problem-Responses.
+    evidence:
+      - API-Token-OpenAPI-Contract-Test
+      - pnpm contracts:openapi und pnpm check:generated
+
   - id: MON-010
     release: "0.1"
     status: planned
     requirements: [PRD-API-002, PRD-MON-001, PRD-MON-002, PRD-MON-003, PRD-MON-004, PRD-MON-006]
     findings: [SPEC-004]
-    depends_on: [SPEC-013]
+    depends_on: [SPEC-019]
     outcome: Abgestimmter Monitor-/Check-Vertrag einschließlich Revision, Zeitplan und Grenzen.
     acceptance:
       - OpenAPI und Config Schema drücken dieselben gültigen 0.1-Monitorwerte aus.
@@ -211,7 +257,7 @@ packages:
   - id: DATA-010
     release: "0.1"
     status: planned
-    requirements: [PRD-MON-001, PRD-MON-003, PRD-MON-006, PRD-NFR-002, PRD-NFR-005]
+    requirements: [PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-MON-001, PRD-MON-003, PRD-MON-006, PRD-NFR-002, PRD-NFR-005]
     findings: []
     depends_on: [DATA-001, MON-011]
     outcome: Monitor- und unveränderliche Revisionspersistenz mit Engine-Parität und optimistischer Versionierung.
@@ -311,7 +357,7 @@ packages:
     status: planned
     requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-MON-005]
     findings: [SPEC-003]
-    depends_on: [API-010, CHECK-010, CHECK-011, DATA-011]
+    depends_on: [API-010, CHECK-010, CHECK-011, DATA-011, SPEC-016]
     outcome: Vollständiger HTTP-Pfad schedule/run → execute → evaluate → store → observation/transition/uptime API.
     acceptance:
       - Ein sofortiger Check ist über Operation und Check-ID bis zum Ergebnis verfolgbar.
@@ -319,6 +365,20 @@ packages:
     evidence:
       - End-to-End-Integration auf beiden Datenbanken
       - v0.1 HTTP- und DB-Ausfall-Szenarien
+
+  - id: SPEC-016
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-002, PRD-API-003, PRD-API-004, PRD-API-005, PRD-MON-001, PRD-MON-005, PRD-NFR-008]
+    findings: [SPEC-003]
+    depends_on: [API-010, CHECK-010, CHECK-011, DATA-011]
+    outcome: Reviewte OpenAPI-Verträge für Pause/Resume, Transitionen, Operationsabruf und authentifizierte SSE.
+    acceptance:
+      - Sofortchecks sind über Operation und Check-ID bis zum Ergebnis verfolgbar; Pause/Resume sind idempotent und ETag-geschützt.
+      - SSE verlangt Authentifizierung, unterstützt Last-Event-ID und dokumentiert Gap-/Problemverhalten ohne Secrets.
+    evidence:
+      - Monitor-Operations-/SSE-OpenAPI-Contract-Test
+      - pnpm contracts:openapi und pnpm check:generated
 
   - id: WEB-011
     release: "0.1"
@@ -389,7 +449,7 @@ packages:
     status: planned
     requirements: [PRD-ALT-003, PRD-ALT-004, PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-004, PRD-IAM-005, PRD-NOT-001, PRD-NOT-002, PRD-NOT-003, PRD-NOT-004]
     findings: [SPEC-003]
-    depends_on: [DATA-011, IAM-013, SPEC-012]
+    depends_on: [DATA-011, IAM-013, SPEC-017]
     outcome: Verschlüsselte Notification-Channel-Ressource, Webhook-Adapter und unabhängiger Outbox-Worker.
     acceptance:
       - Channel-Test erzeugt keinen künstlichen Monitor-Ausfall.
@@ -397,6 +457,20 @@ packages:
     evidence:
       - v0.1 Notification-Szenario
       - Retry-, Dead-Letter-, HMAC-, Redaction- und Atomizitätstests
+
+  - id: SPEC-017
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-002, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-004, PRD-IAM-005, PRD-NOT-001, PRD-NOT-002, PRD-NOT-003, PRD-NOT-004]
+    findings: [SPEC-003]
+    depends_on: [DATA-011, IAM-013]
+    outcome: Reviewter OpenAPI-Vertrag für Notification-Channel-CRUD und sicheren Testversand.
+    acceptance:
+      - Secretwerte sind nur write-only und kein Response-, Problem-, Audit- oder Testschema kann sie ausgeben.
+      - CRUD und Testversand besitzen Pagination, Idempotenz, ETag sowie Auth-, Permission-, Erfolgs- und Problem-Responses.
+    evidence:
+      - Notification-OpenAPI-Contract- und Redaction-Test
+      - pnpm contracts:openapi und pnpm check:generated
 
   - id: NOTIFY-011
     release: "0.1"
@@ -413,7 +487,7 @@ packages:
     status: planned
     requirements: [PRD-API-002, PRD-API-005, PRD-AUT-001, PRD-AUT-002, PRD-AUT-003]
     findings: [SPEC-004]
-    depends_on: [MON-010, SPEC-012]
+    depends_on: [MON-010]
     outcome: Typisierte Config-Normalisierung und redigierter Diff-/Plan-Vertrag.
     acceptance: [Beispiel und negative Fixtures validieren; Secret-Diffs zeigen nur changed true.]
     evidence: [JSON-Schema-, Normalisierungs-, Property- und Golden-Diff-Tests]
@@ -443,10 +517,24 @@ packages:
     status: planned
     requirements: [PRD-API-002, PRD-IAM-004, PRD-IAM-005, PRD-STA-001, PRD-STA-002, PRD-STA-006]
     findings: [SPEC-003]
-    depends_on: [API-010, SPEC-012]
+    depends_on: [API-010, SPEC-018]
     outcome: Statusseiten-Domäne, Persistenz und Management-API mit Gruppen, Sichtbarkeit und Auswahl.
     acceptance: [CRUD, Token-Sichtbarkeit, Referenzkonflikte und Audit laufen auf beiden Datenbanken.]
     evidence: [Contract-/Repository-/Permission-Tests]
+
+  - id: SPEC-018
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-002, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-004, PRD-IAM-005, PRD-STA-001, PRD-STA-006]
+    findings: [SPEC-003]
+    depends_on: [API-010]
+    outcome: Reviewter OpenAPI-Vertrag für Statusseiten-CRUD, Gruppen, Monitorauswahl und Token-Sichtbarkeit.
+    acceptance:
+      - Managementschemas trennen interne Konfiguration strikt von der öffentlichen redigierten Projektion.
+      - CRUD besitzt Pagination, Idempotenz, ETag sowie Auth-, Permission-, Erfolgs- und Problem-Responses.
+    evidence:
+      - Statusseiten-OpenAPI-Contract- und Public-Projection-Negativtest
+      - pnpm contracts:openapi und pnpm check:generated
 
   - id: STATUS-011
     release: "0.1"
@@ -783,7 +871,7 @@ packages:
     status: planned
     requirements: [PRD-ALT-006, PRD-API-002, PRD-MON-008]
     findings: [SPEC-004]
-    depends_on: [PROBE-025, SPEC-013]
+    depends_on: [PROBE-025, SPEC-019]
     outcome: Deklarativer BrowserCheck-Vertrag und Worker-Protokoll ohne beliebiges JavaScript.
     acceptance: [Maximal 20 Schritte/60 Sekunden/10 MiB und SecretRefs sind in allen Maschinenverträgen konsistent.]
     evidence: [Cross-contract Browser-Fixtures]
