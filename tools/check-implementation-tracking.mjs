@@ -9,6 +9,9 @@ const trackingDirectory = path.join(
   repositoryRoot,
   "docs/implementation-tracking",
 );
+const PREFLIGHT_LINE_REVIEW_THRESHOLD = 600;
+const PREFLIGHT_MAX_HANDWRITTEN_LINES = 800;
+const PREFLIGHT_MAX_VALIDATION_MINUTES = 30;
 
 const allowed = {
   coverage: new Set(["none", "partial", "full"]),
@@ -69,6 +72,59 @@ function requireStringArray(value, label, errors, { nonEmpty = false } = {}) {
   }
 }
 
+function validatePackagePreflight(entry, label, errors, warnings) {
+  const preflight = entry?.preflight;
+  if (preflight === undefined) {
+    if (entry?.status === "in_progress") {
+      errors.push(`${label}.preflight must be an object for status in_progress`);
+    }
+    return;
+  }
+  if (preflight === null || typeof preflight !== "object" || Array.isArray(preflight)) {
+    errors.push(`${label}.preflight must be an object`);
+    return;
+  }
+
+  for (const field of ["in_scope", "out_of_scope", "affected_artifacts"]) {
+    const value = preflight[field];
+    requireStringArray(value, `${label}.preflight.${field}`, errors, {
+      nonEmpty: true,
+    });
+    if (
+      Array.isArray(value) &&
+      value.some((item) => typeof item === "string" && item.trim() === "")
+    ) {
+      errors.push(`${label}.preflight.${field} must contain only non-empty strings`);
+    }
+  }
+
+  const estimatedLines = preflight.estimated_handwritten_lines;
+  if (!Number.isInteger(estimatedLines) || estimatedLines <= 0) {
+    errors.push(
+      `${label}.preflight.estimated_handwritten_lines must be a positive integer`,
+    );
+  } else if (estimatedLines > PREFLIGHT_MAX_HANDWRITTEN_LINES) {
+    errors.push(
+      `${label}.preflight.estimated_handwritten_lines must be at most ${PREFLIGHT_MAX_HANDWRITTEN_LINES}; split the package before implementation`,
+    );
+  } else if (estimatedLines >= PREFLIGHT_LINE_REVIEW_THRESHOLD) {
+    warnings.push(
+      `${label} is estimated at ${estimatedLines} handwritten lines; review splitting before implementation`,
+    );
+  }
+
+  const estimatedMinutes = preflight.estimated_validation_minutes;
+  if (!Number.isFinite(estimatedMinutes) || estimatedMinutes <= 0) {
+    errors.push(
+      `${label}.preflight.estimated_validation_minutes must be a positive number`,
+    );
+  } else if (estimatedMinutes > PREFLIGHT_MAX_VALIDATION_MINUTES) {
+    errors.push(
+      `${label}.preflight.estimated_validation_minutes must be at most ${PREFLIGHT_MAX_VALIDATION_MINUTES}; split the package before implementation`,
+    );
+  }
+}
+
 function dependencyCycle(packagesById) {
   const visiting = new Set();
   const visited = new Set();
@@ -112,6 +168,7 @@ function dependencyCycle(packagesById) {
 
 export function validateTrackingModel(canonicalRequirements, model) {
   const errors = [];
+  const warnings = [];
   const requirementDocument = model.requirements ?? {};
   const packageDocument = model.workPackages ?? {};
   const findingDocument = model.findings ?? {};
@@ -248,6 +305,7 @@ export function validateTrackingModel(canonicalRequirements, model) {
     requireStringArray(entry?.evidence, `${label}.evidence`, errors, {
       nonEmpty: true,
     });
+    validatePackagePreflight(entry, label, errors, warnings);
 
     for (const requirement of entry?.requirements ?? []) {
       mappedRequirements.add(requirement);
@@ -310,6 +368,7 @@ export function validateTrackingModel(canonicalRequirements, model) {
   if (errors.length > 0) {
     throw new Error(`Implementation tracking is invalid:\n- ${errors.join("\n- ")}`);
   }
+  return { warnings };
 }
 
 async function parseYaml(file) {
@@ -427,7 +486,10 @@ async function main() {
     findings: await parseYaml(path.join(trackingDirectory, "findings.yaml")),
   };
 
-  validateTrackingModel(canonicalRequirements, model);
+  const validation = validateTrackingModel(canonicalRequirements, model);
+  for (const warning of validation.warnings) {
+    console.warn(`Implementation tracking warning: ${warning}`);
+  }
 
   const referencedFiles = new Set();
   for (const requirement of model.requirements.requirements) {

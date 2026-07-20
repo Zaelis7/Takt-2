@@ -120,3 +120,62 @@ test("rejects unknown requirement exceptions after their finding is resolved", (
     /unknown requirement exception PRD-UNKNOWN-001 must reference an open finding/,
   );
 });
+
+test("requires a preflight object for an in-progress package", () => {
+  const model = validModel();
+  model.workPackages.packages[0].status = "in_progress";
+
+  assert.throws(
+    () => validateTrackingModel(canonicalRequirements, model),
+    /package ONE-001\.preflight must be an object for status in_progress/,
+  );
+});
+
+test("requires complete preflight fields for an in-progress package", () => {
+  const model = validModel();
+  const packageEntry = model.workPackages.packages[0];
+  packageEntry.status = "in_progress";
+  packageEntry.preflight = {};
+
+  assert.throws(
+    () => validateTrackingModel(canonicalRequirements, model),
+    /package ONE-001\.preflight\.in_scope.*preflight\.out_of_scope.*preflight\.affected_artifacts.*estimated_handwritten_lines.*estimated_validation_minutes/s,
+  );
+});
+
+test("rejects an in-progress package above a hard preflight budget", () => {
+  const model = validModel();
+  const packageEntry = model.workPackages.packages[0];
+  packageEntry.status = "in_progress";
+  packageEntry.preflight = {
+    in_scope: ["Tracking validation."],
+    out_of_scope: ["Product behavior."],
+    affected_artifacts: ["tools/check-implementation-tracking.mjs"],
+    estimated_handwritten_lines: 801,
+    estimated_validation_minutes: 31,
+  };
+
+  assert.throws(
+    () => validateTrackingModel(canonicalRequirements, model),
+    /estimated_handwritten_lines must be at most 800.*estimated_validation_minutes must be at most 30/s,
+  );
+});
+
+test("warns at the line review threshold without failing the hard budget", () => {
+  const model = validModel();
+  const packageEntry = model.workPackages.packages[0];
+  packageEntry.status = "in_progress";
+  packageEntry.preflight = {
+    in_scope: ["Tracking validation."],
+    out_of_scope: ["Product behavior."],
+    affected_artifacts: ["tools/check-implementation-tracking.mjs"],
+    estimated_handwritten_lines: 600,
+    estimated_validation_minutes: 30,
+  };
+
+  assert.deepEqual(validateTrackingModel(canonicalRequirements, model), {
+    warnings: [
+      "package ONE-001 is estimated at 600 handwritten lines; review splitting before implementation",
+    ],
+  });
+});

@@ -14,6 +14,39 @@ packages:
       - node --test tools/check-implementation-tracking.test.mjs
       - pnpm check:tracking
 
+  - id: GOV-003
+    release: cross-release
+    status: implemented
+    requirements: []
+    findings: []
+    depends_on: [GOV-001]
+    outcome: Automatischer Größen- und Validierungs-Preflight vor Beginn jedes neuen Arbeitspakets.
+    preflight:
+      in_scope:
+        - Tracking-Metadaten und Validator für Scope, Ausschlüsse, Artefakte, Zeilen- und Validierungsbudget.
+        - Warnung ab 600 geschätzten handgeschriebenen Zeilen und harte Grenzen bei 800 Zeilen beziehungsweise 30 Minuten.
+      out_of_scope:
+        - Rückwirkende Schätzungen für bereits abgeschlossene oder nur geplante Pakete.
+        - Automatische Messung tatsächlicher Diff-Zeilen oder Laufzeiten.
+      affected_artifacts:
+        - docs/implementation-tracking/README.md
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-tracking/findings.yaml
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-evidence/gov-003-package-preflight.md
+        - tools/check-implementation-tracking.mjs
+        - tools/check-implementation-tracking.test.mjs
+      estimated_handwritten_lines: 280
+      estimated_validation_minutes: 10
+    acceptance:
+      - Ein in_progress-Paket ohne vollständigen Preflight lässt pnpm check:tracking fehlschlagen.
+      - Schätzungen über 800 Zeilen oder 30 Minuten schlagen fehl; ab 600 Zeilen wird ohne Gate-Fehler gewarnt.
+    evidence:
+      - docs/implementation-evidence/gov-003-package-preflight.md
+      - node --test tools/check-implementation-tracking.test.mjs
+      - pnpm check:tracking
+
   - id: GOV-002
     release: cross-release
     status: planned

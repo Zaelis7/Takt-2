@@ -1,6 +1,6 @@
 schema_version: 1
-as_of: "2026-07-20"
-baseline_commit: 53be57ab890391c887719a7eaa380cde8e4770d6
+as_of: "2026-07-21"
+baseline_commit: 8654ff15b269b6bff5a975d855deea0aef7c8ed1
 
 # coverage measures product behavior: none, partial, full.
 # verification measures evidence strength independently from coverage.

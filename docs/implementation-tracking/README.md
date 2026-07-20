@@ -48,7 +48,7 @@ Damit kann zum Beispiel ein Vertrag `partial` und zugleich `focused_local` sein.
 | Zustand | Eintrittskriterium |
 |---|---|
 | `planned` | Scope, Requirements, Abhängigkeiten, Acceptance und erwartete Evidence sind definiert. |
-| `in_progress` | Genau dieses Paket wird umgesetzt; Requirement- und Risikoanalyse liegt vor. |
+| `in_progress` | Genau dieses Paket wird umgesetzt; Requirement- und Risikoanalyse sowie der vollständige Größen-/Validierungs-Preflight liegen vor. |
 | `implemented` | Builder-Verhalten und fokussierte Checks sind vorhanden, unabhängige Freigabe fehlt aber noch. |
 | `verified` | Reviewer und Validator haben den commit-gebundenen Change akzeptiert; alle Paketgates sind grün. |
 | `blocked` | Eine konkret referenzierte Spec-/Owner-Entscheidung verhindert sinnvolle Umsetzung. |
@@ -62,7 +62,7 @@ Ein Paket wechselt nie direkt von `planned` zu `verified`. Ein rotes, nicht ausg
 3. Pro Requirement Contracts, Acceptance, Code, Tests und bestehende Evidence abgleichen. Coverage und Verification separat aktualisieren; jede Teilbehauptung erhält Pfade und eine Restbeschreibung.
 4. Neue Probleme zuerst in `findings.yaml` erfassen. Keine Implementierung starten, wenn ein höher priorisierter Vertrag fehlt oder widerspricht.
 5. Work-Package-DAG prüfen und das kleinste unblocked Paket des frühesten offenen Releases wählen. Voraussetzungen müssen mindestens `implemented`, für sicherheits-/migrationskritische Grenzen grundsätzlich `verified` sein.
-6. Issue/Prompt aus dem Paket erzeugen und unter 800 handgeschriebenen Zeilen beziehungsweise unter 30 Minuten Validierungszeit halten. Wird das unrealistisch, das Paket vor Implementierung teilen.
+6. Issue/Prompt aus dem Paket erzeugen, den Preflight im Paket eintragen und bei höchstens 800 handgeschriebenen Zeilen beziehungsweise höchstens 30 Minuten Validierungszeit halten. Ab 600 geschätzten Zeilen wird ein Split geprüft; über 800 Zeilen oder 30 Minuten muss das Paket vor `in_progress` geteilt werden.
 7. Test-first umsetzen, Contract und Migration im selben Change aktualisieren, fokussierte Checks und dann alle vorgeschriebenen Gates ausführen.
 8. Builder, Reviewer und Validator bleiben logisch getrennt. Der Validator arbeitet auf einem sauberen, commit-gebundenen Checkout.
 9. Im selben Change Evidence, Requirement-Ledger, Paketstatus und neue/gelöste Findings aktualisieren. Historische fehlgeschlagene Evidence wird ergänzt, nicht überschrieben.
@@ -100,7 +100,10 @@ Nutzerergebnis:
 In Scope:
 Out of Scope:
 Betroffene Verträge:
+Betroffene Artefakte:
 Sicherheits-/Datenrisiken:
+Geschätzte handgeschriebene Zeilen:
+Geschätzte Validierungsminuten:
 Akzeptanzfälle:
 Pflichtprüfungen:
 Erwartete Evidence:
@@ -114,6 +117,23 @@ Definition of Ready:
 - Blocker-/Owner-Entscheidungen sind gelöst
 - Acceptance ist als beobachtbares Verhalten formuliert
 - Datenmigration, AuthZ, Audit, Secrets, Observability und beide Engines sind ausdrücklich bewertet
+- `preflight.in_scope`, `out_of_scope`, `affected_artifacts`, `estimated_handwritten_lines` und `estimated_validation_minutes` sind vollständig eingetragen
+- die Schätzung liegt bei höchstens 800 handgeschriebenen Zeilen und höchstens 30 Validierungsminuten; eine Warnung ab 600 Zeilen wurde bewusst geprüft
+
+### Größen- und Validierungs-Preflight
+
+Beim Wechsel auf `in_progress` erhält das ausgewählte Paket folgende Metadaten:
+
+```yaml
+preflight:
+  in_scope: [Konkrete enthaltene Verhaltens- und Validierungsslices]
+  out_of_scope: [Explizit verschobene oder ausgeschlossene Arbeit]
+  affected_artifacts: [Betroffene Source-, Contract-, Test- und Evidence-Pfade]
+  estimated_handwritten_lines: 240
+  estimated_validation_minutes: 15
+```
+
+Die Schätzungen sind positive Zahlen; Zeilen werden ganzzahlig angegeben. `pnpm check:tracking` warnt ab 600 Zeilen und schlägt über 800 Zeilen oder 30 Minuten fehl. Ein überschrittenes Paket wird geteilt, nicht durch eine Ausnahme freigeschaltet. Bereits geplante oder vor Einführung dieses Gates abgeschlossene Pakete müssen nicht rückwirkend geschätzt werden. Ein vorhandener Preflight bleibt beim späteren Statuswechsel erhalten und wird weiterhin validiert.
 
 Definition of Done:
 
@@ -138,6 +158,8 @@ Der Gate prüft derzeit:
 - Evidence für jede nicht leere Coverage
 - vollständige Requirement-Zuordnung zu mindestens einem Arbeitspaket
 - existierende Paketabhängigkeiten und einen azyklischen DAG
+- vollständige Preflight-Metadaten für jedes `in_progress`-Paket sowie die 800-Zeilen-/30-Minuten-Grenzen
+- nicht blockierende Review-Warnungen für Schätzungen ab 600 handgeschriebenen Zeilen
 - gültige Finding-Referenzen und existierende referenzierte Dateien
 - keine unbekannten `PRD-*`-IDs in Code, Migrationen, Tests und Evidence, außer eng pfadgebundenen offenen Ausnahmen
 

@@ -1,7 +1,7 @@
 schema_version: 1
 findings:
   - id: SPEC-001
-    status: open
+    status: resolved
     severity: high
     kind: error
     decision: spec_change
@@ -60,7 +60,7 @@ findings:
     resolution: The oversized package was split into SPEC-012 and dependency-gated SPEC-015 through SPEC-018. SPEC-012 now defines browser auth/session/recovery; the finding remains open until the token, monitor/SSE, notification and status-page contract packages are implemented. Do not infer response or error semantics from prose alone.
 
   - id: SPEC-004
-    status: resolved
+    status: open
     severity: high
     kind: conflict
     decision: spec_change

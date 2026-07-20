@@ -1,6 +1,6 @@
-# Implementierungsstand am 20. Juli 2026
+# Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `53be57ab890391c887719a7eaa380cde8e4770d6`. Der Worktree war zu Beginn von `SPEC-010` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `8654ff15b269b6bff5a975d855deea0aef7c8ed1`. Der Worktree war zu Beginn von `GOV-003` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `53be57ab890391c887719a7eaa380cde8e4770d6`. Der Worktree war zu
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 19 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 37 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 81 | 6 implemented, 73 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 82 | 7 implemented, 73 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 8 | 5 Spec/Contract/Owner-Themen, 2 Evidence-Lücken und 1 Tooling-Security-Befund; sieben davon high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -19,7 +19,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
-| Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`) |
+| Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
 | Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header; OpenAPI-Verträge für Browser-Auth/Session/Recovery und sieben prüfungsspezifisch kanonisch abgebildete CheckSpecs | Kein `/api/v1`-Ressourcen- oder Auth-Laufzeitendpunkt, keine AuthN/AuthZ, kein Metrics-Endpunkt, keine Traces; gemeinsame Check-Netzwerkoptionen sind noch offen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
 | Domain/Application | Typisierte UUIDv7-IDs, UTC-Mikrosekunden, Organisation/Projekt/User/Membership/Audit, injizierte Clock/IDs, Argon2id-Port | Kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
@@ -84,3 +84,7 @@ Docker/PostgreSQL war lokal nicht verfügbar. Die PostgreSQL-Aussagen bleiben de
 ## Abschluss von SPEC-013
 
 `SPEC-013` ist nach Scope-Trennung von den bereits in `MON-011` geplanten Rust-Domänentypen und den in `SPEC-019` isolierten gemeinsamen Netzwerkoptionen `implemented`, nicht `verified`. OpenAPI, Config Schema und Proto bilden jetzt dieselben sieben prüfungsspezifischen Check-Arten einschließlich HTTP-Header/Body/Auth/Assertions, DNS-/ICMP-/TLS-Feldern, Push-GET und Browser-Grenzen ab. Ein Golden-Test prüft sieben gültige und zehn ungültige Fixtures sowie exakte Felder, Defaults und Grenzen; OpenAPI-/Proto-Codegen ist aktuell. Der vollständige Workspace-Test bleibt wegen lokaler Debug-`sqlx`-Auflösung beziehungsweise fehlendem PostgreSQL rot, und der vollständige Node-Audit ist wegen `SEC-001` rot. Details stehen in `docs/implementation-evidence/spec-013-check-spec-contract.md`.
+
+## Abschluss von GOV-003
+
+`GOV-003` ist `implemented`, nicht `verified`. Jedes auf `in_progress` gesetzte Paket benötigt nun Scope, Ausschlüsse, betroffene Artefakte sowie eine Zeilen- und Validierungszeitschätzung. `pnpm check:tracking` warnt ab 600 handgeschriebenen Zeilen und lehnt Pakete über 800 Zeilen oder 30 Validierungsminuten ab. Bestehende geplante und abgeschlossene Pakete bleiben ohne rückwirkende Schätzpflicht gültig; Details stehen in `docs/implementation-evidence/gov-003-package-preflight.md`.
