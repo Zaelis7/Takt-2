@@ -520,11 +520,31 @@ packages:
 
   - id: IAM-018
     release: "0.1"
-    status: planned
-    requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    status: implemented
+    requirements: [PRD-API-001, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: []
     depends_on: [IAM-020]
     outcome: Vollständiger Login-/Logout-/Session-HTTP-Pfad mit sicherem Cookie, CSRF und Produktionskomposition.
+    preflight:
+      in_scope:
+        - Produktionskomposition des frameworkfreien BrowserAuthenticationService über den injizierbaren Auth-HTTP-Port.
+        - Sichere Session-Cookies für Localhost und Produktion sowie Session-/CSRF-Rotation und Logout-Cookie-Löschung.
+        - Echter HTTP-Test gegen SQLite für Login, Session, falsches und gültiges CSRF, Revoke und generische Folgeauthentifizierung.
+      out_of_scope:
+        - Login-Limit je Peer-IP/Konto und Fehlversuchsverzögerung; diese verbleiben in IAM-012.
+        - Recovery-Auslieferung/-HTTP-Orchestrierung und lokaler Recovery-CLI-Vertrag.
+        - API-Token-Vertrag/-Runtime, Permission Engine, OIDC und UI.
+      affected_artifacts:
+        - crates/application/src/lib.rs
+        - crates/api/src/auth.rs
+        - crates/api/tests/auth_http.rs
+        - crates/server/src/main.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-018-auth-runtime.md
+      estimated_handwritten_lines: 500
+      estimated_validation_minutes: 25
     acceptance:
       - Login rotiert die Session; Cookie-Flags und Session-JSON entsprechen OpenAPI und Laufzeitprofil.
       - Fehlendes/falsches CSRF oder eine abgelaufene/widerrufene Session ändern keine Daten; gültiger Logout löscht das Cookie.

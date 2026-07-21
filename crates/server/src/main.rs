@@ -10,11 +10,15 @@ use std::{
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
-use takt_api::{HealthMetrics, ReadinessCheck, ReadinessFailure};
+use takt_api::{
+    AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HealthMetrics,
+    HttpAuthentication, HttpLogin, HttpSecret, ReadinessCheck, ReadinessFailure,
+};
 use takt_application::{
-    ApplicationError, Argon2idConfig, BootstrapOutput, BootstrapService, BootstrapStatus,
-    PasswordHash, PasswordHasher, PasswordHashing, RepositoryError, SystemClock, UuidV7Generator,
-    ValidationError,
+    ApplicationError, Argon2idConfig, AuthenticationError, BootstrapOutput, BootstrapService,
+    BootstrapStatus, BrowserAuthentication, BrowserAuthenticationService, PasswordHash,
+    PasswordHasher, PasswordHashing, RepositoryError, SecureTokenGenerator, SystemClock,
+    UuidV7Generator, ValidationError,
 };
 use takt_persistence::{
     ConfigError, Database, DatabaseConfig, DatabaseError, ReadinessError, RuntimeProfile,
@@ -161,7 +165,7 @@ async fn run(cli: Cli) -> Result<(), CliFailure> {
         .map_err(CliFailure::Database)?;
 
     if !cli.migrate_only && cli.command.is_none() {
-        return serve(database, should_auto_migrate).await;
+        return serve(database, should_auto_migrate, config.profile()).await;
     }
 
     let schema_result = if should_auto_migrate {
@@ -304,7 +308,146 @@ const fn status_name(status: BootstrapStatus) -> &'static str {
     }
 }
 
-async fn serve(database: Database, should_auto_migrate: bool) -> Result<(), CliFailure> {
+struct RuntimeAuthentication {
+    repository: SqlxRepository,
+    password_hasher: TokioPasswordHasher,
+    clock: SystemClock,
+    ids: UuidV7Generator,
+    tokens: SecureTokenGenerator,
+    dummy_password_hash: PasswordHash,
+}
+
+impl RuntimeAuthentication {
+    async fn new(
+        database: Database,
+        password_config: Argon2idConfig,
+    ) -> Result<Self, ValidationError> {
+        let password_hasher = TokioPasswordHasher {
+            config: password_config,
+        };
+        let dummy_password_hash = password_hasher
+            .hash("takt constant dummy credential")
+            .await?;
+        Ok(Self {
+            repository: SqlxRepository::new(database),
+            password_hasher,
+            clock: SystemClock,
+            ids: UuidV7Generator,
+            tokens: SecureTokenGenerator,
+            dummy_password_hash,
+        })
+    }
+
+    fn service(
+        &self,
+    ) -> BrowserAuthenticationService<
+        '_,
+        SqlxRepository,
+        TokioPasswordHasher,
+        SystemClock,
+        UuidV7Generator,
+        SecureTokenGenerator,
+    > {
+        BrowserAuthenticationService::with_default_policy(
+            &self.repository,
+            &self.password_hasher,
+            &self.clock,
+            &self.ids,
+            &self.tokens,
+            self.dummy_password_hash.clone(),
+        )
+    }
+}
+
+#[async_trait]
+impl BrowserAuthenticationHttpPort for RuntimeAuthentication {
+    async fn login(
+        &self,
+        username: &str,
+        password: &str,
+        request_id: &str,
+    ) -> Result<HttpLogin, AuthHttpError> {
+        let request_id = request_id.parse().map_err(|_| AuthHttpError::Internal)?;
+        let output = self
+            .service()
+            .login(username, password, request_id)
+            .await
+            .map_err(map_authentication_error)?;
+        Ok(HttpLogin {
+            authentication: map_browser_authentication(output.authentication)?,
+            session_token: HttpSecret::new(output.session_token.expose_to_client().to_owned())?,
+        })
+    }
+
+    async fn current_session(
+        &self,
+        session_token: &str,
+    ) -> Result<HttpAuthentication, AuthHttpError> {
+        map_browser_authentication(
+            self.service()
+                .current_session(session_token)
+                .await
+                .map_err(map_authentication_error)?,
+        )
+    }
+
+    async fn logout(
+        &self,
+        session_token: &str,
+        csrf_token: &str,
+        request_id: &str,
+    ) -> Result<(), AuthHttpError> {
+        let request_id = request_id.parse().map_err(|_| AuthHttpError::Internal)?;
+        self.service()
+            .logout(session_token, csrf_token, request_id)
+            .await
+            .map_err(map_authentication_error)
+    }
+}
+
+fn map_browser_authentication(
+    authentication: BrowserAuthentication,
+) -> Result<HttpAuthentication, AuthHttpError> {
+    Ok(HttpAuthentication {
+        user_id: authentication.user.id.to_string(),
+        username: authentication.user.normalized_username,
+        display_name: authentication.user.display_name,
+        permissions: Vec::new(),
+        csrf_token: HttpSecret::new(authentication.csrf_token.expose_to_client().to_owned())?,
+        expires_at_unix_micros: authentication.session.window.expires_at().unix_micros(),
+        absolute_expires_at_unix_micros: authentication
+            .session
+            .window
+            .absolute_expires_at()
+            .unix_micros(),
+    })
+}
+
+fn map_authentication_error(error: AuthenticationError) -> AuthHttpError {
+    match error {
+        AuthenticationError::InvalidCredentials => AuthHttpError::InvalidCredentials,
+        AuthenticationError::Unauthenticated => AuthHttpError::Unauthenticated,
+        AuthenticationError::CsrfFailed => AuthHttpError::CsrfFailed,
+        AuthenticationError::Validation(_) => AuthHttpError::ValidationFailed,
+        AuthenticationError::Repository(_)
+        | AuthenticationError::Clock
+        | AuthenticationError::IdGeneration
+        | AuthenticationError::TokenGeneration => AuthHttpError::Internal,
+    }
+}
+
+const fn auth_http_config(profile: RuntimeProfile) -> AuthHttpConfig {
+    match profile {
+        RuntimeProfile::Local => AuthHttpConfig::localhost(),
+        RuntimeProfile::Production => AuthHttpConfig::production(),
+    }
+}
+
+async fn serve(
+    database: Database,
+    should_auto_migrate: bool,
+    profile: RuntimeProfile,
+) -> Result<(), CliFailure> {
     let address = SocketAddr::from(([127, 0, 0, 1], 8080));
     let listener = TcpListener::bind(address)
         .await
@@ -319,7 +462,17 @@ async fn serve(database: Database, should_auto_migrate: bool) -> Result<(), CliF
         listen_address = %address,
         "Takt server is listening"
     );
-    let application = takt_api::router_with_readiness(readiness, metrics);
+    let authentication = Arc::new(
+        RuntimeAuthentication::new(database.clone(), Argon2idConfig::production())
+            .await
+            .map_err(|error| CliFailure::Application(ApplicationError::Validation(error)))?,
+    );
+    let application = takt_api::router_with_dependencies(
+        readiness,
+        metrics,
+        authentication,
+        auth_http_config(profile),
+    );
     let initialize_schema = async {
         if should_auto_migrate {
             database.migrate().await
@@ -429,14 +582,19 @@ mod tests {
     };
 
     use async_trait::async_trait;
+    use serde_json::Value;
     use takt_api::{HealthMetrics, ReadinessCheck, ReadinessFailure};
+    use takt_application::{Argon2idConfig, BootstrapService, SystemClock, UuidV7Generator};
+    use takt_persistence::{Database, DatabaseConfig, RuntimeProfile, SqlxRepository};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::{TcpListener, TcpStream},
         sync::{Notify, oneshot},
     };
 
-    use super::serve_while_initializing;
+    use super::{
+        RuntimeAuthentication, TokioPasswordHasher, auth_http_config, serve_while_initializing,
+    };
 
     struct GatedReadiness(Arc<AtomicBool>);
 
@@ -462,6 +620,149 @@ mod tests {
         let mut response = String::new();
         stream.read_to_string(&mut response).await?;
         Ok(response)
+    }
+
+    async fn http_request(
+        address: std::net::SocketAddr,
+        method: &str,
+        path: &str,
+        headers: &str,
+        body: &str,
+    ) -> Result<String, io::Error> {
+        let mut stream = TcpStream::connect(address).await?;
+        stream
+            .write_all(
+                format!(
+                    "{method} {path} HTTP/1.1\r\nHost: localhost\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await?;
+        Ok(response)
+    }
+
+    fn response_body(response: &str) -> Result<&str, io::Error> {
+        response
+            .split_once("\r\n\r\n")
+            .map(|parts| parts.1)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing HTTP body"))
+    }
+
+    fn response_header<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+        response.lines().find_map(|line| {
+            let (header, value) = line.split_once(':')?;
+            header.eq_ignore_ascii_case(name).then_some(value.trim())
+        })
+    }
+
+    // PRD-API-001 / PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005: the
+    // production composition connects real HTTP to application and persistence.
+    #[tokio::test]
+    async fn browser_authentication_runtime_rotates_and_revokes_session()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            auth_http_config(RuntimeProfile::Production),
+            takt_api::AuthHttpConfig::production()
+        );
+        let directory = tempfile::tempdir()?;
+        let config = DatabaseConfig::sqlite_for_test(directory.path().join("auth.sqlite3"))?;
+        let database = Database::connect(&config).await?;
+        database.migrate().await?;
+        let repository = SqlxRepository::new(database.clone());
+        let hasher = TokioPasswordHasher {
+            config: Argon2idConfig::testing(),
+        };
+        BootstrapService::new(&repository, &hasher, &SystemClock, &UuidV7Generator)
+            .execute("runtime.admin", "correct horse battery")
+            .await?;
+        let authentication = Arc::new(
+            RuntimeAuthentication::new(database.clone(), Argon2idConfig::testing()).await?,
+        );
+        let application = takt_api::router_with_dependencies(
+            Arc::new(GatedReadiness(Arc::new(AtomicBool::new(true)))),
+            Arc::new(HealthMetrics::default()),
+            authentication,
+            takt_api::AuthHttpConfig::localhost(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(axum::serve(listener, application).into_future());
+
+        let login_body = r#"{"username":"runtime.admin","password":"correct horse battery"}"#;
+        let login = http_request(
+            address,
+            "POST",
+            "/api/v1/auth/login",
+            "Content-Type: application/json\r\n",
+            login_body,
+        )
+        .await?;
+        assert!(login.starts_with("HTTP/1.1 200"), "{login}");
+        let set_cookie = response_header(&login, "set-cookie").ok_or("missing session cookie")?;
+        assert!(set_cookie.contains("HttpOnly; SameSite=Lax; Path=/"));
+        assert!(!set_cookie.contains("Secure"));
+        let cookie = set_cookie.split(';').next().ok_or("missing cookie pair")?;
+
+        let session = http_request(
+            address,
+            "GET",
+            "/api/v1/auth/session",
+            &format!("Cookie: {cookie}\r\n"),
+            "",
+        )
+        .await?;
+        assert!(session.starts_with("HTTP/1.1 200"), "{session}");
+        let document: Value = serde_json::from_str(response_body(&session)?)?;
+        let csrf = document["csrf_token"]
+            .as_str()
+            .ok_or("missing CSRF token")?;
+
+        let missing = http_request(
+            address,
+            "POST",
+            "/api/v1/auth/logout",
+            &format!("Cookie: {cookie}\r\n"),
+            "",
+        )
+        .await?;
+        assert!(missing.starts_with("HTTP/1.1 403"), "{missing}");
+        let rejected = http_request(
+            address,
+            "POST",
+            "/api/v1/auth/logout",
+            &format!("Cookie: {cookie}\r\nX-CSRF-Token: wrong-csrf-token-with-32-bytes!!\r\n"),
+            "",
+        )
+        .await?;
+        assert!(rejected.starts_with("HTTP/1.1 403"), "{rejected}");
+        let logout = http_request(
+            address,
+            "POST",
+            "/api/v1/auth/logout",
+            &format!("Cookie: {cookie}\r\nX-CSRF-Token: {csrf}\r\n"),
+            "",
+        )
+        .await?;
+        assert!(logout.starts_with("HTTP/1.1 204"), "{logout}");
+        assert!(
+            response_header(&logout, "set-cookie").is_some_and(|value| value.contains("Max-Age=0"))
+        );
+
+        let revoked = http_request(
+            address,
+            "GET",
+            "/api/v1/auth/session",
+            &format!("Cookie: {cookie}\r\n"),
+            "",
+        )
+        .await?;
+        assert!(revoked.starts_with("HTTP/1.1 401"), "{revoked}");
+        server.abort();
+        database.close().await?;
+        Ok(())
     }
 
     // PRD-DATA-002 / PRD-NFR-008: the production startup composition serves

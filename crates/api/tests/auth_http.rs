@@ -3,7 +3,10 @@
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use takt_api::{AuthHttpError, BrowserAuthenticationHttpPort, HttpAuthentication, HttpLogin};
+use takt_api::{
+    AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HttpAuthentication, HttpLogin,
+    HttpSecret,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -12,6 +15,8 @@ use tokio::{
 const REQUEST_ID: &str = "019b0000-0000-7000-8000-000000000777";
 
 struct RejectAuthentication;
+
+struct AcceptAuthentication;
 
 #[async_trait]
 impl BrowserAuthenticationHttpPort for RejectAuthentication {
@@ -41,11 +46,53 @@ impl BrowserAuthenticationHttpPort for RejectAuthentication {
     }
 }
 
-async fn login(username: &str, password: &str, extra: &str) -> Result<String, Box<dyn Error>> {
-    let router = takt_api::router_with_auth(
-        Arc::new(RejectAuthentication),
-        takt_api::AuthHttpConfig::localhost(),
-    );
+#[async_trait]
+impl BrowserAuthenticationHttpPort for AcceptAuthentication {
+    async fn login(
+        &self,
+        _username: &str,
+        _password: &str,
+        _request_id: &str,
+    ) -> Result<HttpLogin, AuthHttpError> {
+        Ok(HttpLogin {
+            authentication: HttpAuthentication {
+                user_id: "019b0000-0000-7000-8000-000000000123".to_owned(),
+                username: "contract.admin".to_owned(),
+                display_name: "Contract Admin".to_owned(),
+                permissions: Vec::new(),
+                csrf_token: HttpSecret::new("c".repeat(43))?,
+                expires_at_unix_micros: 1_784_445_600_123_456,
+                absolute_expires_at_unix_micros: 1_785_050_400_123_456,
+            },
+            session_token: HttpSecret::new("s".repeat(43))?,
+        })
+    }
+
+    async fn current_session(
+        &self,
+        _session_token: &str,
+    ) -> Result<HttpAuthentication, AuthHttpError> {
+        Err(AuthHttpError::Unauthenticated)
+    }
+
+    async fn logout(
+        &self,
+        _session_token: &str,
+        _csrf_token: &str,
+        _request_id: &str,
+    ) -> Result<(), AuthHttpError> {
+        Err(AuthHttpError::Unauthenticated)
+    }
+}
+
+async fn login_with(
+    authentication: Arc<dyn BrowserAuthenticationHttpPort>,
+    config: AuthHttpConfig,
+    username: &str,
+    password: &str,
+    extra: &str,
+) -> Result<String, Box<dyn Error>> {
+    let router = takt_api::router_with_auth(authentication, config);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let server = tokio::spawn(async move {
@@ -66,6 +113,17 @@ async fn login(username: &str, password: &str, extra: &str) -> Result<String, Bo
     stream.read_to_end(&mut response).await?;
     server.abort();
     Ok(String::from_utf8(response)?)
+}
+
+async fn login(username: &str, password: &str, extra: &str) -> Result<String, Box<dyn Error>> {
+    login_with(
+        Arc::new(RejectAuthentication),
+        AuthHttpConfig::localhost(),
+        username,
+        password,
+        extra,
+    )
+    .await
 }
 
 // PRD-API-005 / PRD-IAM-001: account failures are identical.
@@ -89,5 +147,30 @@ async fn login_failure_is_generic_and_contract_shaped() -> Result<(), Box<dyn Er
     assert!(malformed.starts_with("HTTP/1.1 400 Bad Request\r\n"));
     assert!(malformed.contains(r#""code":"invalid_request""#));
     assert!(!unknown.contains("missing.user") && !unknown.contains("correct horse battery"));
+    Ok(())
+}
+
+// PRD-API-001 / PRD-IAM-001: non-local deployments always secure the cookie.
+#[tokio::test]
+async fn production_login_cookie_has_required_security_flags() -> Result<(), Box<dyn Error>> {
+    let response = login_with(
+        Arc::new(AcceptAuthentication),
+        AuthHttpConfig::production(),
+        "contract.admin",
+        "correct horse battery",
+        "",
+    )
+    .await?;
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    let cookie = response
+        .lines()
+        .find(|line| line.to_ascii_lowercase().starts_with("set-cookie:"))
+        .ok_or("missing Set-Cookie header")?;
+    assert!(cookie.contains("HttpOnly; SameSite=Lax; Path=/; Secure"));
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|parts| parts.1)
+        .ok_or("missing response body")?;
+    assert!(!body.contains(&"s".repeat(43)));
     Ok(())
 }

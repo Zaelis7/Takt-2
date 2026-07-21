@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `b7ba5d40efc2f48185945ba1dfeb01d278a91fe5`. Der Worktree war zu Beginn von `IAM-020` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `387abf3`. Der Worktree war zu Beginn von `IAM-018` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -8,9 +8,9 @@ Baseline: Commit `b7ba5d40efc2f48185945ba1dfeb01d278a91fe5`. Der Worktree war zu
 |---|---:|---|
 | Requirements gesamt | 57 | Kanonische IDs aus `specs/00-product-requirements.md` |
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
-| Coverage `partial` | 19 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
-| Coverage `none` | 37 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 87 | 17 implemented, 68 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Coverage `partial` | 20 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
+| Coverage `none` | 36 | Kein entsprechendes Produktverhalten im aktuellen Code |
+| Arbeitspakete | 87 | 18 implemented, 67 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -20,14 +20,14 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
-| Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header sowie injizierbare Login-/Session-/Logout-Handler; OpenAPI-Verträge für Browser-Auth/Session/Recovery mit stabilen Auth-Problem-Codes und sieben vollständig kanonisch abgebildete CheckSpecs einschließlich gemeinsamer Netzwerkoptionen | Auth-Handler sind noch nicht mit der Produktionsruntime komponiert; keine weiteren `/api/v1`-Ressourcen, AuthZ, Metrics oder Traces |
+| Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header sowie komponierte Login-/Session-/Logout-Routen mit sicheren Cookies und CSRF; OpenAPI-Verträge für Browser-Auth/Session/Recovery und sieben kanonische CheckSpecs | Login-Rate-Limit, Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
-| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei | Keine HTTP-/Recovery-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
+| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert | Keine Recovery-HTTP-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0003`, Identitäts-, Session- und Recovery-Tabellen, gemeinsame Repository-Suiten sowie atomare redigierte Auditwirkung; Tokens/CSRF liegen nur als Digest vor | Kein API-Token, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite oder Retention |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
 | Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
 
-Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0.1 noch kein nutzbares Monitoringprodukt. Besonders wichtig: Vorhandene OpenAPI-Schemas sind kein Beleg dafür, dass die Endpunkte laufen; der Router enthält derzeit ausschließlich die zwei Health-Routen.
+Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0.1 noch kein nutzbares Monitoringprodukt. Login, Session und Logout laufen; für andere OpenAPI-Schemas fehlt weiterhin Runtime-Evidence.
 
 ## Wichtigste gefundene Probleme
 
@@ -46,7 +46,7 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 ## Empfohlene nächste Reihenfolge
 
 1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `IAM-018`, `IAM-012`, `SPEC-015`, `IAM-013`: Auth-Runtime, Rate-Limit und API-Tokens fertigstellen, bevor fachliche Schreibendpunkte entstehen.
+2. `IAM-012`, `SPEC-015`, `IAM-013`: Rate-Limit und API-Tokens fertigstellen, bevor fachliche Schreibendpunkte entstehen.
 3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
 5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.

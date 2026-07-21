@@ -88,7 +88,7 @@ pub trait BrowserAuthenticationHttpPort: Send + Sync {
     ) -> Result<(), AuthHttpError>;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuthHttpConfig {
     pub(crate) secure_cookies: bool,
 }

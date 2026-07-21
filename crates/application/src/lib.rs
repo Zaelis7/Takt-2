@@ -743,6 +743,26 @@ where
     T: TokenGenerator,
 {
     #[must_use]
+    pub fn with_default_policy(
+        repository: &'a R,
+        password_hasher: &'a H,
+        clock: &'a C,
+        ids: &'a I,
+        tokens: &'a T,
+        dummy_password_hash: PasswordHash,
+    ) -> Self {
+        Self::new(
+            repository,
+            password_hasher,
+            clock,
+            ids,
+            tokens,
+            dummy_password_hash,
+            SessionPolicy::default(),
+        )
+    }
+
+    #[must_use]
     pub const fn new(
         repository: &'a R,
         password_hasher: &'a H,
