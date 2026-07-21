@@ -314,7 +314,8 @@ requirements:
       - crates/domain/src/session.rs
       - crates/domain/tests/session_policy.rs
       - docs/implementation-evidence/iam-010-auth-domain-contract.md
-    note: Local owner bootstrap, Argon2id credentials, explicit browser session/recovery contracts and deterministic session lifetime/rotation/revocation/CSRF rules exist; session/recovery persistence and runtime plus API-token contract/runtime and scopes are absent (SPEC-003).
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Local owner bootstrap, Argon2id credentials, browser-auth contracts/rules and engine-parity session creation/hash lookup exist; session lifecycle/recovery/runtime plus API-token contract/runtime and scopes remain absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -340,22 +341,24 @@ requirements:
     evidence:
       - crates/application/src/lib.rs
       - docs/implementation-evidence/persistence-admin-bootstrap.md
-    note: Application and repository boundaries are prepared, but no resource API performs server-side authorization.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Session persistence carries typed organization/user context, but no resource API performs server-side authorization.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
       - migrations/sqlite/0001_persistent_identity.sql
       - crates/persistence/tests/common/mod.rs
-    note: Bootstrap writes one append-only redacted audit event; full action coverage, export and tamper evidence are absent.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Bootstrap and session creation write append-only redacted audit events; full action coverage, export and tamper evidence are absent.
 
   - id: PRD-DATA-001
     release: "0.1"
     coverage: partial
-    verification: evidence_only
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/acceptance/v0.1.feature
@@ -364,11 +367,12 @@ requirements:
       - crates/persistence/tests/sqlite_contract.rs
       - docs/implementation-evidence/persistence-admin-bootstrap.md
       - docs/implementation-evidence/spec-010-data-requirements.md
-    note: Identity and bootstrap repositories share one engine contract; monitor, observation, outbox, retention and later repositories are still absent.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Identity, bootstrap and session creation/lookups share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
-    verification: evidence_only
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/acceptance/v0.1.feature
@@ -377,11 +381,12 @@ requirements:
       - crates/server/src/main.rs
       - docs/implementation-evidence/persistence-admin-bootstrap.md
       - docs/implementation-evidence/spec-010-data-requirements.md
-    note: Initial forward/repeated migration, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Two forward/repeated migrations, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
-    verification: evidence_only
+    verification: full_local
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
@@ -389,7 +394,8 @@ requirements:
       - crates/persistence/tests/common/mod.rs
       - crates/persistence/tests/sqlite_contract.rs
       - docs/implementation-evidence/spec-010-data-requirements.md
-    note: Persisted identity entities use UUIDv7, UTC microseconds and versions; the remaining product entities are not implemented.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Persisted identity and session entities use UUIDv7, UTC microseconds and versions; the remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -433,14 +439,15 @@ requirements:
   - id: PRD-NFR-002
     release: "0.1"
     coverage: partial
-    verification: evidence_only
+    verification: full_local
     spec_health: clear
     evidence:
       - docs/persistence.md
       - crates/persistence/tests/postgres_contract.rs
       - docs/implementation-evidence/persistence-admin-bootstrap.md
       - docs/implementation-evidence/qa-001-acceptance-bindings.md
-    note: PostgreSQL 16 migration and identity repository evidence exists; the remaining product repositories and release matrix are absent, the PostgreSQL acceptance binding remains planned, and PostgreSQL was not available during this inventory run.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: PostgreSQL 16 migration, identity and session repository evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -462,12 +469,13 @@ requirements:
   - id: PRD-NFR-005
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - docs/persistence.md
       - crates/persistence/tests/common/mod.rs
-    note: Persistence uses UTC microseconds; IANA timezone selection and UI display are absent.
+      - docs/implementation-evidence/iam-011-session-persistence.md
+    note: Identity and session persistence uses UTC microseconds; IANA timezone selection and UI display are absent.
   - id: PRD-NFR-006
     release: "0.1"
     coverage: none

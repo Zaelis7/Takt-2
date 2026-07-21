@@ -8,7 +8,7 @@ use sqlx::{PgPool, Row};
 use takt_application::{BootstrapService, BootstrapStatus};
 use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
 
-use common::{FixedClock, SequenceIds, TEST_PASSWORD, TestPasswordHasher};
+use common::{FixedClock, SequenceIds, TEST_PASSWORD, TEST_RAW_SESSION_TOKEN, TestPasswordHasher};
 
 fn test_url() -> Result<String, Box<dyn Error>> {
     env::var("TAKT_TEST_POSTGRES_URL").map_err(|_| {
@@ -66,6 +66,24 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
         .parse()?;
     assert!(server_version >= 160_000);
     common::run_repository_contract(&SqlxRepository::new(database.clone())).await?;
+    common::run_session_repository_contract(&SqlxRepository::new(database.clone())).await?;
+    let row = sqlx::query(
+        "SELECT token_digest || ' ' || csrf_digest AS stored, (SELECT metadata::text FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
+    )
+        .fetch_one(&raw)
+        .await?;
+    common::assert_persisted_session_is_redacted(
+        &row.try_get::<String, _>("stored")?,
+        &row.try_get::<String, _>("metadata")?,
+    );
+    assert!(
+        sqlx::query("UPDATE sessions SET token_digest = $1")
+            .bind(TEST_RAW_SESSION_TOKEN)
+            .execute(&raw)
+            .await
+            .is_err(),
+        "PostgreSQL must reject non-digest session values"
+    );
     let audit_id = common::resource_id(5)?;
     assert!(
         sqlx::query("UPDATE audit_events SET action = 'mutated' WHERE id = $1")
@@ -187,14 +205,14 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .try_get::<i64, _>("count")?,
         1
     );
-    sqlx::query("UPDATE _sqlx_migrations SET version = 2 WHERE version = 1")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 3 WHERE version = 2")
         .execute(&raw)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 2,
-            supported: 1
+            found: 3,
+            supported: 2
         }
     );
     assert!(database.migrate().await.is_err());

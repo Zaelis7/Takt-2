@@ -1,0 +1,21 @@
+# Implementation Evidence: IAM-011
+- Evidence date: `2026-07-21`
+- Commit: uncommitted working tree based on `6678f97f80bd429ed2269dd26a28bc310a8de234`
+- Requirements: `PRD-IAM-001`, `PRD-IAM-004`, `PRD-IAM-005`, `PRD-DATA-001`, `PRD-DATA-002`, `PRD-DATA-004`, `PRD-NFR-002`, `PRD-NFR-005`
+- Contracts changed: no public contract; internal domain/application repository contracts add typed, debug-redacted session digests and secret-free session records
+- Migrations: PostgreSQL and SQLite `0002_sessions.sql`<br>Tests added: shared session create/lookup/redaction/rollback contract, direct engine constraint/storage checks, digest unit test, schema-version CLI regression update
+- Security review: only `sha256:<64 lowercase hex>` values cross persistence; raw cookie/CSRF values are rejected by DB constraints, absent from returned records, `Debug`, and audit metadata. Session insert and redacted audit insert share one transaction. SQL is parameter-bound. PostgreSQL used the pinned disposable loopback image `postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7` without committed secrets. No public API, authorization, logging, telemetry, export, or external flow changed.
+- Known limitations: refresh/version-conflict/revoke follows in `IAM-015`; recovery in `IAM-014`; raw-token derivation, constant-time CSRF verification, cookies, routes and rate limiting in `IAM-012`. No independent clean-checkout/CI verdict exists, so `EVID-001` remains open.
+- Reviewer verdict: builder-side diff review approved; the final 797-added-line package stays below the 800-line limit after splitting lifecycle/recovery, with no contract drift, migration mutation, secret exposure, authorization claim, or observability change found. Independent review is pending.<br>Validator verdict: `full_local` passed against real PostgreSQL 16.9 and SQLite; package is `implemented`, not `verified`.
+## Test-first and validation commands
+| Command | Exit | Result |
+|---|---:|---|
+| `cargo test -p takt-persistence --test sqlite_contract sqlite_runs_the_shared_repository_contract -- --exact --test-threads=1` before implementation | 101 | Expected compile failure: session ID/types/repository methods did not exist. |
+| Same focused SQLite command; `cargo test -p takt-application --test credentials -- --test-threads=1`; `$env:TAKT_TEST_POSTGRES_URL='postgres://postgres@127.0.0.1:55432/takt_test'; cargo test -p takt-persistence --test postgres_contract -- --test-threads=1` | 0 / 0 / 0 | Digest boundary and the same SQLite/PostgreSQL repository, migration, redaction and constraint behavior passed. |
+| `cargo test --workspace --all-features -- --test-threads=1` before schema assertion update; `cargo test -p takt-server --test admin_bootstrap_cli migrate_only_and_no_auto_migrate_have_explicit_behavior -- --exact --test-threads=1` after update | 101 / 0 | Exposed the stale version 1 assertion; schema 2 and fail-closed version 3 then passed. |
+| `$env:TAKT_TEST_POSTGRES_URL='postgresql://postgres@127.0.0.1:55432/takt_test'; cargo test --workspace --all-features -- --test-threads=1` | 0 | Full Rust workspace, both engines and doctests passed. |
+| `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --all-features -- -D warnings`; `cargo deny check`; `cargo audit` | 0 / 0 / 0 / 0 | Formatting, warning-denied lint, policy and vulnerability gates passed; existing duplicate-version notices remained warnings. |
+| `pnpm install --frozen-lockfile`; `pnpm test:tools`; `pnpm contracts:validate`; `pnpm acceptance:check`; `pnpm check:architecture`; `pnpm check:spec-index`; `pnpm check:generated` | 0 / 0 / 0 / 0 / 0 / 0 / 0 | Pinned install, 28 tool tests, machine contracts, 37 honestly planned bindings, architecture, 16 spec paths and generated artifacts passed. |
+| `pnpm audit --audit-level high`; `pnpm check:licenses`; `pnpm check:secrets` | 0 / 0 / 0 | Node advisory/license gates and scan of 117 source files passed. |
+| `pnpm lint`; `pnpm typecheck`; `pnpm test --run`; `pnpm build`; `pnpm playwright test` | 0 / 0 / 0 / 0 / 0 | Strict web checks, unit test, production build and Chromium smoke passed. |
+| `cargo build --workspace --all-features --release --locked`; `pnpm check:tracking`; `git diff --check` | 0 / 0 / 0 | Release build, registry integrity and whitespace review passed. |

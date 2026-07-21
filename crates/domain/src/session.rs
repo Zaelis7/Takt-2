@@ -2,7 +2,7 @@
 
 use std::{error::Error, fmt};
 
-use crate::UtcTimestamp;
+use crate::{OrganizationId, SessionId, UserId, UtcTimestamp};
 
 /// Default inactivity limit required by the 0.1 security contract.
 pub const DEFAULT_INACTIVITY_TIMEOUT_MICROS: i64 = 12 * 60 * 60 * 1_000_000;
@@ -63,6 +63,7 @@ pub enum SessionPolicyError {
     NonPositiveTimeout,
     InactivityExceedsAbsolute,
     TimestampOverflow,
+    InvalidStoredWindow,
 }
 
 impl fmt::Display for SessionPolicyError {
@@ -73,6 +74,7 @@ impl fmt::Display for SessionPolicyError {
                 "session inactivity timeout must not exceed its absolute lifetime"
             }
             Self::TimestampOverflow => "session expiry is outside the supported UTC range",
+            Self::InvalidStoredWindow => "stored session time boundaries are inconsistent",
         };
         formatter.write_str(message)
     }
@@ -120,6 +122,27 @@ impl SessionWindow {
             last_activity_at: issued_at,
             expires_at: inactivity_expiry,
             absolute_expires_at: absolute_expiry,
+        })
+    }
+
+    /// Reconstructs persisted boundaries while rejecting impossible ordering.
+    pub fn from_persistence(
+        issued_at: UtcTimestamp,
+        last_activity_at: UtcTimestamp,
+        expires_at: UtcTimestamp,
+        absolute_expires_at: UtcTimestamp,
+    ) -> Result<Self, SessionPolicyError> {
+        if last_activity_at < issued_at
+            || expires_at <= last_activity_at
+            || absolute_expires_at < expires_at
+        {
+            return Err(SessionPolicyError::InvalidStoredWindow);
+        }
+        Ok(Self {
+            issued_at,
+            last_activity_at,
+            expires_at,
+            absolute_expires_at,
         })
     }
 
@@ -251,4 +274,17 @@ pub enum SessionSecurityAction {
     RotateSession,
     RevokeCurrentSession,
     RevokeAllUserSessions,
+}
+
+/// Persisted, secret-free representation of a server-side browser session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BrowserSession {
+    pub id: SessionId,
+    pub organization_id: OrganizationId,
+    pub user_id: UserId,
+    pub window: SessionWindow,
+    pub revoked_at: Option<UtcTimestamp>,
+    pub created_at: UtcTimestamp,
+    pub updated_at: UtcTimestamp,
+    pub version: i64,
 }

@@ -6,19 +6,40 @@ use std::{
 };
 
 use takt_application::{
-    ApplicationError, AuditRepository, BootstrapService, BootstrapStatus, Clock, IdGenerator,
-    LocalUserRepository, MembershipRepository, NewAuditEvent, NewLocalUser, NewMembership,
-    NewOrganization, NewProject, OrganizationRepository, PasswordHash, PasswordHasher,
-    PasswordHashing, ProjectRepository, RepositoryError, ValidationError,
+    ApplicationError, AuditRepository, BootstrapService, BootstrapStatus, Clock, CreateSessionPlan,
+    IdGenerator, LocalUserRepository, MembershipRepository, NewAuditEvent, NewBrowserSession,
+    NewLocalUser, NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
+    PasswordHasher, PasswordHashing, ProjectRepository, RepositoryError,
+    SESSION_CREATED_AUDIT_ACTION, SessionRepository, TokenDigest, ValidationError,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId, OperationId,
-    OrganizationId, ProjectId, ResourceId, Role, UserId, UtcTimestamp,
+    OrganizationId, ProjectId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
+    session::{SessionPolicy, SessionWindow},
 };
 use takt_persistence::{Database, ReadinessError, SqlxRepository};
 
 pub const TEST_NOW: UtcTimestamp = UtcTimestamp::from_unix_micros(1_784_445_600_123_456);
 pub const TEST_PASSWORD: &str = "correct horse battery";
+pub const TEST_RAW_SESSION_TOKEN: &str = "raw-session-token-must-never-be-stored";
+pub const TEST_RAW_CSRF_TOKEN: &str = "raw-csrf-token-must-never-be-stored";
+pub const TEST_SESSION_TOKEN_SHA256: &str =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub const TEST_CSRF_TOKEN_SHA256: &str =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+pub fn assert_persisted_session_is_redacted(stored: &str, audit_metadata: &str) {
+    assert_eq!(stored.matches("sha256:").count(), 2);
+    for secret in [
+        TEST_RAW_SESSION_TOKEN,
+        TEST_RAW_CSRF_TOKEN,
+        TEST_SESSION_TOKEN_SHA256,
+        TEST_CSRF_TOKEN_SHA256,
+    ] {
+        assert!(!audit_metadata.contains(secret));
+    }
+    assert!(!stored.contains(TEST_RAW_SESSION_TOKEN) && !stored.contains(TEST_RAW_CSRF_TOKEN));
+}
 
 pub struct FixedClock;
 
@@ -345,6 +366,144 @@ pub async fn run_repository_contract(repository: &SqlxRepository) -> Result<(), 
             || second_result.is_ok() && first_result == Err(RepositoryError::AlreadyExists)
     );
     assert!("invalid-role".parse::<Role>().is_err());
+    Ok(())
+}
+
+fn session_audit_event(
+    audit_id: AuditEventId,
+    session_id: SessionId,
+    action: &str,
+    occurred_at: UtcTimestamp,
+) -> Result<NewAuditEvent, Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let project_id = ProjectId::from_resource_id(resource_id(2)?);
+    let user_id = UserId::from_resource_id(resource_id(3)?);
+    let membership_id = MembershipId::from_resource_id(resource_id(4)?);
+    Ok(NewAuditEvent {
+        event: AuditEvent {
+            id: audit_id,
+            organization_id,
+            project_id: Some(project_id),
+            actor_type: AuditActorType::System,
+            actor_id: Some(user_id),
+            action: action.to_owned(),
+            resource_type: "session".to_owned(),
+            resource_id: ResourceId::from_uuid(session_id.as_uuid())?,
+            request_id: OperationId::from_resource_id(resource_id(39_999)?),
+            metadata: BootstrapAuditMetadata {
+                organization_id,
+                project_id,
+                user_id,
+                membership_id,
+            },
+            occurred_at,
+        },
+    })
+}
+
+fn new_session(
+    id_suffix: u64,
+    token_hex: &str,
+    csrf_hex: &str,
+) -> Result<NewBrowserSession, Box<dyn Error>> {
+    Ok(NewBrowserSession {
+        id: SessionId::from_resource_id(resource_id(id_suffix)?),
+        organization_id: OrganizationId::from_resource_id(resource_id(1)?),
+        user_id: UserId::from_resource_id(resource_id(3)?),
+        window: SessionWindow::issue(TEST_NOW, SessionPolicy::default())?,
+        token_digest: TokenDigest::from_sha256_hex(token_hex)?,
+        csrf_digest: TokenDigest::from_sha256_hex(csrf_hex)?,
+    })
+}
+
+// PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-004 /
+// PRD-NFR-002 / PRD-NFR-005:
+// this exact contract runs against PostgreSQL and SQLite.
+pub async fn run_session_repository_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let token_digest = TokenDigest::from_sha256_hex(TEST_SESSION_TOKEN_SHA256)?;
+    let csrf_digest = TokenDigest::from_sha256_hex(TEST_CSRF_TOKEN_SHA256)?;
+    assert!(!format!("{token_digest:?}").contains(TEST_SESSION_TOKEN_SHA256));
+    assert!(!format!("{csrf_digest:?}").contains(TEST_CSRF_TOKEN_SHA256));
+
+    let session = new_session(30_000, TEST_SESSION_TOKEN_SHA256, TEST_CSRF_TOKEN_SHA256)?;
+    let session_id = session.id;
+    let create_audit_id = AuditEventId::from_resource_id(resource_id(30_001)?);
+    let created = repository
+        .create_session(CreateSessionPlan {
+            session,
+            audit_event: session_audit_event(
+                create_audit_id,
+                session_id,
+                SESSION_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+        })
+        .await?;
+    assert_eq!(created.id, session_id);
+    assert_eq!(created.version, 1);
+    assert_eq!(created.revoked_at, None);
+    assert_eq!(
+        repository.session_by_token_digest(&token_digest).await?,
+        created
+    );
+    assert_eq!(
+        repository
+            .session_by_token_and_csrf_digests(&token_digest, &csrf_digest)
+            .await?,
+        created
+    );
+    let wrong_csrf = TokenDigest::from_sha256_hex(
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    )?;
+    assert_eq!(
+        repository
+            .session_by_token_and_csrf_digests(&token_digest, &wrong_csrf)
+            .await,
+        Err(RepositoryError::NotFound)
+    );
+
+    let rolled_back_create = new_session(
+        30_010,
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    )?;
+    let rolled_back_token = rolled_back_create.token_digest.clone();
+    let rolled_back_id = rolled_back_create.id;
+    assert_eq!(
+        repository
+            .create_session(CreateSessionPlan {
+                session: rolled_back_create,
+                audit_event: session_audit_event(
+                    create_audit_id,
+                    rolled_back_id,
+                    SESSION_CREATED_AUDIT_ACTION,
+                    TEST_NOW,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::AlreadyExists)
+    );
+    assert_eq!(
+        repository.session_by_token_digest(&rolled_back_token).await,
+        Err(RepositoryError::NotFound),
+        "a duplicate audit id must roll back the preceding session insert"
+    );
+
+    let session_audits = repository
+        .audit_events_for_organization(OrganizationId::from_resource_id(resource_id(1)?))
+        .await?
+        .into_iter()
+        .filter(|event| event.resource_type == "session")
+        .collect::<Vec<_>>();
+    assert_eq!(session_audits.len(), 1);
+    assert!(session_audits.iter().all(|event| {
+        !format!("{event:?}").contains(TEST_RAW_SESSION_TOKEN)
+            && !format!("{event:?}").contains(TEST_RAW_CSRF_TOKEN)
+            && !format!("{event:?}").contains(TEST_SESSION_TOKEN_SHA256)
+            && !format!("{event:?}").contains(TEST_CSRF_TOKEN_SHA256)
+    }));
     Ok(())
 }
 

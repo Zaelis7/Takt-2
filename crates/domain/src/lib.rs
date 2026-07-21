@@ -124,6 +124,7 @@ typed_id!(UserId);
 typed_id!(MembershipId);
 typed_id!(AuditEventId);
 typed_id!(OperationId);
+typed_id!(SessionId);
 
 /// UTC time represented as signed microseconds since the Unix epoch.
 ///

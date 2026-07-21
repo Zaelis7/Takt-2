@@ -16,8 +16,9 @@ use argon2::{
 use async_trait::async_trait;
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, Membership, MembershipId,
-    OperationId, Organization, OrganizationId, Project, ProjectId, ResourceId, Role, UserId,
-    UtcTimestamp,
+    OperationId, Organization, OrganizationId, Project, ProjectId, ResourceId, Role, SessionId,
+    UserId, UtcTimestamp,
+    session::{BrowserSession, SessionWindow},
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -54,6 +55,7 @@ pub enum ValidationError {
     InvalidArgon2Configuration,
     PasswordHashFailed,
     InvalidPasswordHash,
+    InvalidTokenDigest,
 }
 
 impl fmt::Display for ValidationError {
@@ -67,6 +69,7 @@ impl fmt::Display for ValidationError {
             Self::InvalidArgon2Configuration => "Argon2id configuration is invalid",
             Self::PasswordHashFailed => "password hashing failed",
             Self::InvalidPasswordHash => "stored password hash is invalid",
+            Self::InvalidTokenDigest => "token digest must be a lowercase SHA-256 value",
         };
         formatter.write_str(message)
     }
@@ -135,6 +138,37 @@ impl PasswordHash {
 impl fmt::Debug for PasswordHash {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("PasswordHash([REDACTED])")
+    }
+}
+
+/// SHA-256 digest of a high-entropy opaque token. The raw token is never
+/// accepted by this type and its encoded digest is redacted from `Debug`.
+#[derive(Clone)]
+pub struct TokenDigest(Zeroizing<String>);
+
+impl TokenDigest {
+    /// Wraps exactly 32 digest bytes encoded as 64 lowercase hexadecimal characters.
+    pub fn from_sha256_hex(value: &str) -> Result<Self, ValidationError> {
+        if value.len() != 64
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(ValidationError::InvalidTokenDigest);
+        }
+        Ok(Self(Zeroizing::new(format!("sha256:{value}"))))
+    }
+
+    /// Exposes the digest, never the token, only to a persistence adapter.
+    #[must_use]
+    pub fn expose_for_persistence(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl fmt::Debug for TokenDigest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("TokenDigest([REDACTED])")
     }
 }
 
@@ -219,6 +253,24 @@ pub struct NewMembership {
 #[derive(Clone, Debug)]
 pub struct NewAuditEvent {
     pub event: AuditEvent,
+}
+
+pub const SESSION_CREATED_AUDIT_ACTION: &str = "auth.session.created";
+
+#[derive(Clone, Debug)]
+pub struct NewBrowserSession {
+    pub id: SessionId,
+    pub organization_id: OrganizationId,
+    pub user_id: UserId,
+    pub window: SessionWindow,
+    pub token_digest: TokenDigest,
+    pub csrf_digest: TokenDigest,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateSessionPlan {
+    pub session: NewBrowserSession,
+    pub audit_event: NewAuditEvent,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -311,6 +363,23 @@ pub trait AuditRepository: Send + Sync {
         &self,
         organization_id: OrganizationId,
     ) -> Result<Vec<AuditEvent>, RepositoryError>;
+}
+
+#[async_trait]
+pub trait SessionRepository: Send + Sync {
+    async fn create_session(
+        &self,
+        plan: CreateSessionPlan,
+    ) -> Result<BrowserSession, RepositoryError>;
+    async fn session_by_token_digest(
+        &self,
+        token_digest: &TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError>;
+    async fn session_by_token_and_csrf_digests(
+        &self,
+        token_digest: &TokenDigest,
+        csrf_digest: &TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError>;
 }
 
 #[derive(Clone, Debug)]

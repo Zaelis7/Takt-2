@@ -291,7 +291,7 @@ packages:
         - Stabile Problem-Codes und explizite Response-Verträge für ungültige, unautorisierte, CSRF-fehlerhafte und zu große Auth-Eingaben.
         - Fokussierte Domain- und OpenAPI-Contract-Tests sowie Tracking und Implementation Evidence.
       out_of_scope:
-        - Session-, Recovery- und Token-Persistenz oder neue Migrationen; diese folgen in IAM-011.
+        - Session-, Recovery- und Token-Persistenz oder neue Migrationen; diese folgen in IAM-011 und IAM-014.
         - Laufzeit-Routen, Cookie-Erzeugung, Rate-Limit-Implementierung, Passwort-Recovery-Auslieferung und Audit-Orchestrierung; diese folgen ab IAM-012.
         - API-Token-Verträge und Scopes; diese folgen in SPEC-015 und IAM-013.
         - UI, OIDC, sichtbares Multi-Organization-RBAC und Änderungen an Login-/Recovery-Erfolgssichtbarkeit.
@@ -318,24 +318,85 @@ packages:
 
   - id: IAM-011
     release: "0.1"
-    status: planned
-    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-NFR-002, PRD-NFR-005]
+    status: implemented
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
     findings: []
     depends_on: [IAM-010]
-    outcome: Engine-paritäre Session-/Recovery-Persistenz und atomare Auditwirkung.
+    outcome: Engine-paritäre Session-Anlage und -Suche mit ausschließlich gehashten Cookie-/CSRF-Werten und atomarem Create-Audit.
+    preflight:
+      in_scope:
+        - Forward-only Migration 0002 für serverseitige Sessions mit UUIDv7, UTC-Mikrosekunden, Ablauf-/Revoke-Grenzen und ausschließlich gehashten Cookie-/CSRF-Werten.
+        - "Gemeinsamer Session-Repository-Contract für PostgreSQL und SQLite: atomare Erstellung zusammen mit redigiertem Audit-Event sowie Token-/CSRF-Lookup."
+        - Lookup ausschließlich über einen typisierten Token-Hash; Repository-Antworten und Debug-Ausgaben enthalten weder Hash noch Rohwert.
+        - Positive, Constraint-, Redaction- und Create-Rollbacktests sowie Tracking und Implementation Evidence.
+      out_of_scope:
+        - Session-Refresh, optimistische Versionierung und atomarer Revoke mit Audit; dieser Lifecycle-Slice folgt separat in IAM-015.
+        - Recovery-Token-Persistenz, Einmalverbrauch und Recovery-Audit; dieser Slice folgt separat in IAM-014.
+        - HTTP-Login/-Logout/-Session-Routen, Cookie-Erzeugung, Hashableitung, CSRF-Vergleich und Rate Limits; diese folgen in IAM-012.
+        - API-Token-Verträge und -Persistenz; diese folgen in SPEC-015 und IAM-013.
+        - Rollen-/Permission-Engine, OIDC, UI und Änderungen am öffentlichen OpenAPI-Vertrag.
+      affected_artifacts:
+        - migrations/postgres/0002_sessions.sql
+        - migrations/sqlite/0002_sessions.sql
+        - crates/domain/src/lib.rs
+        - crates/domain/src/session.rs
+        - crates/application/src/lib.rs
+        - crates/application/tests/credentials.rs
+        - crates/persistence/src/repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - crates/server/tests/admin_bootstrap_cli.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-011-session-persistence.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 25
     acceptance:
-      - Session- und Recovery-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
-      - Tokenwerte werden nur gehasht gespeichert und nie ausgelesen oder geloggt.
+      - Derselbe Session-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
+      - Cookie- und CSRF-Werte werden nur gehasht gespeichert und nie ausgelesen, zurückgegeben oder geloggt.
+      - Session-Erstellung und ihr redigiertes Audit-Event werden vollständig committed oder zurückgerollt.
     evidence:
       - Gemeinsame Repository-Suite beider Engines
       - Migration-, Redaction- und Rollback-Tests
+
+  - id: IAM-015
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [IAM-011]
+    outcome: Engine-paritärer Session-Lifecycle mit Refresh, optimistischer Versionierung und atomarem Revoke-Audit.
+    acceptance:
+      - Derselbe Refresh-/Revoke-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
+      - Abgelaufene oder widerrufene Sessions werden nicht verlängert; konkurrierende oder wiederholte Lifecycle-Schreibzugriffe sind deterministisch.
+      - Session-Revoke und redigiertes Audit-Event committen oder rollen gemeinsam zurück.
+    evidence:
+      - Gemeinsame Repository-Suite beider Engines
+      - Versionierungs-, Ablauf-, Redaction- und Rollback-Tests
+
+  - id: IAM-014
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [IAM-015]
+    outcome: Engine-paritäre Recovery-Token-Persistenz mit Hashspeicherung, Einmalverbrauch und atomarer Auditwirkung.
+    acceptance:
+      - Derselbe Recovery-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
+      - Tokenwerte werden nur gehasht gespeichert; Ablauf, erfolgreicher Einmalverbrauch und Replay-Ablehnung sind deterministisch getestet.
+      - Recovery-Verbrauch, Revoke aller Nutzer-Sessions und redigiertes Audit-Event committen oder rollen gemeinsam zurück.
+    evidence:
+      - Gemeinsame Repository-Suite beider Engines
+      - Migration-, Redaction-, Replay- und Rollback-Tests
 
   - id: IAM-012
     release: "0.1"
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: []
-    depends_on: [IAM-011]
+    depends_on: [IAM-015, IAM-014]
     outcome: Login-/Logout-/Session-HTTP-Pfad mit sicherem Cookie, CSRF und Rate Limit.
     acceptance:
       - Login rotiert die Session und verrät nicht, ob ein Nutzer existiert.

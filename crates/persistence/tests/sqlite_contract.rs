@@ -8,7 +8,7 @@ use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 use takt_application::{BootstrapService, BootstrapStatus};
 use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
 
-use common::{FixedClock, SequenceIds, TEST_PASSWORD, TestPasswordHasher};
+use common::{FixedClock, SequenceIds, TEST_PASSWORD, TEST_RAW_SESSION_TOKEN, TestPasswordHasher};
 
 async fn sqlite_database(
     directory: &tempfile::TempDir,
@@ -71,14 +71,14 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
     database.migrate().await?;
     let mut connection = raw_connection(&path).await?;
-    sqlx::query("UPDATE _sqlx_migrations SET version = 2 WHERE version = 1")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 3 WHERE version = 2")
         .execute(&mut connection)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 2,
-            supported: 1
+            found: 3,
+            supported: 2
         }
     );
     assert_eq!(
@@ -93,9 +93,31 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
 // PRD-DATA-001: SQLite executes the same repository behavior as PostgreSQL.
 async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Error>> {
     let directory = tempfile::tempdir()?;
-    let (database, _) = sqlite_database(&directory, "repository.sqlite3").await?;
+    let (database, path) = sqlite_database(&directory, "repository.sqlite3").await?;
     database.migrate().await?;
-    common::run_repository_contract(&SqlxRepository::new(database)).await
+    let repository = SqlxRepository::new(database);
+    common::run_repository_contract(&repository).await?;
+    common::run_session_repository_contract(&repository).await?;
+
+    let mut connection = raw_connection(&path).await?;
+    let row = sqlx::query(
+        "SELECT token_digest || ' ' || csrf_digest AS stored, (SELECT metadata FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
+    )
+    .fetch_one(&mut connection)
+    .await?;
+    common::assert_persisted_session_is_redacted(
+        &row.try_get::<String, _>("stored")?,
+        &row.try_get::<String, _>("metadata")?,
+    );
+    assert!(
+        sqlx::query("UPDATE sessions SET token_digest = ?1")
+            .bind(TEST_RAW_SESSION_TOKEN)
+            .execute(&mut connection)
+            .await
+            .is_err(),
+        "SQLite must reject non-digest session values"
+    );
+    Ok(())
 }
 
 #[tokio::test]

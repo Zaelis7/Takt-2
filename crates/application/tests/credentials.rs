@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use takt_application::{Argon2idConfig, PasswordHasher, normalize_local_username};
+use takt_application::{Argon2idConfig, PasswordHasher, TokenDigest, normalize_local_username};
 
 // PRD-IAM-001 / PRD-NFR-010: the local identity boundary is deterministic and
 // rejects unsafe values before persistence is attempted.
@@ -38,4 +38,15 @@ fn prd_iam_001_argon2id_hash_never_contains_plaintext() {
             .expect("hash verifies")
     );
     assert_eq!(format!("{hash:?}"), "PasswordHash([REDACTED])");
+}
+
+#[test]
+fn prd_iam_001_token_digests_are_typed_and_redacted() {
+    let hex = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let digest = TokenDigest::from_sha256_hex(hex).expect("valid SHA-256 hex");
+
+    assert_eq!(digest.expose_for_persistence(), format!("sha256:{hex}"));
+    assert_eq!(format!("{digest:?}"), "TokenDigest([REDACTED])");
+    assert!(TokenDigest::from_sha256_hex("short").is_err());
+    assert!(TokenDigest::from_sha256_hex(&hex.to_ascii_uppercase()).is_err());
 }

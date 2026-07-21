@@ -5,14 +5,16 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteRow};
 use takt_application::{
     AuditRepository, BootstrapPlan, BootstrapRepository, BootstrapResources, BootstrapStoreResult,
-    ExistingBootstrap, LocalUserRepository, MembershipRepository, NewAuditEvent, NewLocalUser,
-    NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
-    ProjectRepository, RepositoryError,
+    CreateSessionPlan, ExistingBootstrap, LocalUserRepository, MembershipRepository, NewAuditEvent,
+    NewLocalUser, NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
+    ProjectRepository, RepositoryError, SESSION_CREATED_AUDIT_ACTION, SessionRepository,
+    TokenDigest,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
     MembershipId, OperationId, Organization, OrganizationId, Project, ProjectId, ResourceId, Role,
-    UserId, UtcTimestamp,
+    SessionId, UserId, UtcTimestamp,
+    session::{BrowserSession, SessionWindow},
 };
 use time::OffsetDateTime;
 
@@ -422,48 +424,15 @@ impl AuditRepository for SqlxRepository {
         &self,
         event: NewAuditEvent,
     ) -> Result<AuditEvent, RepositoryError> {
-        validate_bounded_text(&event.event.action, 120)?;
-        validate_bounded_text(&event.event.resource_type, 64)?;
-        let metadata = audit_metadata_json(&event.event.metadata);
         match &self.database.pool {
-            DatabasePool::PostgreSql(pool) => audit_from_postgres(
-                &sqlx::query(
-                    "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at",
-                )
-                .bind(event.event.id.as_uuid())
-                .bind(event.event.organization_id.as_uuid())
-                .bind(event.event.project_id.map(ProjectId::as_uuid))
-                .bind(event.event.actor_type.as_str())
-                .bind(event.event.actor_id.map(UserId::as_uuid))
-                .bind(&event.event.action)
-                .bind(&event.event.resource_type)
-                .bind(event.event.resource_id.as_uuid())
-                .bind(event.event.request_id.as_uuid())
-                .bind(metadata)
-                .bind(postgres_time(event.event.occurred_at)?)
-                .fetch_one(pool)
-                .await
-                .map_err(map_sqlx_error)?,
-            ),
-            DatabasePool::Sqlite(pool) => audit_from_sqlite(
-                &sqlx::query(
-                    "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at",
-                )
-                .bind(event.event.id.to_string())
-                .bind(event.event.organization_id.to_string())
-                .bind(event.event.project_id.map(|id| id.to_string()))
-                .bind(event.event.actor_type.as_str())
-                .bind(event.event.actor_id.map(|id| id.to_string()))
-                .bind(&event.event.action)
-                .bind(&event.event.resource_type)
-                .bind(event.event.resource_id.to_string())
-                .bind(event.event.request_id.to_string())
-                .bind(metadata.to_string())
-                .bind(event.event.occurred_at.unix_micros())
-                .fetch_one(pool)
-                .await
-                .map_err(map_sqlx_error)?,
-            ),
+            DatabasePool::PostgreSql(pool) => {
+                let mut connection = pool.acquire().await.map_err(map_sqlx_error)?;
+                insert_audit_postgres(&mut connection, &event).await
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut connection = pool.acquire().await.map_err(map_sqlx_error)?;
+                insert_audit_sqlite(&mut connection, &event).await
+            }
         }
     }
 
@@ -515,6 +484,124 @@ impl AuditRepository for SqlxRepository {
             .iter()
             .map(audit_from_sqlite)
             .collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl SessionRepository for SqlxRepository {
+    async fn create_session(
+        &self,
+        plan: CreateSessionPlan,
+    ) -> Result<BrowserSession, RepositoryError> {
+        validate_session_audit(
+            plan.session.id,
+            plan.session.organization_id,
+            plan.session.user_id,
+            SESSION_CREATED_AUDIT_ACTION,
+            plan.session.window.issued_at(),
+            &plan.audit_event,
+        )?;
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "INSERT INTO sessions (id, organization_id, user_id, token_digest, csrf_digest, issued_at, last_activity_at, expires_at, absolute_expires_at, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $6, 1) RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+                )
+                .bind(plan.session.id.as_uuid())
+                .bind(plan.session.organization_id.as_uuid())
+                .bind(plan.session.user_id.as_uuid())
+                .bind(plan.session.token_digest.expose_for_persistence())
+                .bind(plan.session.csrf_digest.expose_for_persistence())
+                .bind(postgres_time(plan.session.window.issued_at())?)
+                .bind(postgres_time(plan.session.window.last_activity_at())?)
+                .bind(postgres_time(plan.session.window.expires_at())?)
+                .bind(postgres_time(plan.session.window.absolute_expires_at())?)
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let session = session_from_postgres(&row)?;
+                insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(session)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "INSERT INTO sessions (id, organization_id, user_id, token_digest, csrf_digest, issued_at, last_activity_at, expires_at, absolute_expires_at, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?6, ?6, 1) RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+                )
+                .bind(plan.session.id.to_string())
+                .bind(plan.session.organization_id.to_string())
+                .bind(plan.session.user_id.to_string())
+                .bind(plan.session.token_digest.expose_for_persistence())
+                .bind(plan.session.csrf_digest.expose_for_persistence())
+                .bind(plan.session.window.issued_at().unix_micros())
+                .bind(plan.session.window.last_activity_at().unix_micros())
+                .bind(plan.session.window.expires_at().unix_micros())
+                .bind(plan.session.window.absolute_expires_at().unix_micros())
+                .fetch_one(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let session = session_from_sqlite(&row)?;
+                insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(session)
+            }
+        }
+    }
+
+    async fn session_by_token_digest(
+        &self,
+        token_digest: &TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => session_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version FROM sessions WHERE token_digest = $1",
+                )
+                .bind(token_digest.expose_for_persistence())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => session_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version FROM sessions WHERE token_digest = ?1",
+                )
+                .bind(token_digest.expose_for_persistence())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn session_by_token_and_csrf_digests(
+        &self,
+        token_digest: &TokenDigest,
+        csrf_digest: &TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => session_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version FROM sessions WHERE token_digest = $1 AND csrf_digest = $2",
+                )
+                .bind(token_digest.expose_for_persistence())
+                .bind(csrf_digest.expose_for_persistence())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => session_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version FROM sessions WHERE token_digest = ?1 AND csrf_digest = ?2",
+                )
+                .bind(token_digest.expose_for_persistence())
+                .bind(csrf_digest.expose_for_persistence())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
         }
     }
 }
@@ -1094,6 +1181,129 @@ fn membership_from_sqlite(row: &SqliteRow) -> Result<Membership, RepositoryError
     })
 }
 
+async fn insert_audit_postgres(
+    connection: &mut PgConnection,
+    event: &NewAuditEvent,
+) -> Result<AuditEvent, RepositoryError> {
+    validate_audit_event(event)?;
+    let metadata = audit_metadata_json(&event.event.metadata);
+    audit_from_postgres(
+        &sqlx::query(
+            "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at",
+        )
+        .bind(event.event.id.as_uuid())
+        .bind(event.event.organization_id.as_uuid())
+        .bind(event.event.project_id.map(ProjectId::as_uuid))
+        .bind(event.event.actor_type.as_str())
+        .bind(event.event.actor_id.map(UserId::as_uuid))
+        .bind(&event.event.action)
+        .bind(&event.event.resource_type)
+        .bind(event.event.resource_id.as_uuid())
+        .bind(event.event.request_id.as_uuid())
+        .bind(metadata)
+        .bind(postgres_time(event.event.occurred_at)?)
+        .fetch_one(connection)
+        .await
+        .map_err(map_sqlx_error)?,
+    )
+}
+
+async fn insert_audit_sqlite(
+    connection: &mut SqliteConnection,
+    event: &NewAuditEvent,
+) -> Result<AuditEvent, RepositoryError> {
+    validate_audit_event(event)?;
+    let metadata = audit_metadata_json(&event.event.metadata);
+    audit_from_sqlite(
+        &sqlx::query(
+            "INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) RETURNING id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at",
+        )
+        .bind(event.event.id.to_string())
+        .bind(event.event.organization_id.to_string())
+        .bind(event.event.project_id.map(|id| id.to_string()))
+        .bind(event.event.actor_type.as_str())
+        .bind(event.event.actor_id.map(|id| id.to_string()))
+        .bind(&event.event.action)
+        .bind(&event.event.resource_type)
+        .bind(event.event.resource_id.to_string())
+        .bind(event.event.request_id.to_string())
+        .bind(metadata.to_string())
+        .bind(event.event.occurred_at.unix_micros())
+        .fetch_one(connection)
+        .await
+        .map_err(map_sqlx_error)?,
+    )
+}
+
+fn validate_audit_event(event: &NewAuditEvent) -> Result<(), RepositoryError> {
+    validate_bounded_text(&event.event.action, 120)?;
+    validate_bounded_text(&event.event.resource_type, 64)
+}
+
+fn validate_session_audit(
+    session_id: SessionId,
+    organization_id: OrganizationId,
+    user_id: UserId,
+    action: &str,
+    occurred_at: UtcTimestamp,
+    audit_event: &NewAuditEvent,
+) -> Result<(), RepositoryError> {
+    let event = &audit_event.event;
+    if event.organization_id != organization_id
+        || event.actor_id != Some(user_id)
+        || event.action != action
+        || event.resource_type != "session"
+        || event.resource_id.as_uuid() != session_id.as_uuid()
+        || event.occurred_at != occurred_at
+    {
+        return Err(RepositoryError::ConstraintViolation);
+    }
+    validate_audit_event(audit_event)
+}
+
+fn session_from_postgres(row: &PgRow) -> Result<BrowserSession, RepositoryError> {
+    Ok(BrowserSession {
+        id: SessionId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        organization_id: OrganizationId::from_uuid(
+            row.try_get("organization_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        user_id: UserId::from_uuid(row.try_get("user_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        window: SessionWindow::from_persistence(
+            timestamp_from_postgres(row, "issued_at")?,
+            timestamp_from_postgres(row, "last_activity_at")?,
+            timestamp_from_postgres(row, "expires_at")?,
+            timestamp_from_postgres(row, "absolute_expires_at")?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        revoked_at: optional_timestamp_from_postgres(row, "revoked_at")?,
+        created_at: timestamp_from_postgres(row, "created_at")?,
+        updated_at: timestamp_from_postgres(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn session_from_sqlite(row: &SqliteRow) -> Result<BrowserSession, RepositoryError> {
+    Ok(BrowserSession {
+        id: parse_id(row, "id")?,
+        organization_id: parse_id(row, "organization_id")?,
+        user_id: parse_id(row, "user_id")?,
+        window: SessionWindow::from_persistence(
+            timestamp_from_sqlite(row, "issued_at")?,
+            timestamp_from_sqlite(row, "last_activity_at")?,
+            timestamp_from_sqlite(row, "expires_at")?,
+            timestamp_from_sqlite(row, "absolute_expires_at")?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        revoked_at: optional_timestamp_from_sqlite(row, "revoked_at")?,
+        created_at: timestamp_from_sqlite(row, "created_at")?,
+        updated_at: timestamp_from_sqlite(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
 fn audit_from_postgres(row: &PgRow) -> Result<AuditEvent, RepositoryError> {
     let metadata: Value = row.try_get("metadata").map_err(map_sqlx_error)?;
     Ok(AuditEvent {
@@ -1183,9 +1393,32 @@ fn timestamp_from_postgres(row: &PgRow, column: &str) -> Result<UtcTimestamp, Re
         .map_err(|_| RepositoryError::UnknownInfrastructure)
 }
 
+fn optional_timestamp_from_postgres(
+    row: &PgRow,
+    column: &str,
+) -> Result<Option<UtcTimestamp>, RepositoryError> {
+    let timestamp: Option<OffsetDateTime> = row.try_get(column).map_err(map_sqlx_error)?;
+    timestamp
+        .map(|value| {
+            i64::try_from(value.unix_timestamp_nanos() / 1_000)
+                .map(UtcTimestamp::from_unix_micros)
+                .map_err(|_| RepositoryError::UnknownInfrastructure)
+        })
+        .transpose()
+}
+
 fn timestamp_from_sqlite(row: &SqliteRow, column: &str) -> Result<UtcTimestamp, RepositoryError> {
     row.try_get(column)
         .map(UtcTimestamp::from_unix_micros)
+        .map_err(map_sqlx_error)
+}
+
+fn optional_timestamp_from_sqlite(
+    row: &SqliteRow,
+    column: &str,
+) -> Result<Option<UtcTimestamp>, RepositoryError> {
+    row.try_get::<Option<i64>, _>(column)
+        .map(|value| value.map(UtcTimestamp::from_unix_micros))
         .map_err(map_sqlx_error)
 }
 
