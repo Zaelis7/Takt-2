@@ -4,6 +4,7 @@ use std::{error::Error, fmt, str::FromStr};
 
 use uuid::{Uuid, Version};
 
+pub mod api_token;
 pub mod session;
 
 /// Error returned when an external value is not a valid Takt resource UUIDv7.
@@ -126,6 +127,7 @@ typed_id!(AuditEventId);
 typed_id!(OperationId);
 typed_id!(SessionId);
 typed_id!(RecoveryTokenId);
+typed_id!(ApiTokenId);
 
 /// UTC time represented as signed microseconds since the Unix epoch.
 ///

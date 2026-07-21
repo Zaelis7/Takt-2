@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod api_token;
+
 use std::{
     error::Error,
     fmt,

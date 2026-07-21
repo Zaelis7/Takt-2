@@ -587,15 +587,114 @@ packages:
       - HTTP-Integrationstests für IP-/Kontolimit und Verzögerung
       - Laufzeitantworten gegen OpenAPI validiert
 
+  - id: IAM-021
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-012, SPEC-015]
+    outcome: Frameworkfreier API-Token-Domain- und Application-Vertrag mit redigierten Secret-Typen, validierten Einschränkungen und serverseitiger Scope-Entscheidung.
+    preflight:
+      in_scope:
+        - Typisierte API-Token-ID, Art, Status, Scopes, Präfix, CIDR-Einschränkungen und sicherer Actor im Domain-/Application-Layer.
+        - Mindestens 256 Bit Entropie, einmalig exponierbarer Tokenwert und langsame Argon2id-Hash-/Verify-Grenze mit redigierter Debug-Ausgabe.
+        - Repository- und Use-Case-Pläne für Create, List, Get, Patch, Revoke und Bearer-Authentifizierung ohne Framework- oder Datenbankabhängigkeit.
+        - Test-first Positiv-/Negativfälle für Validierung, Ablauf, IP-Bindung, Scope-Ableitung und Secret-Redaktion.
+      out_of_scope:
+        - SQL-Migrationen und engine-paritäre Repository-Implementierung; diese folgen in IAM-022.
+        - Öffentliche HTTP-Routen, Cursor-Signierung, Idempotency-Key-Speicherung und Produktionskomposition; diese verbleiben in IAM-013.
+        - Monitor-CRUD; IAM-013 liefert die wiederverwendbare Scope-Entscheidung, die API-010 auf Monitor-Use-Cases anwendet.
+      affected_artifacts:
+        - crates/domain/src/api_token.rs
+        - crates/domain/src/lib.rs
+        - crates/application/src/api_token.rs
+        - crates/application/src/lib.rs
+        - crates/application/tests/api_tokens.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-021-api-token-domain.md
+      estimated_handwritten_lines: 780
+      estimated_validation_minutes: 25
+    acceptance:
+      - Ein Actor mit ausschließlich monitors:read darf genau diesen Scope verwenden und weder monitors:write noch breitere Rechte ableiten.
+      - Ungültige, abgelaufene, widerrufene oder IP-fremde Token autorisieren keinen Use Case.
+      - Tokenwert und langsamer Hash sind in Debug-, Fehler- und sicheren Domainprojektionen stets redigiert.
+    evidence:
+      - Domain-/Application-Vertragstests für Scope, Ablauf, IP und Validierung
+      - Negative Secret-Redaction- und Hash-/Verify-Tests
+
+  - id: IAM-022
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [IAM-021]
+    outcome: Engine-paritäre API-Token-Persistenz mit ausschließlicher Präfix-/Hashspeicherung, optimistischer Versionierung und atomarer Auditwirkung.
+    preflight:
+      in_scope:
+        - Vorwärtsgerichtete PostgreSQL-/SQLite-Migration für API-Token-Metadaten, Präfix, Argon2id-Hash, Scopes, CIDRs, Ablauf, Revoke und Version.
+        - Gemeinsamer Create/List/Get/Lookup/Patch/Revoke-Repository-Vertrag mit stabiler Sortierung auf beiden Engines.
+        - Atomare redigierte Auditwirkung für Create, Patch und Revoke sowie Rollback-, Replay- und Constraint-Negativfälle.
+      out_of_scope:
+        - Öffentliche HTTP-Routen, Cursor-Signierung, Idempotency-Key-Speicherung und Produktionskomposition; diese verbleiben in IAM-013.
+        - Argon2-Ausführung, Raw-Token-Ausgabe und Scope-Entscheidungen; diese liegen in IAM-021 beziehungsweise IAM-013.
+        - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, CLI und UI.
+      affected_artifacts:
+        - migrations/postgres/0004_api_tokens.sql
+        - migrations/sqlite/0004_api_tokens.sql
+        - crates/persistence/src/database.rs
+        - crates/persistence/src/repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-022-api-token-persistence.md
+      estimated_handwritten_lines: 800
+      estimated_validation_minutes: 25
+    acceptance:
+      - PostgreSQL und SQLite speichern niemals den Tokenwert, sondern nur getrennten Lookup-Präfix und langsamen Hash.
+      - Create, Patch und Revoke committen Tokenzustand und genau ein redigiertes Audit-Event gemeinsam oder rollen vollständig zurück.
+      - Listen sind stabil nach created_at absteigend und id absteigend; Versionskonflikte verändern keine Daten.
+    evidence:
+      - Gemeinsame Repository-Suite beider Engines
+      - Migration-, Redaction-, Replay-, Versions- und Rollback-Tests
+
   - id: IAM-013
     release: "0.1"
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-012, SPEC-015]
+    depends_on: [IAM-022]
     outcome: API-Token-CRUD, einmalige Ausgabe, Hashspeicherung und serverseitige Scope-Prüfung.
+    preflight:
+      in_scope:
+        - OpenAPI-konforme CRUD-Handler mit One-time-Ausgabe, sicheren Metadatenprojektionen, ETag/If-Match und stabil signierten Filter-Cursorn.
+        - Persistente Idempotency-Key-Semantik für Create, Patch und Revoke einschließlich Konflikt bei abweichendem Request-Hash.
+        - Bearer-Authentifizierung, Ablauf-/IP-Prüfung, serverseitige Scope-Entscheidung und Produktionskomposition ohne Secret-Logging.
+        - Echte SQLite-HTTP-Tests sowie engine-paritäre Idempotenz-Persistenztests und Contract-/Secret-Negativfälle.
+      out_of_scope:
+        - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
+        - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
+        - Neue öffentliche Vertragsfelder oder von SPEC-015 abweichende Response-/Fehlersemantik.
+      affected_artifacts:
+        - crates/api/src/api_tokens.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/api_tokens_http.rs
+        - crates/application/src/api_token.rs
+        - crates/persistence/src/repository.rs
+        - crates/server/src/main.rs
+        - specs/acceptance/bindings.yaml
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-013-api-token-runtime.md
+      estimated_handwritten_lines: 800
+      estimated_validation_minutes: 30
     acceptance:
-      - Ein monitors:read-Token kann lesen, aber weder erstellen noch Rechte ableiten.
+      - Ein monitors:read-Token authentifiziert einen Actor, der lesen, aber weder erstellen noch Rechte ableiten darf; API-010 bindet diese Entscheidung an Monitor-HTTP.
       - Tokenwert erscheint nur bei Erzeugung und in keinem Log, Audit oder Listen-Response.
     evidence:
       - v0.1 Token-Scope-Acceptance

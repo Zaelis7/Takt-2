@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `2361f5e`. Der Worktree war zu Beginn von `SPEC-015` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `6b6622e`. Der Worktree war zu Beginn von `IAM-021` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `2361f5e`. Der Worktree war zu Beginn von `SPEC-015` sauber. Di
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 87 | 20 implemented, 65 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 89 | 21 implemented, 66 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -22,7 +22,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
 | Öffentliche Systemgrenze | Health und komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit; API-Token-CRUD ist mit One-time-Ausgabe, Scopes, Filtern, Idempotenz und ETag vertraglich definiert | API-Token- und Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
-| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert | Keine Recovery-HTTP-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
+| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert; API-Token besitzen redigierte 256-Bit-Secret-/Argon2id-Grenzen, kanonische CIDRs und exakte Scope-Entscheidungen | API-Token-Persistenz und -HTTP fehlen; keine Recovery-HTTP-Orchestrierung, Monitore, Scheduler, Evaluator, Uptime, Outbox oder allgemeine Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0003`, Identitäts-, Session- und Recovery-Tabellen, gemeinsame Repository-Suiten sowie atomare redigierte Auditwirkung; Tokens/CSRF liegen nur als Digest vor | Kein API-Token, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite oder Retention |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
 | Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
@@ -46,7 +46,7 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 ## Empfohlene nächste Reihenfolge
 
 1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `IAM-013`: API-Token-Persistenz, Authentifizierung und Scope-Enforcement fertigstellen, bevor fachliche Schreibendpunkte entstehen.
+2. `IAM-022`, dann `IAM-013`: API-Token-Persistenz, Authentifizierung und Scope-Enforcement fertigstellen, bevor fachliche Schreibendpunkte entstehen.
 3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
 5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.
@@ -114,3 +114,7 @@ Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief g
 ## Abschluss von IAM-014
 
 `IAM-014` ist `implemented`, nicht `verified`. PostgreSQL 16.9 und SQLite bestehen denselben Recovery-Vertrag mit Hashspeicherung, Ablauf, genau einmaligem Verbrauch und atomarer Passwort-Ersetzung, Session-Revoke- und Auditwirkung. Alle lokalen Gates sind grün; Details stehen in `docs/implementation-evidence/iam-014-recovery-persistence.md`.
+
+## Abschluss von IAM-021
+
+`IAM-021` ist nach der Größentrennung von Persistenz (`IAM-022`) und HTTP-Runtime (`IAM-013`) `implemented`, nicht `verified`. Die frameworkfreie Domain-/Application-Grenze validiert API-Token-Arten, exakte Scopes ohne Rechteableitung, kanonische IPv4-/IPv6-CIDRs, Ablauf/Revoke und IP-Bindung. Tokenwerte behalten hinter dem separaten Lookup-Präfix 256 Bit geheime Entropie; Raw-Werte und Argon2id-Hashes sind in Debug-Ausgaben redigiert. Alle lokalen Gates sind grün; Persistenz, Auditwirkung, HTTP-CRUD und produktive Bearer-Authentifizierung folgen getrennt. Details stehen in `docs/implementation-evidence/iam-021-api-token-domain.md`.

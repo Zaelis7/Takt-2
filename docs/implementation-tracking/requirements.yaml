@@ -338,7 +338,11 @@ requirements:
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/iam-012-login-rate-limit.md
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: Local owner and browser-auth runtime exist; API-token CRUD/scopes are contracted with one-time output, but token persistence/authentication/enforcement remain absent.
+      - crates/domain/src/api_token.rs
+      - crates/application/src/api_token.rs
+      - crates/application/tests/api_tokens.rs
+      - docs/implementation-evidence/iam-021-api-token-domain.md
+    note: Local owner and browser-auth runtime exist; API-token CRUD/scopes are contracted and their secret/hash, CIDR, expiry and exact-scope application boundaries exist, but token persistence and HTTP authentication remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -370,7 +374,10 @@ requirements:
       - docs/implementation-evidence/iam-016-auth-application.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: Browser-auth enforces session/CSRF and the token contract declares authentication/403 boundaries, but no general resource runtime performs permission authorization.
+      - crates/domain/src/api_token.rs
+      - crates/application/tests/api_tokens.rs
+      - docs/implementation-evidence/iam-021-api-token-domain.md
+    note: Browser-auth enforces session/CSRF and API-token actors grant only exact scopes, but no public resource runtime applies the token decision yet and the general role/permission engine remains absent.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -386,7 +393,10 @@ requirements:
       - docs/implementation-evidence/iam-016-auth-application.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: Existing auth writes audit; the API-token contract prevents secret readback, while token-write audit runtime, full action coverage, export and tamper evidence remain absent.
+      - crates/application/src/api_token.rs
+      - crates/application/tests/api_tokens.rs
+      - docs/implementation-evidence/iam-021-api-token-domain.md
+    note: Existing auth writes audit and API-token secret/hash types redact their debug output; token-write audit runtime, full action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"
