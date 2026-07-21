@@ -507,9 +507,12 @@ where
     F: Future<Output = Result<(), E>>,
     S: Future<Output = ()> + Send + 'static,
 {
-    let server = axum::serve(listener, application)
-        .with_graceful_shutdown(shutdown)
-        .into_future();
+    let server = axum::serve(
+        listener,
+        application.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .into_future();
     tokio::pin!(server);
     tokio::pin!(initialize);
 
@@ -689,7 +692,13 @@ mod tests {
         );
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
-        let server = tokio::spawn(axum::serve(listener, application).into_future());
+        let server = tokio::spawn(
+            axum::serve(
+                listener,
+                application.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .into_future(),
+        );
 
         let login_body = r#"{"username":"runtime.admin","password":"correct horse battery"}"#;
         let login = http_request(

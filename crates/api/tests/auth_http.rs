@@ -174,3 +174,43 @@ async fn production_login_cookie_has_required_security_flags() -> Result<(), Box
     assert!(!body.contains(&"s".repeat(43)));
     Ok(())
 }
+
+// PRD-API-005 / PRD-IAM-001: the eleventh attempt from one peer/account is blocked.
+#[tokio::test]
+async fn login_rate_limit_is_enforced_with_retry_after() -> Result<(), Box<dyn Error>> {
+    let router =
+        takt_api::router_with_auth(Arc::new(AcceptAuthentication), AuthHttpConfig::localhost());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+    });
+
+    for attempt in 1..=11 {
+        let body = r#"{"username":"contract.admin","password":"correct horse battery"}"#;
+        let mut stream = TcpStream::connect(address).await?;
+        let request = format!(
+            "POST /api/v1/auth/login HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(request.as_bytes()).await?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await?;
+        if attempt <= 10 {
+            assert!(
+                response.starts_with("HTTP/1.1 200"),
+                "attempt {attempt}: {response}"
+            );
+        } else {
+            assert!(response.starts_with("HTTP/1.1 429"), "{response}");
+            assert!(response.to_ascii_lowercase().contains("retry-after:"));
+            assert!(response.contains(r#""code":"rate_limit_exceeded""#));
+        }
+    }
+    server.abort();
+    Ok(())
+}

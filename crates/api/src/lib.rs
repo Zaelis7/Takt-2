@@ -43,6 +43,7 @@ pub(crate) struct ApiState {
     health_metrics: Arc<HealthMetrics>,
     authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
     auth_config: AuthHttpConfig,
+    login_guard: Arc<auth::LoginGuard>,
 }
 
 #[derive(Serialize)]
@@ -151,6 +152,7 @@ fn build_router(
     authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
     auth_config: AuthHttpConfig,
 ) -> Router {
+    let login_guard = Arc::new(auth::LoginGuard::new(auth_config));
     Router::new()
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness_handler))
@@ -161,6 +163,7 @@ fn build_router(
             health_metrics,
             authentication,
             auth_config,
+            login_guard,
         })
         .layer(DefaultBodyLimit::max(4 * 1024))
         .layer(middleware::from_fn(attach_request_id))

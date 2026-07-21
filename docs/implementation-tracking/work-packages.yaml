@@ -554,11 +554,32 @@ packages:
 
   - id: IAM-012
     release: "0.1"
-    status: planned
-    requirements: [PRD-API-003, PRD-API-005, PRD-IAM-001]
+    status: implemented
+    requirements: [PRD-API-005, PRD-IAM-001]
     findings: []
     depends_on: [IAM-018]
     outcome: Nicht deaktivierbares Login-Limit je Peer-IP und Konto mit Retry-After und zunehmender Fehlversuchsverzögerung.
+    preflight:
+      in_scope:
+        - Festes Mindestlimit von zehn Loginversuchen je Minute und tatsächlicher Peer-IP sowie normalisiertem Kontoschlüssel.
+        - Atomare In-Memory-Fensterzähler mit begrenzter Schlüsselanzahl, Retry-After und fail-closed Verhalten bei Infrastrukturfehlern.
+        - Zunehmende, gedeckelte Verzögerung für generische ungültige Credentials ohne unterschiedliche Kontoexistenzpfade.
+      out_of_scope:
+        - Trusted-Proxy-Auswertung; bis zu einer spezifizierten Proxy-Konfiguration gilt ausschließlich die Socket-Peer-IP.
+        - Recovery-Auslieferung/-HTTP-Orchestrierung und lokaler Recovery-CLI-Vertrag.
+        - API-Token-Vertrag/-Runtime, Permission Engine, OIDC und UI.
+      affected_artifacts:
+        - crates/api/Cargo.toml
+        - crates/api/src/auth.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/auth_http.rs
+        - crates/server/src/main.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-012-login-rate-limit.md
+      estimated_handwritten_lines: 550
+      estimated_validation_minutes: 25
     acceptance:
       - Der elfte Loginversuch je Minute und Peer-IP oder Konto liefert `429 rate_limit_exceeded` mit `Retry-After`.
       - Unbekannte und bekannte Konten durchlaufen dieselbe Limit- und Verzögerungslogik.

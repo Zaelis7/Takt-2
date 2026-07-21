@@ -144,7 +144,8 @@ requirements:
       - docs/implementation-evidence/iam-010-auth-domain-contract.md
       - docs/implementation-evidence/iam-020-auth-http-boundary.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
-    note: Readiness and the composed browser-auth runtime emit bounded, redacted Problem Details with stable codes; the general resource runtime error boundary is absent.
+      - docs/implementation-evidence/iam-012-login-rate-limit.md
+    note: Readiness and browser auth emit bounded, redacted Problem Details with stable codes, including 429 plus Retry-After; the general resource runtime error boundary is absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -325,7 +326,8 @@ requirements:
       - docs/implementation-evidence/iam-016-auth-application.md
       - docs/implementation-evidence/iam-020-auth-http-boundary.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
-    note: Local owner and composed login/session/logout runtime exist with secure cookies and CSRF; rate limit plus API-token contract/runtime and scopes remain absent (SPEC-003).
+      - docs/implementation-evidence/iam-012-login-rate-limit.md
+    note: Local owner and composed login/session/logout runtime exist with secure cookies, CSRF and fixed IP/account rate limits; API-token contract/runtime and scopes remain absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
