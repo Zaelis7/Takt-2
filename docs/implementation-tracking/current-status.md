@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `6678f97f80bd429ed2269dd26a28bc310a8de234`. Der Worktree war zu Beginn von `IAM-011` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `d0277f65fa8eb8632914b6b9dcaa4033cf260374`. Der Worktree war zu Beginn von `IAM-015` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `6678f97f80bd429ed2269dd26a28bc310a8de234`. Der Worktree war zu
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 19 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 37 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 84 | 13 implemented, 69 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 84 | 14 implemented, 68 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -22,8 +22,8 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
 | Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header; OpenAPI-Verträge für Browser-Auth/Session/Recovery mit stabilen Auth-Problem-Codes und sieben vollständig kanonisch abgebildete CheckSpecs einschließlich gemeinsamer Netzwerkoptionen | Kein `/api/v1`-Ressourcen- oder Auth-Laufzeitendpunkt, keine AuthN/AuthZ, kein Metrics-Endpunkt, keine Traces |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
-| Domain/Application | Typisierte UUIDv7-IDs einschließlich Session-ID, UTC-Mikrosekunden, Identitäts-/Auditmodelle, Argon2id-Port, redigierter SHA-256-Token-Digest sowie deterministische Session-Laufzeit-, Rotation-, Revoke- und CSRF-Regeln | Keine Session-/Recovery-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
-| Persistenz | PostgreSQL-/SQLite-Migrationen `0001`/`0002`, Identitäts- und Sessiontabellen, gemeinsame Repository-Suiten, atomarer Admin-Bootstrap sowie atomare Session-Anlage mit append-only Audit; Token/CSRF liegen nur als Digest vor | Kein Session-Refresh/Revoke, Recovery/API-Token, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite oder Retention |
+| Domain/Application | Typisierte UUIDv7-IDs einschließlich Session-ID, UTC-Mikrosekunden, Identitäts-/Auditmodelle, Argon2id-Port, redigierter SHA-256-Token-Digest, Session-Lifecycle-Ports sowie deterministische Laufzeit-, Rotation-, Revoke- und CSRF-Regeln | Keine HTTP-/Recovery-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
+| Persistenz | PostgreSQL-/SQLite-Migrationen `0001`/`0002`, Identitäts- und Sessiontabellen, gemeinsame Repository-Suiten, atomare Session-Anlage/Revoke-Audits sowie monotone, ablauf- und versionsgeschützte Refreshes; Token/CSRF liegen nur als Digest vor | Kein Recovery/API-Token, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite oder Retention |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
 | Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
 
@@ -45,8 +45,8 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 
 ## Empfohlene nächste Reihenfolge
 
-1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren; `IAM-011` ist noch uncommitted.
-2. `IAM-015`, `IAM-014`, `IAM-012`, `IAM-013`: Session-Lifecycle, Recovery, HTTP-Grenze und API-Tokens fertigstellen, bevor fachliche Schreibendpunkte entstehen.
+1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren; `IAM-015` ist noch uncommitted.
+2. `IAM-014`, `IAM-012`, `IAM-013`: Recovery, HTTP-Grenze und API-Tokens fertigstellen, bevor fachliche Schreibendpunkte entstehen.
 3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
 5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.
@@ -101,8 +101,12 @@ Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief g
 
 ## Abschluss von IAM-010
 
-`IAM-010` ist `implemented`, nicht `verified`. Die frameworkfreie Domain bildet die standardmäßigen 12 Stunden Inaktivität und sieben Tage absolute Laufzeit, konfigurierbare validierte Grenzen, Aktivitätsverlängerung ohne Überschreiten des absoluten Ablaufs, Rotation nach Login/Rechteänderung/sensibler Aktion, Revoke bei Logout/Recovery sowie sessiongebundene CSRF-Entscheidungen deterministisch ab. Der OpenAPI-Vertrag verwendet für Auth-Fehler jetzt stabile, generische Codes und unterscheidet Recovery-Tokenfehler nicht nach Existenz, Ablauf oder Einmalverwendung. Sämtliche lokalen Gates einschließlich echtem PostgreSQL 16.9, SQLite, Supply Chain, Frontend, Playwright und Release-Build sind grün. Session-Lifecycle, Recovery und Laufzeit folgen in `IAM-015`/`IAM-014`/`IAM-012`; unabhängige commit-gebundene Review-/CI-Evidence fehlt weiterhin. Details stehen in `docs/implementation-evidence/iam-010-auth-domain-contract.md`.
+`IAM-010` ist `implemented`, nicht `verified`. Die frameworkfreie Domain bildet die standardmäßigen 12 Stunden Inaktivität und sieben Tage absolute Laufzeit, konfigurierbare validierte Grenzen, Aktivitätsverlängerung ohne Überschreiten des absoluten Ablaufs, Rotation nach Login/Rechteänderung/sensibler Aktion, Revoke bei Logout/Recovery sowie sessiongebundene CSRF-Entscheidungen deterministisch ab. Der OpenAPI-Vertrag verwendet für Auth-Fehler jetzt stabile, generische Codes und unterscheidet Recovery-Tokenfehler nicht nach Existenz, Ablauf oder Einmalverwendung. Sämtliche lokalen Gates einschließlich echtem PostgreSQL 16.9, SQLite, Supply Chain, Frontend, Playwright und Release-Build sind grün. Recovery und Laufzeit folgen in `IAM-014`/`IAM-012`; unabhängige commit-gebundene Review-/CI-Evidence fehlt weiterhin. Details stehen in `docs/implementation-evidence/iam-010-auth-domain-contract.md`.
 
 ## Abschluss von IAM-011
 
 `IAM-011` ist nach der Größentrennung von Session-Lifecycle (`IAM-015`) und Recovery (`IAM-014`) `implemented`, nicht `verified`. Migration `0002` speichert UUIDv7-Sessions mit UTC-Mikrosekunden und ausschließlich typisierten SHA-256-Digests. PostgreSQL 16.9 und SQLite bestehen denselben Create-/Lookup-Vertrag einschließlich DB-Constraints, Audit-Redaktion und atomarem Create-Rollback. Alle lokalen Gates sind grün; unabhängige commit-gebundene Evidence fehlt. Details stehen in `docs/implementation-evidence/iam-011-session-persistence.md`.
+
+## Abschluss von IAM-015
+
+`IAM-015` ist `implemented`, nicht `verified`. PostgreSQL 16.9 und SQLite bestehen denselben Session-Lifecycle-Vertrag: Refreshes sind aktiv, monoton, ablaufgeschützt und optimistisch versioniert; konkurrierende, veraltete, rückwärts datierte, abgelaufene oder widerrufene Schreibversuche bleiben ohne Wirkung. Revoke und kohärentes redigiertes Audit committen oder rollen gemeinsam zurück. Alle lokalen Gates sind grün; Details stehen in `docs/implementation-evidence/iam-015-session-lifecycle.md`.

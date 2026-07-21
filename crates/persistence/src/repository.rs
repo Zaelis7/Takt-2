@@ -7,8 +7,8 @@ use takt_application::{
     AuditRepository, BootstrapPlan, BootstrapRepository, BootstrapResources, BootstrapStoreResult,
     CreateSessionPlan, ExistingBootstrap, LocalUserRepository, MembershipRepository, NewAuditEvent,
     NewLocalUser, NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
-    ProjectRepository, RepositoryError, SESSION_CREATED_AUDIT_ACTION, SessionRepository,
-    TokenDigest,
+    ProjectRepository, RepositoryError, RevokeSessionPlan, SESSION_CREATED_AUDIT_ACTION,
+    SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
@@ -34,6 +34,29 @@ impl SqlxRepository {
     #[must_use]
     pub const fn database(&self) -> &Database {
         &self.database
+    }
+
+    async fn session_by_id(&self, id: SessionId) -> Result<BrowserSession, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => session_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version FROM sessions WHERE id = $1",
+                )
+                .bind(id.as_uuid())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => session_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version FROM sessions WHERE id = ?1",
+                )
+                .bind(id.to_string())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
     }
 }
 
@@ -603,6 +626,117 @@ impl SessionRepository for SqlxRepository {
                 .map_err(map_sqlx_error)?,
             ),
         }
+    }
+
+    async fn refresh_session(
+        &self,
+        id: SessionId,
+        expected_version: i64,
+        window: SessionWindow,
+    ) -> Result<BrowserSession, RepositoryError> {
+        let updated = match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => sqlx::query(
+                "UPDATE sessions SET last_activity_at = $1, expires_at = $2, updated_at = $1, version = version + 1 WHERE id = $3 AND version = $4 AND revoked_at IS NULL AND last_activity_at <= $1 AND expires_at > $1 AND absolute_expires_at > $1 AND issued_at = $5 AND absolute_expires_at = $6 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+            )
+            .bind(postgres_time(window.last_activity_at())?)
+            .bind(postgres_time(window.expires_at())?)
+            .bind(id.as_uuid())
+            .bind(expected_version)
+            .bind(postgres_time(window.issued_at())?)
+            .bind(postgres_time(window.absolute_expires_at())?)
+            .fetch_optional(pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .map(|row| session_from_postgres(&row))
+            .transpose()?,
+            DatabasePool::Sqlite(pool) => sqlx::query(
+                "UPDATE sessions SET last_activity_at = ?1, expires_at = ?2, updated_at = ?1, version = version + 1 WHERE id = ?3 AND version = ?4 AND revoked_at IS NULL AND last_activity_at <= ?1 AND expires_at > ?1 AND absolute_expires_at > ?1 AND issued_at = ?5 AND absolute_expires_at = ?6 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+            )
+            .bind(window.last_activity_at().unix_micros())
+            .bind(window.expires_at().unix_micros())
+            .bind(id.to_string())
+            .bind(expected_version)
+            .bind(window.issued_at().unix_micros())
+            .bind(window.absolute_expires_at().unix_micros())
+            .fetch_optional(pool)
+            .await
+            .map_err(map_sqlx_error)?
+            .map(|row| session_from_sqlite(&row))
+            .transpose()?,
+        };
+        classify_session_update(self, id, updated).await
+    }
+
+    async fn revoke_session(
+        &self,
+        plan: RevokeSessionPlan,
+    ) -> Result<BrowserSession, RepositoryError> {
+        let existing = self.session_by_id(plan.session_id).await?;
+        validate_session_audit(
+            plan.session_id,
+            existing.organization_id,
+            existing.user_id,
+            SESSION_REVOKED_AUDIT_ACTION,
+            plan.revoked_at,
+            &plan.audit_event,
+        )?;
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "UPDATE sessions SET revoked_at = $1, updated_at = $1, version = version + 1 WHERE id = $2 AND version = $3 AND revoked_at IS NULL AND updated_at <= $1 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+                )
+                .bind(postgres_time(plan.revoked_at)?)
+                .bind(plan.session_id.as_uuid())
+                .bind(plan.expected_version)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict);
+                };
+                let session = session_from_postgres(&row)?;
+                insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(session)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "UPDATE sessions SET revoked_at = ?1, updated_at = ?1, version = version + 1 WHERE id = ?2 AND version = ?3 AND revoked_at IS NULL AND updated_at <= ?1 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+                )
+                .bind(plan.revoked_at.unix_micros())
+                .bind(plan.session_id.to_string())
+                .bind(plan.expected_version)
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict);
+                };
+                let session = session_from_sqlite(&row)?;
+                insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(session)
+            }
+        }
+    }
+}
+
+async fn classify_session_update(
+    repository: &SqlxRepository,
+    id: SessionId,
+    updated: Option<BrowserSession>,
+) -> Result<BrowserSession, RepositoryError> {
+    if let Some(session) = updated {
+        return Ok(session);
+    }
+    match repository.session_by_id(id).await {
+        Ok(_) => Err(RepositoryError::VersionConflict),
+        Err(RepositoryError::NotFound) => Err(RepositoryError::NotFound),
+        Err(error) => Err(error),
     }
 }
 

@@ -363,11 +363,34 @@ packages:
 
   - id: IAM-015
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
     findings: []
     depends_on: [IAM-011]
     outcome: Engine-paritärer Session-Lifecycle mit Refresh, optimistischer Versionierung und atomarem Revoke-Audit.
+    preflight:
+      in_scope:
+        - Typisierte Application-Port-Verträge für monotones Session-Refresh und versioniertes Revoke mit stabilem Audit-Aktionscode.
+        - Derselbe PostgreSQL-/SQLite-Repository-Contract für erfolgreiche Refreshes, Stale-/Missing-/Expired-/Revoked-Ablehnung und deterministische Versionskonflikte.
+        - Atomarer Revoke zusammen mit kohärentem redigiertem Audit-Event einschließlich Failpoint-Rollback und negativer Secret-Prüfung.
+        - Fokussierte Tests, Tracking und Implementation Evidence ohne Änderung des öffentlichen API-Vertrags.
+      out_of_scope:
+        - Neue oder geänderte Migrationen; Session-Zeit-, Revoke- und Versionsspalten wurden bereits in IAM-011 angelegt.
+        - Recovery-Token und Revoke aller Nutzersessions; diese folgen in IAM-014.
+        - HTTP-Routen, Cookie-/Tokenrotation, Hashableitung, konstanter CSRF-Vergleich und Rate Limits; diese folgen in IAM-012.
+        - API-Tokens, Permission Engine, OIDC, UI und neue Observability-Datenflüsse.
+      affected_artifacts:
+        - crates/application/src/lib.rs
+        - crates/persistence/src/repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-015-session-lifecycle.md
+      estimated_handwritten_lines: 360
+      estimated_validation_minutes: 25
     acceptance:
       - Derselbe Refresh-/Revoke-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
       - Abgelaufene oder widerrufene Sessions werden nicht verlängert; konkurrierende oder wiederholte Lifecycle-Schreibzugriffe sind deterministisch.

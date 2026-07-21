@@ -9,8 +9,9 @@ use takt_application::{
     ApplicationError, AuditRepository, BootstrapService, BootstrapStatus, Clock, CreateSessionPlan,
     IdGenerator, LocalUserRepository, MembershipRepository, NewAuditEvent, NewBrowserSession,
     NewLocalUser, NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
-    PasswordHasher, PasswordHashing, ProjectRepository, RepositoryError,
-    SESSION_CREATED_AUDIT_ACTION, SessionRepository, TokenDigest, ValidationError,
+    PasswordHasher, PasswordHashing, ProjectRepository, RepositoryError, RevokeSessionPlan,
+    SESSION_CREATED_AUDIT_ACTION, SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest,
+    ValidationError,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId, OperationId,
@@ -29,7 +30,8 @@ pub const TEST_CSRF_TOKEN_SHA256: &str =
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 pub fn assert_persisted_session_is_redacted(stored: &str, audit_metadata: &str) {
-    assert_eq!(stored.matches("sha256:").count(), 2);
+    let digest_count = stored.matches("sha256:").count();
+    assert!(digest_count >= 2 && digest_count.is_multiple_of(2));
     for secret in [
         TEST_RAW_SESSION_TOKEN,
         TEST_RAW_CSRF_TOKEN,
@@ -464,6 +466,212 @@ pub async fn run_session_repository_contract(
         Err(RepositoryError::NotFound)
     );
 
+    let activity_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 3_600_000_000);
+    let refreshed_window = created
+        .window
+        .record_activity(activity_at, SessionPolicy::default())?;
+    let refreshed = repository
+        .refresh_session(session_id, 1, refreshed_window)
+        .await?;
+    assert_eq!(refreshed.version, 2);
+    assert_eq!(refreshed.window.last_activity_at(), activity_at);
+    assert_eq!(
+        repository
+            .refresh_session(session_id, 1, refreshed_window)
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+    assert_eq!(
+        repository
+            .refresh_session(session_id, 2, created.window)
+            .await,
+        Err(RepositoryError::VersionConflict),
+        "activity timestamps must never move backwards"
+    );
+
+    let expired_attempt_at = refreshed.window.expires_at();
+    let expired_window = SessionWindow::from_persistence(
+        refreshed.window.issued_at(),
+        expired_attempt_at,
+        UtcTimestamp::from_unix_micros(expired_attempt_at.unix_micros() + 1),
+        refreshed.window.absolute_expires_at(),
+    )?;
+    assert_eq!(
+        repository
+            .refresh_session(session_id, 2, expired_window)
+            .await,
+        Err(RepositoryError::VersionConflict),
+        "an expired stored session must not be revived"
+    );
+    let missing_session_id = SessionId::from_resource_id(resource_id(30_099)?);
+    assert_eq!(
+        repository
+            .refresh_session(missing_session_id, 1, refreshed_window)
+            .await,
+        Err(RepositoryError::NotFound)
+    );
+
+    let revoked_at = UtcTimestamp::from_unix_micros(activity_at.unix_micros() + 1);
+    assert_eq!(
+        repository
+            .revoke_session(RevokeSessionPlan {
+                session_id,
+                expected_version: 2,
+                revoked_at,
+                audit_event: session_audit_event(
+                    AuditEventId::from_resource_id(resource_id(30_005)?),
+                    session_id,
+                    SESSION_CREATED_AUDIT_ACTION,
+                    revoked_at,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::ConstraintViolation),
+        "revoke must reject an incoherent audit action before writing"
+    );
+    let revoked = repository
+        .revoke_session(RevokeSessionPlan {
+            session_id,
+            expected_version: 2,
+            revoked_at,
+            audit_event: session_audit_event(
+                AuditEventId::from_resource_id(resource_id(30_002)?),
+                session_id,
+                SESSION_REVOKED_AUDIT_ACTION,
+                revoked_at,
+            )?,
+        })
+        .await?;
+    assert_eq!(revoked.revoked_at, Some(revoked_at));
+    assert_eq!(revoked.version, 3);
+    let post_revoke_window = revoked.window.record_activity(
+        UtcTimestamp::from_unix_micros(revoked_at.unix_micros() + 1),
+        SessionPolicy::default(),
+    )?;
+    assert_eq!(
+        repository
+            .refresh_session(session_id, 3, post_revoke_window)
+            .await,
+        Err(RepositoryError::VersionConflict),
+        "a revoked session must not be refreshed"
+    );
+    assert_eq!(
+        repository
+            .revoke_session(RevokeSessionPlan {
+                session_id,
+                expected_version: 3,
+                revoked_at,
+                audit_event: session_audit_event(
+                    AuditEventId::from_resource_id(resource_id(30_003)?),
+                    session_id,
+                    SESSION_REVOKED_AUDIT_ACTION,
+                    revoked_at,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+    assert_eq!(
+        repository
+            .revoke_session(RevokeSessionPlan {
+                session_id: missing_session_id,
+                expected_version: 1,
+                revoked_at,
+                audit_event: session_audit_event(
+                    AuditEventId::from_resource_id(resource_id(30_004)?),
+                    missing_session_id,
+                    SESSION_REVOKED_AUDIT_ACTION,
+                    revoked_at,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::NotFound)
+    );
+
+    let concurrent_session = new_session(
+        30_020,
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )?;
+    let concurrent_id = concurrent_session.id;
+    let concurrent_token = concurrent_session.token_digest.clone();
+    let concurrent_window = concurrent_session.window;
+    repository
+        .create_session(CreateSessionPlan {
+            session: concurrent_session,
+            audit_event: session_audit_event(
+                AuditEventId::from_resource_id(resource_id(30_021)?),
+                concurrent_id,
+                SESSION_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+        })
+        .await?;
+    let left_window = concurrent_window.record_activity(
+        UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 1_000),
+        SessionPolicy::default(),
+    )?;
+    let right_window = concurrent_window.record_activity(
+        UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 2_000),
+        SessionPolicy::default(),
+    )?;
+    let (left, right) = tokio::join!(
+        repository.refresh_session(concurrent_id, 1, left_window),
+        repository.refresh_session(concurrent_id, 1, right_window)
+    );
+    assert!(
+        matches!((&left, &right), (Ok(session), Err(RepositoryError::VersionConflict)) if session.version == 2)
+            || matches!((&left, &right), (Err(RepositoryError::VersionConflict), Ok(session)) if session.version == 2)
+    );
+    assert_eq!(
+        repository
+            .session_by_token_digest(&concurrent_token)
+            .await?
+            .version,
+        2
+    );
+
+    let rollback_revoke = new_session(
+        30_030,
+        "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+    )?;
+    let rollback_revoke_id = rollback_revoke.id;
+    let rollback_revoke_token = rollback_revoke.token_digest.clone();
+    let rollback_audit_id = AuditEventId::from_resource_id(resource_id(30_031)?);
+    repository
+        .create_session(CreateSessionPlan {
+            session: rollback_revoke,
+            audit_event: session_audit_event(
+                rollback_audit_id,
+                rollback_revoke_id,
+                SESSION_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+        })
+        .await?;
+    assert_eq!(
+        repository
+            .revoke_session(RevokeSessionPlan {
+                session_id: rollback_revoke_id,
+                expected_version: 1,
+                revoked_at,
+                audit_event: session_audit_event(
+                    rollback_audit_id,
+                    rollback_revoke_id,
+                    SESSION_REVOKED_AUDIT_ACTION,
+                    revoked_at,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::AlreadyExists)
+    );
+    let active_after_rollback = repository
+        .session_by_token_digest(&rollback_revoke_token)
+        .await?;
+    assert_eq!(active_after_rollback.revoked_at, None);
+    assert_eq!(active_after_rollback.version, 1);
+
     let rolled_back_create = new_session(
         30_010,
         "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
@@ -497,7 +705,7 @@ pub async fn run_session_repository_contract(
         .into_iter()
         .filter(|event| event.resource_type == "session")
         .collect::<Vec<_>>();
-    assert_eq!(session_audits.len(), 1);
+    assert_eq!(session_audits.len(), 4);
     assert!(session_audits.iter().all(|event| {
         !format!("{event:?}").contains(TEST_RAW_SESSION_TOKEN)
             && !format!("{event:?}").contains(TEST_RAW_CSRF_TOKEN)

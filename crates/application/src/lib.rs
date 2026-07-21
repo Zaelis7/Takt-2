@@ -256,6 +256,7 @@ pub struct NewAuditEvent {
 }
 
 pub const SESSION_CREATED_AUDIT_ACTION: &str = "auth.session.created";
+pub const SESSION_REVOKED_AUDIT_ACTION: &str = "auth.session.revoked";
 
 #[derive(Clone, Debug)]
 pub struct NewBrowserSession {
@@ -270,6 +271,14 @@ pub struct NewBrowserSession {
 #[derive(Clone, Debug)]
 pub struct CreateSessionPlan {
     pub session: NewBrowserSession,
+    pub audit_event: NewAuditEvent,
+}
+
+#[derive(Clone, Debug)]
+pub struct RevokeSessionPlan {
+    pub session_id: SessionId,
+    pub expected_version: i64,
+    pub revoked_at: UtcTimestamp,
     pub audit_event: NewAuditEvent,
 }
 
@@ -379,6 +388,16 @@ pub trait SessionRepository: Send + Sync {
         &self,
         token_digest: &TokenDigest,
         csrf_digest: &TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError>;
+    async fn refresh_session(
+        &self,
+        id: SessionId,
+        expected_version: i64,
+        window: SessionWindow,
+    ) -> Result<BrowserSession, RepositoryError>;
+    async fn revoke_session(
+        &self,
+        plan: RevokeSessionPlan,
     ) -> Result<BrowserSession, RepositoryError>;
 }
 

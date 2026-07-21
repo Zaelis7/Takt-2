@@ -101,7 +101,7 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
 
     let mut connection = raw_connection(&path).await?;
     let row = sqlx::query(
-        "SELECT token_digest || ' ' || csrf_digest AS stored, (SELECT metadata FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
+        "SELECT group_concat(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT group_concat(metadata, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
     )
     .fetch_one(&mut connection)
     .await?;
