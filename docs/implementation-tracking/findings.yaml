@@ -111,9 +111,12 @@ findings:
     severity: high
     kind: evidence_gap
     decision: implementation
-    summary: The 37 Gherkin scenarios are syntax-checked only; there is no executable step binding or generated requirement-to-test evidence, so green contract validation is not product acceptance.
+    summary: All 37 Gherkin scenarios now have exact machine-checked inventory and implementation-package mappings, but every binding remains planned with no behavior-test command, so green contract or binding validation is not product acceptance.
     locations:
       - tools/validate-gherkin.mjs
+      - tools/check-acceptance-bindings.mjs
+      - tools/check-acceptance-bindings.test.mjs
+      - specs/acceptance/bindings.yaml
       - specs/acceptance/v0.1.feature
       - specs/acceptance/v0.2.feature
       - specs/acceptance/v0.3.feature
@@ -123,7 +126,7 @@ findings:
       - PRD-NFR-002
       - PRD-NFR-007
       - PRD-NFR-009
-    resolution: Add an executable acceptance harness or an explicit scenario-to-automated-test manifest that fails when a release scenario has no runnable implementation.
+    resolution: QA-001 added the complete manifest, PRD-tag drift checks and a release runner that fails on planned or commandless bindings. Keep this finding open until feature packages promote their scenarios with real test commands and QA-010/020/030 execute the applicable release sets without skips.
 
   - id: DEC-001
     status: open

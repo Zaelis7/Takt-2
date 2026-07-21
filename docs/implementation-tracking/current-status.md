@@ -10,7 +10,7 @@ Baseline: Commit `1f3aa3c62966faba93923dd9d189fcd8929094b2`. Der Worktree enthie
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 19 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 37 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 82 | 9 implemented, 71 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 82 | 10 implemented, 70 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 6 | 4 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; fünf davon high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -25,7 +25,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Domain/Application | Typisierte UUIDv7-IDs, UTC-Mikrosekunden, Organisation/Projekt/User/Membership/Audit, injizierte Clock/IDs, Argon2id-Port | Kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migration `0001`, sechs Identitätstabellen, gemeinsame Repository-Suite, atomarer lokaler Admin-Bootstrap, append-only Bootstrap-Audit | Keine Sessions/Tokens, Secrets, Monitore/Revisions, Jobs/Observations/Evaluations, Outbox, Statusseiten oder Retention |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
-| Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide | Keine der 37 Szenarien ist als ausführbare Produktabnahme gebunden (`EVID-002`) |
+| Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
 
 Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0.1 noch kein nutzbares Monitoringprodukt. Besonders wichtig: Vorhandene OpenAPI-Schemas sind kein Beleg dafür, dass die Endpunkte laufen; der Router enthält derzeit ausschließlich die zwei Health-Routen.
 
@@ -39,14 +39,14 @@ Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0
 | `SPEC-003` | Der höchstrangige OpenAPI-Vertrag lässt mehrere zwingende 0.1-Verwaltungsressourcen und Operationspfade aus. |
 | `SPEC-005` | Der Spec-Index verspricht eine nicht vorhandene `AGENTS.template.md`. |
 | `EVID-001` | Historische Evidence enthält keinen aktuellen unabhängigen grünen Verdict für HEAD. |
-| `EVID-002` | Gherkin wird nur geparst, nicht ausgeführt; „contracts valid“ darf nicht als Acceptance-Erfolg berichtet werden. |
+| `EVID-002` | Syntax und 37-entry Binding-Inventar sind geprüft, aber noch kein Produkt-Szenario ist runnable; „contracts/bindings valid“ darf nicht als Acceptance-Erfolg berichtet werden. |
 | `DEC-001` | Lizenz, Name/Paketlage und Security-/Signaturkanäle müssen vor öffentlichem 0.1 bestätigt werden. |
 
 Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 
 ## Empfohlene nächste Reihenfolge
 
-1. `QA-001`: Acceptance-Szenarien ausführbar zuordnen; anschließend den mittleren Indexfehler `SPEC-005` in `SPEC-014` beheben.
+1. `SPEC-014`: Den mittleren Indexfehler `SPEC-005` beheben.
 2. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren; PostgreSQL 16 muss verfügbar sein.
 3. `IAM-010` bis `IAM-013`: sichere Session-/Token-Grenze fertigstellen, bevor fachliche Schreibendpunkte entstehen.
 4. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
@@ -92,3 +92,7 @@ Der Docker-Client ist lokal vorhanden, aber seine Engine läuft nicht; native Po
 ## Abschluss von SPEC-019
 
 `SPEC-019` ist `implemented`, nicht `verified`. OpenAPI, deklaratives Config Schema und Proto besitzen jetzt dieselben Resolver- und Adressfamilienoptionen für HTTP, TCP, DNS, ICMP, TLS und Browser sowie dieselbe Proxy-Grenze für HTTP, TCP, TLS und Browser. Authority-only URIs, verbotene eingebettete Credentials, reine SecretRef-Proxy-Auth, Push-Ausschluss und additive Proto-Tags sind positiv und negativ getestet; generierte TypeScript-/Rust-Typen sind aktuell. `SPEC-004` ist damit gelöst. Der vollständige Rust-Workspace-Test bleibt mangels PostgreSQL nicht bestanden; Details stehen in `docs/implementation-evidence/spec-019-network-options-contract.md`.
+
+## Abschluss von QA-001
+
+`QA-001` ist `implemented`, nicht `verified`. `specs/acceptance/bindings.yaml` ordnet alle 37 Szenariodefinitionen exakt ihren Gherkin-Dateien, PRD-Tags und verantwortlichen Umsetzungspaketen zu. `pnpm acceptance:check` prüft dieses Inventar separat von der bestehenden Syntaxvalidierung; ein fehlendes Binding, Tag-Drift, unbekanntes Paket oder ein als runnable markierter Eintrag ohne Testkommando ist rot. `pnpm acceptance:run -- --release v0.1` bleibt bewusst rot, solange eines der 15 v0.1-Bindings geplant ist. Deshalb bleibt `EVID-002` offen und die Requirement-Coverage unverändert. Der vollständige Rust-Workspace-Test bleibt mangels PostgreSQL nicht bestanden; Details stehen in `docs/implementation-evidence/qa-001-acceptance-bindings.md`.

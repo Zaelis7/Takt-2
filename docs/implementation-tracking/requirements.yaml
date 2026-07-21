@@ -107,7 +107,11 @@ requirements:
       - specs/contracts/probe.proto
       - crates/probe-protocol/tests/generated_contract.rs
       - docs/implementation-evidence/spec-019-network-options-contract.md
-    note: OpenAPI lint, generated-type drift, browser-auth, complete cross-contract CheckSpec mapping and the OpenAPI codegen supply-chain guard pass; runtime conformance and compatibility against a released baseline remain absent.
+      - specs/acceptance/bindings.yaml
+      - tools/check-acceptance-bindings.mjs
+      - tools/check-acceptance-bindings.test.mjs
+      - docs/implementation-evidence/qa-001-acceptance-bindings.md
+    note: OpenAPI lint, generated-type drift, browser-auth, complete cross-contract CheckSpec mapping, the OpenAPI codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
   - id: PRD-API-003
     release: "0.1"
     coverage: none
@@ -429,7 +433,8 @@ requirements:
       - docs/persistence.md
       - crates/persistence/tests/postgres_contract.rs
       - docs/implementation-evidence/persistence-admin-bootstrap.md
-    note: PostgreSQL 16 migration and identity repository evidence exists; the remaining product repositories and release matrix are absent, and PostgreSQL was not available during this inventory run.
+      - docs/implementation-evidence/qa-001-acceptance-bindings.md
+    note: PostgreSQL 16 migration and identity repository evidence exists; the remaining product repositories and release matrix are absent, the PostgreSQL acceptance binding remains planned, and PostgreSQL was not available during this inventory run.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -473,7 +478,8 @@ requirements:
       - docs/persistence.md
       - crates/persistence/tests/sqlite_contract.rs
       - crates/persistence/tests/postgres_contract.rs
-    note: Forward migration modes and newer-schema rejection exist; pre-migration backup confirmation, backup and restore are absent.
+      - docs/implementation-evidence/qa-001-acceptance-bindings.md
+    note: Forward migration modes and newer-schema rejection exist; pre-migration backup confirmation, backup, restore and the runnable upgrade/restore acceptance bindings are absent.
   - id: PRD-NFR-008
     release: "0.1"
     coverage: partial
@@ -492,7 +498,8 @@ requirements:
     evidence:
       - web/src/App.test.tsx
       - tests/e2e/bootstrap.spec.ts
-    note: The static shell has semantic landmarks and an accessible heading; no primary keyboard flow, focus audit or axe gate exists.
+      - docs/implementation-evidence/qa-001-acceptance-bindings.md
+    note: The static shell has semantic landmarks and an accessible heading; no primary keyboard flow, focus audit, axe gate or runnable accessibility acceptance binding exists.
   - id: PRD-NFR-010
     release: "0.1"
     coverage: partial

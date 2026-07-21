@@ -8,6 +8,8 @@
     "pnpm": "11.7.0"
   },
   "scripts": {
+    "acceptance:check": "node tools/check-acceptance-bindings.mjs",
+    "acceptance:run": "node tools/check-acceptance-bindings.mjs --run",
     "build": "pnpm --dir web build",
     "check:architecture": "node tools/check-architecture.mjs",
     "check:tracking": "node tools/check-implementation-tracking.mjs",

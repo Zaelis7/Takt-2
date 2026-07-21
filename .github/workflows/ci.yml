@@ -58,6 +58,9 @@ jobs:
       - name: Validate contracts
         run: pnpm contracts:validate
 
+      - name: Check acceptance bindings
+        run: pnpm acceptance:check
+
       - name: Check architecture and generated-code drift
         run: |
           pnpm check:architecture

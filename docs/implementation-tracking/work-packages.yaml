@@ -225,17 +225,37 @@ packages:
 
   - id: QA-001
     release: cross-release
-    status: planned
+    status: implemented
     requirements: [PRD-API-002, PRD-NFR-002, PRD-NFR-007, PRD-NFR-009]
     findings: [EVID-002]
     depends_on: [GOV-001]
-    outcome: Ausführbare Zuordnung jedes release-relevanten Gherkin-Szenarios zu automatisierten Tests.
+    outcome: Maschinenlesbares Acceptance-Manifest mit ehrlichem Planned-/Runnable-Status und ausführbarem Release-Gate für jedes release-relevante Gherkin-Szenario.
+    preflight:
+      in_scope:
+        - Maschinenlesbares Inventar aller 37 release-relevanten Gherkin-Szenarien mit stabilen IDs, Requirements und Testbindungen
+        - Separates Struktur-Gate für Gherkin-Syntax und Acceptance-Ausführbarkeit einschließlich negativem Unbound-Szenario-Test
+        - CI-, Tracking- und Evidence-Aktualisierung ohne vorgetäuschte Produktabnahme
+      out_of_scope:
+        - Implementierung der noch geplanten fachlichen Produktpfade hinter den 0.1- bis 0.3-Szenarien
+        - Release-Verdict, unabhängige Clean-Checkout-Validierung und Schließen von EVID-002 vor grünen Verhaltensbindungen
+        - Änderungen an OpenAPI, JSON Schema, Proto, Datenbanken, AuthZ, Audit, Secrets oder Observability
+      affected_artifacts:
+        - specs/acceptance/
+        - tools/
+        - package.json
+        - .github/workflows/ci.yml
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/qa-001-acceptance-bindings.md
+      estimated_handwritten_lines: 680
+      estimated_validation_minutes: 20
     acceptance:
-      - Ein Release-Szenario ohne ausführbaren Test lässt CI fehlschlagen.
+      - Ein fehlendes Szenario-Binding oder ein Runnable-Binding ohne Testkommando lässt CI fehlschlagen.
+      - Ein geplantes Binding lässt den zugehörigen Release-Ausführungsgate fehlschlagen und wird nie als Produktabnahme gezählt.
       - Syntaxvalidierung und Verhaltensausführung werden getrennt berichtet.
     evidence:
-      - Szenario-zu-Test-Manifest oder Cucumber-Ausführungsbericht
-      - Negativtest für ein absichtlich ungebundenes Szenario
+      - specs/acceptance/bindings.yaml
+      - tools/check-acceptance-bindings.test.mjs
+      - docs/implementation-evidence/qa-001-acceptance-bindings.md
 
   - id: IAM-010
     release: "0.1"
