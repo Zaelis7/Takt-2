@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteRow};
 use takt_application::{
-    AuditRepository, BootstrapPlan, BootstrapRepository, BootstrapResources, BootstrapStoreResult,
-    CompleteRecoveryPlan, CreateRecoveryPlan, CreateSessionPlan, ExistingBootstrap,
-    LocalUserRepository, MembershipRepository, NewAuditEvent, NewLocalUser, NewMembership,
-    NewOrganization, NewProject, OrganizationRepository, PasswordHash, ProjectRepository,
-    RECOVERY_COMPLETED_AUDIT_ACTION, RECOVERY_ISSUED_AUDIT_ACTION, RecoveryRepository,
-    RepositoryError, RevokeSessionPlan, SESSION_CREATED_AUDIT_ACTION, SESSION_REVOKED_AUDIT_ACTION,
-    SessionRepository, TokenDigest,
+    AuditRepository, AuthenticationRepository, BootstrapPlan, BootstrapRepository,
+    BootstrapResources, BootstrapStoreResult, CompleteRecoveryPlan, CreateRecoveryPlan,
+    CreateSessionPlan, ExistingBootstrap, LocalAuthenticationContext, LocalUserRepository,
+    MembershipRepository, NewAuditEvent, NewLocalUser, NewMembership, NewOrganization, NewProject,
+    OrganizationRepository, PasswordHash, ProjectRepository, RECOVERY_COMPLETED_AUDIT_ACTION,
+    RECOVERY_ISSUED_AUDIT_ACTION, RecoveryRepository, RepositoryError, RevokeSessionPlan,
+    SESSION_CREATED_AUDIT_ACTION, SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
@@ -636,37 +636,40 @@ impl SessionRepository for SqlxRepository {
         expected_version: i64,
         window: SessionWindow,
     ) -> Result<BrowserSession, RepositoryError> {
-        let updated = match &self.database.pool {
-            DatabasePool::PostgreSql(pool) => sqlx::query(
-                "UPDATE sessions SET last_activity_at = $1, expires_at = $2, updated_at = $1, version = version + 1 WHERE id = $3 AND version = $4 AND revoked_at IS NULL AND last_activity_at <= $1 AND expires_at > $1 AND absolute_expires_at > $1 AND issued_at = $5 AND absolute_expires_at = $6 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
-            )
-            .bind(postgres_time(window.last_activity_at())?)
-            .bind(postgres_time(window.expires_at())?)
-            .bind(id.as_uuid())
-            .bind(expected_version)
-            .bind(postgres_time(window.issued_at())?)
-            .bind(postgres_time(window.absolute_expires_at())?)
-            .fetch_optional(pool)
-            .await
-            .map_err(map_sqlx_error)?
-            .map(|row| session_from_postgres(&row))
-            .transpose()?,
-            DatabasePool::Sqlite(pool) => sqlx::query(
-                "UPDATE sessions SET last_activity_at = ?1, expires_at = ?2, updated_at = ?1, version = version + 1 WHERE id = ?3 AND version = ?4 AND revoked_at IS NULL AND last_activity_at <= ?1 AND expires_at > ?1 AND absolute_expires_at > ?1 AND issued_at = ?5 AND absolute_expires_at = ?6 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
-            )
-            .bind(window.last_activity_at().unix_micros())
-            .bind(window.expires_at().unix_micros())
-            .bind(id.to_string())
-            .bind(expected_version)
-            .bind(window.issued_at().unix_micros())
-            .bind(window.absolute_expires_at().unix_micros())
-            .fetch_optional(pool)
-            .await
-            .map_err(map_sqlx_error)?
-            .map(|row| session_from_sqlite(&row))
-            .transpose()?,
+        update_session_activity(self, id, expected_version, window, None).await
+    }
+
+    async fn refresh_session_and_rotate_csrf(
+        &self,
+        id: SessionId,
+        expected_version: i64,
+        window: SessionWindow,
+        csrf_digest: TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError> {
+        update_session_activity(self, id, expected_version, window, Some(&csrf_digest)).await
+    }
+
+    async fn csrf_digest_by_session_id(
+        &self,
+        id: SessionId,
+    ) -> Result<TokenDigest, RepositoryError> {
+        let stored: String = match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                sqlx::query_scalar("SELECT csrf_digest FROM sessions WHERE id = $1")
+                    .bind(id.as_uuid())
+                    .fetch_one(pool)
+                    .await
+                    .map_err(map_sqlx_error)?
+            }
+            DatabasePool::Sqlite(pool) => {
+                sqlx::query_scalar("SELECT csrf_digest FROM sessions WHERE id = ?1")
+                    .bind(id.to_string())
+                    .fetch_one(pool)
+                    .await
+                    .map_err(map_sqlx_error)?
+            }
         };
-        classify_session_update(self, id, updated).await
+        TokenDigest::from_persistence(stored).map_err(|_| RepositoryError::UnknownInfrastructure)
     }
 
     async fn revoke_session(
@@ -725,6 +728,48 @@ impl SessionRepository for SqlxRepository {
             }
         }
     }
+}
+
+async fn update_session_activity(
+    repository: &SqlxRepository,
+    id: SessionId,
+    expected_version: i64,
+    window: SessionWindow,
+    csrf_digest: Option<&TokenDigest>,
+) -> Result<BrowserSession, RepositoryError> {
+    let updated = match &repository.database.pool {
+        DatabasePool::PostgreSql(pool) => sqlx::query(
+            "UPDATE sessions SET last_activity_at = $1, expires_at = $2, csrf_digest = COALESCE($7, csrf_digest), updated_at = $1, version = version + 1 WHERE id = $3 AND version = $4 AND revoked_at IS NULL AND last_activity_at <= $1 AND expires_at > $1 AND absolute_expires_at > $1 AND issued_at = $5 AND absolute_expires_at = $6 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+        )
+        .bind(postgres_time(window.last_activity_at())?)
+        .bind(postgres_time(window.expires_at())?)
+        .bind(id.as_uuid())
+        .bind(expected_version)
+        .bind(postgres_time(window.issued_at())?)
+        .bind(postgres_time(window.absolute_expires_at())?)
+        .bind(csrf_digest.map(TokenDigest::expose_for_persistence))
+        .fetch_optional(pool)
+        .await
+        .map_err(map_sqlx_error)?
+        .map(|row| session_from_postgres(&row))
+        .transpose()?,
+        DatabasePool::Sqlite(pool) => sqlx::query(
+            "UPDATE sessions SET last_activity_at = ?1, expires_at = ?2, csrf_digest = COALESCE(?7, csrf_digest), updated_at = ?1, version = version + 1 WHERE id = ?3 AND version = ?4 AND revoked_at IS NULL AND last_activity_at <= ?1 AND expires_at > ?1 AND absolute_expires_at > ?1 AND issued_at = ?5 AND absolute_expires_at = ?6 RETURNING id, organization_id, user_id, issued_at, last_activity_at, expires_at, absolute_expires_at, revoked_at, created_at, updated_at, version",
+        )
+        .bind(window.last_activity_at().unix_micros())
+        .bind(window.expires_at().unix_micros())
+        .bind(id.to_string())
+        .bind(expected_version)
+        .bind(window.issued_at().unix_micros())
+        .bind(window.absolute_expires_at().unix_micros())
+        .bind(csrf_digest.map(TokenDigest::expose_for_persistence))
+        .fetch_optional(pool)
+        .await
+        .map_err(map_sqlx_error)?
+        .map(|row| session_from_sqlite(&row))
+        .transpose()?,
+    };
+    classify_session_update(repository, id, updated).await
 }
 
 async fn classify_session_update(
@@ -947,6 +992,32 @@ async fn classify_recovery_update(
         Ok(_) => Err(RepositoryError::VersionConflict),
         Err(RepositoryError::NotFound) => Err(RepositoryError::NotFound),
         Err(error) => Err(error),
+    }
+}
+
+#[async_trait]
+impl AuthenticationRepository for SqlxRepository {
+    async fn local_authentication_context(
+        &self,
+    ) -> Result<LocalAuthenticationContext, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => local_authentication_from_postgres(
+                &sqlx::query(
+                    "SELECT m.organization_id, p.id AS project_id, m.id AS membership_id, m.role, u.id, u.normalized_username, u.display_name, u.created_at, u.updated_at, u.version, c.password_hash FROM users u JOIN local_credentials c ON c.user_id = u.id JOIN memberships m ON m.user_id = u.id JOIN projects p ON p.organization_id = m.organization_id AND (p.id = m.project_id OR (m.project_id IS NULL AND p.slug = 'default')) ORDER BY u.created_at, u.id, p.created_at LIMIT 1",
+                )
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => local_authentication_from_sqlite(
+                &sqlx::query(
+                    "SELECT m.organization_id, p.id AS project_id, m.id AS membership_id, m.role, u.id, u.normalized_username, u.display_name, u.created_at, u.updated_at, u.version, c.password_hash FROM users u JOIN local_credentials c ON c.user_id = u.id JOIN memberships m ON m.user_id = u.id JOIN projects p ON p.organization_id = m.organization_id AND (p.id = m.project_id OR (m.project_id IS NULL AND p.slug = 'default')) ORDER BY u.created_at, u.id, p.created_at LIMIT 1",
+                )
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
     }
 }
 
@@ -1461,6 +1532,47 @@ fn project_from_sqlite(row: &SqliteRow) -> Result<Project, RepositoryError> {
         created_at: timestamp_from_sqlite(row, "created_at")?,
         updated_at: timestamp_from_sqlite(row, "updated_at")?,
         version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn local_authentication_from_postgres(
+    row: &PgRow,
+) -> Result<LocalAuthenticationContext, RepositoryError> {
+    Ok(LocalAuthenticationContext {
+        organization_id: OrganizationId::from_uuid(
+            row.try_get("organization_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        project_id: ProjectId::from_uuid(row.try_get("project_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        membership_id: MembershipId::from_uuid(
+            row.try_get("membership_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        role: Role::from_str(row.try_get("role").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        user: local_user_from_postgres(row)?,
+        password_hash: PasswordHash::from_persistence(
+            row.try_get("password_hash").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+    })
+}
+
+fn local_authentication_from_sqlite(
+    row: &SqliteRow,
+) -> Result<LocalAuthenticationContext, RepositoryError> {
+    Ok(LocalAuthenticationContext {
+        organization_id: parse_id(row, "organization_id")?,
+        project_id: parse_id(row, "project_id")?,
+        membership_id: parse_id(row, "membership_id")?,
+        role: Role::from_str(row.try_get("role").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        user: local_user_from_sqlite(row)?,
+        password_hash: PasswordHash::from_persistence(
+            row.try_get("password_hash").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
     })
 }
 

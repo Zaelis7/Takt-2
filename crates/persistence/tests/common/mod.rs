@@ -2,18 +2,18 @@
 
 use std::{
     error::Error,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::atomic::{AtomicI64, AtomicU64, Ordering},
 };
 
 use takt_application::{
-    ApplicationError, Argon2idConfig, AuditRepository, BootstrapService, BootstrapStatus, Clock,
-    CompleteRecoveryPlan, CreateRecoveryPlan, CreateSessionPlan, IdGenerator, LocalUserRepository,
-    MembershipRepository, NewAuditEvent, NewBrowserSession, NewLocalUser, NewMembership,
-    NewOrganization, NewProject, NewRecoveryToken, OrganizationRepository, PasswordHash,
-    PasswordHasher, PasswordHashing, ProjectRepository, RECOVERY_COMPLETED_AUDIT_ACTION,
-    RECOVERY_ISSUED_AUDIT_ACTION, RecoveryRepository, RepositoryError, RevokeSessionPlan,
-    SESSION_CREATED_AUDIT_ACTION, SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest,
-    ValidationError,
+    ApplicationError, Argon2idConfig, AuditRepository, AuthenticationError, BootstrapService,
+    BootstrapStatus, BrowserAuthenticationService, Clock, CompleteRecoveryPlan, CreateRecoveryPlan,
+    CreateSessionPlan, IdGenerator, LocalUserRepository, MembershipRepository, NewAuditEvent,
+    NewBrowserSession, NewLocalUser, NewMembership, NewOrganization, NewProject, NewRecoveryToken,
+    OpaqueToken, OrganizationRepository, PasswordHash, PasswordHasher, PasswordHashing,
+    ProjectRepository, RECOVERY_COMPLETED_AUDIT_ACTION, RECOVERY_ISSUED_AUDIT_ACTION,
+    RecoveryRepository, RepositoryError, RevokeSessionPlan, SESSION_CREATED_AUDIT_ACTION,
+    SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest, TokenGenerator, ValidationError,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId, OperationId,
@@ -46,6 +46,9 @@ pub fn assert_persisted_session_is_redacted(stored: &str, audit_metadata: &str) 
     ] {
         assert!(!audit_metadata.contains(secret));
     }
+    for suffix in 50_002..=50_009 {
+        assert!(!stored.contains(&format!("{suffix:064x}")));
+    }
     assert!(!stored.contains(TEST_RAW_SESSION_TOKEN) && !stored.contains(TEST_RAW_CSRF_TOKEN));
 }
 
@@ -70,6 +73,26 @@ pub fn assert_replacement_password_hash(encoded: &str) -> Result<(), Box<dyn Err
 }
 
 pub struct FixedClock;
+
+pub struct MutableClock(AtomicI64);
+
+impl MutableClock {
+    pub fn new(now: UtcTimestamp) -> Self {
+        Self(AtomicI64::new(now.unix_micros()))
+    }
+
+    pub fn set(&self, now: UtcTimestamp) {
+        self.0.store(now.unix_micros(), Ordering::Relaxed);
+    }
+}
+
+impl Clock for MutableClock {
+    fn now(&self) -> Result<UtcTimestamp, ApplicationError> {
+        Ok(UtcTimestamp::from_unix_micros(
+            self.0.load(Ordering::Relaxed),
+        ))
+    }
+}
 
 pub struct TestPasswordHasher(PasswordHasher);
 
@@ -111,6 +134,13 @@ impl IdGenerator for SequenceIds {
         let suffix = self.0.fetch_add(1, Ordering::Relaxed);
         ResourceId::parse(&format!("019b0000-0000-7000-8000-{suffix:012x}"))
             .map_err(|_| ApplicationError::IdGeneration)
+    }
+}
+
+impl TokenGenerator for SequenceIds {
+    fn generate(&self) -> Result<OpaqueToken, AuthenticationError> {
+        let suffix = self.0.fetch_add(1, Ordering::Relaxed);
+        OpaqueToken::from_client_input(format!("{suffix:064x}")).map_err(Into::into)
     }
 }
 
@@ -993,6 +1023,98 @@ pub async fn run_recovery_repository_contract(
         "exactly one concurrent recovery completion must succeed"
     );
 
+    Ok(())
+}
+
+// PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005: both engines execute this exact
+// framework-free authentication, rotation, CSRF, expiry and audit contract.
+pub async fn run_browser_authentication_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let hasher = TestPasswordHasher::new();
+    let dummy = hasher.hash("dummy credential password").await?;
+    let ids = SequenceIds::new(50_000);
+    let clock = MutableClock::new(TEST_NOW);
+    let service = BrowserAuthenticationService::new(
+        repository,
+        &hasher,
+        &clock,
+        &ids,
+        &ids,
+        dummy,
+        SessionPolicy::default(),
+    );
+    let request_id = OperationId::from_resource_id(resource_id(50_100)?);
+    let username = "contract.admin";
+    let password = TEST_REPLACEMENT_PASSWORD;
+    assert_eq!(
+        service.login("missing.user", password, request_id).await,
+        Err(AuthenticationError::InvalidCredentials)
+    );
+    assert_eq!(
+        service
+            .login(username, "wrong horse battery", request_id)
+            .await,
+        Err(AuthenticationError::InvalidCredentials)
+    );
+
+    let login = service.login(username, password, request_id).await?;
+    let session_token = login.session_token.expose_to_client().to_owned();
+    let login_csrf = login
+        .authentication
+        .csrf_token
+        .expose_to_client()
+        .to_owned();
+    assert_ne!(session_token, login_csrf);
+
+    let current = service.current_session(&session_token).await?;
+    let current_csrf = current.csrf_token.expose_to_client().to_owned();
+    assert_ne!(login_csrf, current_csrf);
+    assert_eq!(
+        service
+            .logout(&session_token, &login_csrf, request_id)
+            .await,
+        Err(AuthenticationError::CsrfFailed)
+    );
+    assert_eq!(
+        repository
+            .session_by_token_digest(&TokenDigest::from_raw_token(&session_token)?)
+            .await?
+            .revoked_at,
+        None
+    );
+    service
+        .logout(&session_token, &current_csrf, request_id)
+        .await?;
+    assert_eq!(
+        service.current_session(&session_token).await,
+        Err(AuthenticationError::Unauthenticated)
+    );
+
+    let rotated = service.login(username, password, request_id).await?;
+    assert_ne!(rotated.session_token.expose_to_client(), session_token);
+    clock.set(rotated.authentication.session.window.expires_at());
+    assert_eq!(
+        service
+            .current_session(rotated.session_token.expose_to_client())
+            .await,
+        Err(AuthenticationError::Unauthenticated)
+    );
+    let organization_id = rotated.authentication.session.organization_id;
+    let audit = format!(
+        "{:?}",
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+    );
+    for secret in [
+        TEST_REPLACEMENT_PASSWORD,
+        session_token.as_str(),
+        login_csrf.as_str(),
+        current_csrf.as_str(),
+    ] {
+        assert!(!audit.contains(secret));
+    }
     Ok(())
 }
 

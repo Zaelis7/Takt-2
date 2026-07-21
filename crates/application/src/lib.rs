@@ -14,11 +14,13 @@ use argon2::{
     },
 };
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use takt_domain::{
-    AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, Membership, MembershipId,
-    OperationId, Organization, OrganizationId, Project, ProjectId, RecoveryToken, RecoveryTokenId,
-    ResourceId, Role, SessionId, UserId, UtcTimestamp,
-    session::{BrowserSession, SessionWindow},
+    AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
+    MembershipId, OperationId, Organization, OrganizationId, Project, ProjectId, RecoveryToken,
+    RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
+    session::{BrowserSession, CsrfProof, SessionPolicy, SessionWindow},
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -56,6 +58,7 @@ pub enum ValidationError {
     PasswordHashFailed,
     InvalidPasswordHash,
     InvalidTokenDigest,
+    InvalidOpaqueToken,
 }
 
 impl fmt::Display for ValidationError {
@@ -70,6 +73,7 @@ impl fmt::Display for ValidationError {
             Self::PasswordHashFailed => "password hashing failed",
             Self::InvalidPasswordHash => "stored password hash is invalid",
             Self::InvalidTokenDigest => "token digest must be a lowercase SHA-256 value",
+            Self::InvalidOpaqueToken => "opaque token must be 32-512 visible ASCII bytes",
         };
         formatter.write_str(message)
     }
@@ -159,6 +163,23 @@ impl TokenDigest {
         Ok(Self(Zeroizing::new(format!("sha256:{value}"))))
     }
 
+    pub fn from_raw_token(value: &str) -> Result<Self, ValidationError> {
+        OpaqueToken::validate(value)?;
+        Self::from_sha256_hex(&format!("{:x}", Sha256::digest(value.as_bytes())))
+    }
+
+    pub fn from_persistence(value: String) -> Result<Self, ValidationError> {
+        value
+            .strip_prefix("sha256:")
+            .ok_or(ValidationError::InvalidTokenDigest)
+            .and_then(Self::from_sha256_hex)
+    }
+
+    #[must_use]
+    pub fn constant_time_eq(&self, other: &Self) -> bool {
+        self.0.as_bytes().ct_eq(other.0.as_bytes()).into()
+    }
+
     /// Exposes the digest, never the token, only to a persistence adapter.
     #[must_use]
     pub fn expose_for_persistence(&self) -> &str {
@@ -169,6 +190,50 @@ impl TokenDigest {
 impl fmt::Debug for TokenDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("TokenDigest([REDACTED])")
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct OpaqueToken(Zeroizing<String>);
+
+impl OpaqueToken {
+    pub fn from_client_input(value: String) -> Result<Self, ValidationError> {
+        Self::validate(&value)?;
+        Ok(Self(Zeroizing::new(value)))
+    }
+
+    fn validate(value: &str) -> Result<(), ValidationError> {
+        if !(32..=512).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_graphic())
+        {
+            return Err(ValidationError::InvalidOpaqueToken);
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn expose_to_client(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl fmt::Debug for OpaqueToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("OpaqueToken([REDACTED])")
+    }
+}
+
+pub trait TokenGenerator: Send + Sync {
+    fn generate(&self) -> Result<OpaqueToken, AuthenticationError>;
+}
+
+pub struct SecureTokenGenerator;
+
+impl TokenGenerator for SecureTokenGenerator {
+    fn generate(&self) -> Result<OpaqueToken, AuthenticationError> {
+        let mut bytes = [0_u8; 32];
+        getrandom::fill(&mut bytes).map_err(|_| AuthenticationError::TokenGeneration)?;
+        let encoded = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        OpaqueToken::from_client_input(encoded).map_err(Into::into)
     }
 }
 
@@ -259,6 +324,7 @@ pub const SESSION_CREATED_AUDIT_ACTION: &str = "auth.session.created";
 pub const SESSION_REVOKED_AUDIT_ACTION: &str = "auth.session.revoked";
 pub const RECOVERY_ISSUED_AUDIT_ACTION: &str = "auth.recovery.issued";
 pub const RECOVERY_COMPLETED_AUDIT_ACTION: &str = "auth.recovery.completed";
+pub const LOGIN_FAILED_AUDIT_ACTION: &str = "auth.login.failed";
 
 #[derive(Clone, Debug)]
 pub struct NewBrowserSession {
@@ -421,6 +487,17 @@ pub trait SessionRepository: Send + Sync {
         expected_version: i64,
         window: SessionWindow,
     ) -> Result<BrowserSession, RepositoryError>;
+    async fn refresh_session_and_rotate_csrf(
+        &self,
+        id: SessionId,
+        expected_version: i64,
+        window: SessionWindow,
+        csrf_digest: TokenDigest,
+    ) -> Result<BrowserSession, RepositoryError>;
+    async fn csrf_digest_by_session_id(
+        &self,
+        id: SessionId,
+    ) -> Result<TokenDigest, RepositoryError>;
     async fn revoke_session(
         &self,
         plan: RevokeSessionPlan,
@@ -441,6 +518,23 @@ pub trait RecoveryRepository: Send + Sync {
         &self,
         plan: CompleteRecoveryPlan,
     ) -> Result<RecoveryToken, RepositoryError>;
+}
+
+#[async_trait]
+pub trait AuthenticationRepository: SessionRepository + AuditRepository {
+    async fn local_authentication_context(
+        &self,
+    ) -> Result<LocalAuthenticationContext, RepositoryError>;
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalAuthenticationContext {
+    pub organization_id: OrganizationId,
+    pub project_id: ProjectId,
+    pub membership_id: MembershipId,
+    pub role: Role,
+    pub user: LocalUser,
+    pub password_hash: PasswordHash,
 }
 
 #[derive(Clone, Debug)]
@@ -561,6 +655,344 @@ impl From<RepositoryError> for ApplicationError {
     fn from(value: RepositoryError) -> Self {
         Self::Repository(value)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuthenticationError {
+    Validation(ValidationError),
+    InvalidCredentials,
+    Unauthenticated,
+    CsrfFailed,
+    Repository(RepositoryError),
+    Clock,
+    IdGeneration,
+    TokenGeneration,
+}
+
+impl fmt::Display for AuthenticationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Validation(error) => error.fmt(formatter),
+            Self::InvalidCredentials => formatter.write_str("authentication failed"),
+            Self::Unauthenticated => formatter.write_str("authentication failed"),
+            Self::CsrfFailed => formatter.write_str("CSRF verification failed"),
+            Self::Repository(error) => error.fmt(formatter),
+            Self::Clock => formatter.write_str("system clock cannot produce a UTC timestamp"),
+            Self::IdGeneration => formatter.write_str("UUIDv7 generation failed"),
+            Self::TokenGeneration => formatter.write_str("secure token generation failed"),
+        }
+    }
+}
+
+impl Error for AuthenticationError {}
+
+impl From<ValidationError> for AuthenticationError {
+    fn from(value: ValidationError) -> Self {
+        Self::Validation(value)
+    }
+}
+
+impl From<RepositoryError> for AuthenticationError {
+    fn from(value: RepositoryError) -> Self {
+        Self::Repository(value)
+    }
+}
+
+impl From<ApplicationError> for AuthenticationError {
+    fn from(value: ApplicationError) -> Self {
+        match value {
+            ApplicationError::Validation(error) => Self::Validation(error),
+            ApplicationError::Repository(error) => Self::Repository(error),
+            ApplicationError::Clock => Self::Clock,
+            ApplicationError::IdGeneration => Self::IdGeneration,
+            ApplicationError::Conflict => Self::Repository(RepositoryError::VersionConflict),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrowserAuthentication {
+    pub session: BrowserSession,
+    pub user: LocalUser,
+    pub role: Role,
+    pub csrf_token: OpaqueToken,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrowserLogin {
+    pub authentication: BrowserAuthentication,
+    pub session_token: OpaqueToken,
+}
+
+pub struct BrowserAuthenticationService<'a, R, H, C, I, T> {
+    repository: &'a R,
+    password_hasher: &'a H,
+    clock: &'a C,
+    ids: &'a I,
+    tokens: &'a T,
+    dummy_password_hash: PasswordHash,
+    policy: SessionPolicy,
+}
+
+impl<'a, R, H, C, I, T> BrowserAuthenticationService<'a, R, H, C, I, T>
+where
+    R: AuthenticationRepository,
+    H: PasswordHashing,
+    C: Clock,
+    I: IdGenerator,
+    T: TokenGenerator,
+{
+    #[must_use]
+    pub const fn new(
+        repository: &'a R,
+        password_hasher: &'a H,
+        clock: &'a C,
+        ids: &'a I,
+        tokens: &'a T,
+        dummy_password_hash: PasswordHash,
+        policy: SessionPolicy,
+    ) -> Self {
+        Self {
+            repository,
+            password_hasher,
+            clock,
+            ids,
+            tokens,
+            dummy_password_hash,
+            policy,
+        }
+    }
+
+    pub async fn login(
+        &self,
+        username: &str,
+        password: &str,
+        request_id: OperationId,
+    ) -> Result<BrowserLogin, AuthenticationError> {
+        let username = normalize_local_username(username)?;
+        let context = self.repository.local_authentication_context().await?;
+        let known_user = context.user.normalized_username == username;
+        let password_hash = if known_user {
+            &context.password_hash
+        } else {
+            &self.dummy_password_hash
+        };
+        let verified = self.password_hasher.verify(password, password_hash).await?;
+        let now = self.clock.now()?;
+        if !known_user || !verified {
+            let audit_id = AuditEventId::from_resource_id(self.ids.next_resource_id()?);
+            self.repository
+                .append_audit_event(authentication_audit(
+                    &context,
+                    audit_id,
+                    request_id,
+                    LOGIN_FAILED_AUDIT_ACTION,
+                    "authentication",
+                    context.organization_id.as_uuid(),
+                    None,
+                    now,
+                )?)
+                .await?;
+            return Err(AuthenticationError::InvalidCredentials);
+        }
+
+        let session_token = self.tokens.generate()?;
+        let csrf_token = self.tokens.generate()?;
+        let session_id = SessionId::from_resource_id(self.ids.next_resource_id()?);
+        let audit_id = AuditEventId::from_resource_id(self.ids.next_resource_id()?);
+        let session = self
+            .repository
+            .create_session(CreateSessionPlan {
+                session: NewBrowserSession {
+                    id: session_id,
+                    organization_id: context.organization_id,
+                    user_id: context.user.id,
+                    window: SessionWindow::issue(now, self.policy)
+                        .map_err(|_| AuthenticationError::Clock)?,
+                    token_digest: TokenDigest::from_raw_token(session_token.expose_to_client())?,
+                    csrf_digest: TokenDigest::from_raw_token(csrf_token.expose_to_client())?,
+                },
+                audit_event: authentication_audit(
+                    &context,
+                    audit_id,
+                    request_id,
+                    SESSION_CREATED_AUDIT_ACTION,
+                    "session",
+                    session_id.as_uuid(),
+                    Some(context.user.id),
+                    now,
+                )?,
+            })
+            .await?;
+        Ok(BrowserLogin {
+            authentication: browser_authentication(&context, session, csrf_token)?,
+            session_token,
+        })
+    }
+
+    pub async fn current_session(
+        &self,
+        session_token: &str,
+    ) -> Result<BrowserAuthentication, AuthenticationError> {
+        let digest = TokenDigest::from_raw_token(session_token)
+            .map_err(|_| AuthenticationError::Unauthenticated)?;
+        let session = self
+            .repository
+            .session_by_token_digest(&digest)
+            .await
+            .map_err(authentication_repository_error)?;
+        let now = self.clock.now()?;
+        ensure_active(&session, now)?;
+        let context = self.repository.local_authentication_context().await?;
+        ensure_context(&context, &session)?;
+        let csrf_token = self.tokens.generate()?;
+        let window = session
+            .window
+            .record_activity(now, self.policy)
+            .map_err(|_| AuthenticationError::Unauthenticated)?;
+        let refreshed = self
+            .repository
+            .refresh_session_and_rotate_csrf(
+                session.id,
+                session.version,
+                window,
+                TokenDigest::from_raw_token(csrf_token.expose_to_client())?,
+            )
+            .await
+            .map_err(authentication_repository_error)?;
+        browser_authentication(&context, refreshed, csrf_token)
+    }
+
+    pub async fn logout(
+        &self,
+        session_token: &str,
+        csrf_token: &str,
+        request_id: OperationId,
+    ) -> Result<(), AuthenticationError> {
+        let token_digest = TokenDigest::from_raw_token(session_token)
+            .map_err(|_| AuthenticationError::Unauthenticated)?;
+        let session = self
+            .repository
+            .session_by_token_digest(&token_digest)
+            .await
+            .map_err(authentication_repository_error)?;
+        let now = self.clock.now()?;
+        ensure_active(&session, now)?;
+        let supplied_csrf =
+            TokenDigest::from_raw_token(csrf_token).map_err(|_| AuthenticationError::CsrfFailed)?;
+        let stored_csrf = self
+            .repository
+            .csrf_digest_by_session_id(session.id)
+            .await
+            .map_err(authentication_repository_error)?;
+        let proof = if stored_csrf.constant_time_eq(&supplied_csrf) {
+            CsrfProof::VerifiedForCurrentSession
+        } else {
+            CsrfProof::InvalidOrFromAnotherSession
+        };
+        session
+            .window
+            .authorize_browser_write(now, proof)
+            .map_err(|_| AuthenticationError::CsrfFailed)?;
+        let context = self.repository.local_authentication_context().await?;
+        ensure_context(&context, &session)?;
+        let audit_id = AuditEventId::from_resource_id(self.ids.next_resource_id()?);
+        self.repository
+            .revoke_session(RevokeSessionPlan {
+                session_id: session.id,
+                expected_version: session.version,
+                revoked_at: now,
+                audit_event: authentication_audit(
+                    &context,
+                    audit_id,
+                    request_id,
+                    SESSION_REVOKED_AUDIT_ACTION,
+                    "session",
+                    session.id.as_uuid(),
+                    Some(session.user_id),
+                    now,
+                )?,
+            })
+            .await
+            .map_err(authentication_repository_error)?;
+        Ok(())
+    }
+}
+
+fn ensure_active(session: &BrowserSession, now: UtcTimestamp) -> Result<(), AuthenticationError> {
+    if session.revoked_at.is_some() || session.window.expiry_at(now).is_some() {
+        Err(AuthenticationError::Unauthenticated)
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_context(
+    context: &LocalAuthenticationContext,
+    session: &BrowserSession,
+) -> Result<(), AuthenticationError> {
+    if context.organization_id == session.organization_id && context.user.id == session.user_id {
+        Ok(())
+    } else {
+        Err(AuthenticationError::Unauthenticated)
+    }
+}
+
+fn browser_authentication(
+    context: &LocalAuthenticationContext,
+    session: BrowserSession,
+    csrf_token: OpaqueToken,
+) -> Result<BrowserAuthentication, AuthenticationError> {
+    ensure_context(context, &session)?;
+    Ok(BrowserAuthentication {
+        session,
+        user: context.user.clone(),
+        role: context.role,
+        csrf_token,
+    })
+}
+
+fn authentication_repository_error(error: RepositoryError) -> AuthenticationError {
+    match error {
+        RepositoryError::NotFound | RepositoryError::VersionConflict => {
+            AuthenticationError::Unauthenticated
+        }
+        other => AuthenticationError::Repository(other),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn authentication_audit(
+    context: &LocalAuthenticationContext,
+    id: AuditEventId,
+    request_id: OperationId,
+    action: &str,
+    resource_type: &str,
+    resource_id: uuid::Uuid,
+    actor_id: Option<UserId>,
+    occurred_at: UtcTimestamp,
+) -> Result<NewAuditEvent, AuthenticationError> {
+    Ok(NewAuditEvent {
+        event: AuditEvent {
+            id,
+            organization_id: context.organization_id,
+            project_id: Some(context.project_id),
+            actor_type: AuditActorType::System,
+            actor_id,
+            action: action.to_owned(),
+            resource_type: resource_type.to_owned(),
+            resource_id: ResourceId::from_uuid(resource_id)
+                .map_err(|_| AuthenticationError::IdGeneration)?,
+            request_id,
+            metadata: BootstrapAuditMetadata {
+                organization_id: context.organization_id,
+                project_id: context.project_id,
+                user_id: context.user.id,
+                membership_id: context.membership_id,
+            },
+            occurred_at,
+        },
+    })
 }
 
 pub struct BootstrapService<'a, R, H, C, I> {

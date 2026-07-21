@@ -1,6 +1,9 @@
 #![forbid(unsafe_code)]
 
-use takt_application::{Argon2idConfig, PasswordHasher, TokenDigest, normalize_local_username};
+use takt_application::{
+    Argon2idConfig, PasswordHasher, SecureTokenGenerator, TokenDigest, TokenGenerator,
+    normalize_local_username,
+};
 
 // PRD-IAM-001 / PRD-NFR-010: the local identity boundary is deterministic and
 // rejects unsafe values before persistence is attempted.
@@ -49,4 +52,10 @@ fn prd_iam_001_token_digests_are_typed_and_redacted() {
     assert_eq!(format!("{digest:?}"), "TokenDigest([REDACTED])");
     assert!(TokenDigest::from_sha256_hex("short").is_err());
     assert!(TokenDigest::from_sha256_hex(&hex.to_ascii_uppercase()).is_err());
+    let generator = SecureTokenGenerator;
+    let first = generator.generate().expect("OS randomness is available");
+    let second = generator.generate().expect("OS randomness is available");
+    assert_eq!(first.expose_to_client().len(), 64);
+    assert_ne!(first, second);
+    assert_eq!(format!("{first:?}"), "OpaqueToken([REDACTED])");
 }

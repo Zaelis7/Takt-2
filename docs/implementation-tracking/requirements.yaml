@@ -317,7 +317,8 @@ requirements:
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
-    note: Local owner bootstrap, credentials, browser-auth rules and engine-parity session/recovery persistence exist; HTTP runtime plus API-token contract/runtime and scopes remain absent (SPEC-003).
+      - docs/implementation-evidence/iam-016-auth-application.md
+    note: Local owner bootstrap, credentials, browser-auth orchestration and engine-parity session/recovery persistence exist; HTTP runtime plus API-token contract/runtime and scopes remain absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -346,7 +347,8 @@ requirements:
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
-    note: Session and recovery persistence carry typed organization/user context, but no resource API performs server-side authorization.
+      - docs/implementation-evidence/iam-016-auth-application.md
+    note: Browser-auth use cases enforce typed organization/user context, but no resource API performs server-side authorization.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -359,7 +361,8 @@ requirements:
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
-    note: Bootstrap, session creation/revoke and recovery issue/complete write append-only redacted audit events; full action coverage, export and tamper evidence are absent.
+      - docs/implementation-evidence/iam-016-auth-application.md
+    note: Bootstrap, login failure/success, logout and recovery write append-only redacted audit events; full action coverage, export and tamper evidence are absent.
 
   - id: PRD-DATA-001
     release: "0.1"

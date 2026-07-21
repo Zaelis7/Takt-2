@@ -9,6 +9,9 @@ license.workspace = true
 [dependencies]
 argon2.workspace = true
 async-trait.workspace = true
+getrandom.workspace = true
+sha2.workspace = true
+subtle.workspace = true
 takt-domain = { path = "../domain", version = "=0.0.0" }
 uuid.workspace = true
 zeroize.workspace = true

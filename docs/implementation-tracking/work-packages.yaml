@@ -442,12 +442,52 @@ packages:
       - Gemeinsame Repository-Suite beider Engines
       - Migration-, Redaction-, Replay- und Rollback-Tests
 
+  - id: IAM-016
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-015, IAM-014]
+    outcome: Frameworkfreie lokale Authentifizierungsorchestrierung mit Credential-Prüfung, Tokenrotation, Session-Aktivität, konstantzeitlicher CSRF-Prüfung und Auditwirkung.
+    preflight:
+      in_scope:
+        - Typisierte Application-Use-Cases für lokalen Login, aktuelle Browser-Session und CSRF-geschützten Logout mit generischen Authentifizierungsfehlern.
+        - Kryptografisch zufällige 256-Bit-Session-/CSRF-Werte, SHA-256-Hashgrenze, redigierte Secret-Typen und konstantzeitlicher Digestvergleich.
+        - Engine-paritäre Credential-/CSRF-Lookups über bestehende Session-, Identity- und Audit-Repositories.
+        - Test-first Vertragsfälle für unbekannten Nutzer/falsches Passwort, Rotation, Ablauf, CSRF, Logout, Audit und Secret-Redaktion.
+      out_of_scope:
+        - HTTP-Routen, Cookie-Serialisierung, Problem Details, Client-IP-Ermittlung und Rate Limits; diese verbleiben in IAM-012.
+        - Recovery-Auslieferung/-HTTP-Orchestrierung und lokaler Recovery-CLI-Vertrag.
+        - API-Token-Vertrag/-Runtime, Permission Engine, OIDC und UI.
+      affected_artifacts:
+        - Cargo.toml
+        - Cargo.lock
+        - crates/application/Cargo.toml
+        - crates/application/src/lib.rs
+        - crates/persistence/src/repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-016-auth-application.md
+      estimated_handwritten_lines: 800
+      estimated_validation_minutes: 25
+    acceptance:
+      - Unbekannter Nutzer und falsches Passwort liefern denselben typisierten Fehler und persistieren ausschließlich redigiertes Failure-Audit.
+      - Jeder erfolgreiche Login erzeugt neue 256-Bit-Werte und persistiert ausschließlich deren Digests.
+      - Abgelaufene/widerrufene Sessions und falsche CSRF-Werte autorisieren keinen Logout; ein gültiger Logout revokiert mit Audit atomar.
+    evidence:
+      - Gemeinsame Application-/Repository-Suite beider Engines
+      - Negative Auth-, CSRF-, Ablauf-, Rotation- und Secret-Redaction-Tests
+
   - id: IAM-012
     release: "0.1"
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: []
-    depends_on: [IAM-015, IAM-014]
+    depends_on: [IAM-016]
     outcome: Login-/Logout-/Session-HTTP-Pfad mit sicherem Cookie, CSRF und Rate Limit.
     acceptance:
       - Login rotiert die Session und verrät nicht, ob ein Nutzer existiert.

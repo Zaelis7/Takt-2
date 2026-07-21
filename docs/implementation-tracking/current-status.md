@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `a8df4b9960726278db093703956e1c0bb68831f5`. Der Worktree war zu Beginn von `IAM-014` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `eeaf1e1`. Der Worktree war zu Beginn von `IAM-016` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `a8df4b9960726278db093703956e1c0bb68831f5`. Der Worktree war zu
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 19 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 37 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 84 | 15 implemented, 67 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 85 | 16 implemented, 67 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -22,7 +22,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
 | Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header; OpenAPI-Verträge für Browser-Auth/Session/Recovery mit stabilen Auth-Problem-Codes und sieben vollständig kanonisch abgebildete CheckSpecs einschließlich gemeinsamer Netzwerkoptionen | Kein `/api/v1`-Ressourcen- oder Auth-Laufzeitendpunkt, keine AuthN/AuthZ, kein Metrics-Endpunkt, keine Traces |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
-| Domain/Application | Typisierte UUIDv7-IDs einschließlich Session-ID, UTC-Mikrosekunden, Identitäts-/Auditmodelle, Argon2id-Port, redigierter SHA-256-Token-Digest, Session-Lifecycle-Ports sowie deterministische Laufzeit-, Rotation-, Revoke- und CSRF-Regeln | Keine HTTP-/Recovery-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
+| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei | Keine HTTP-/Recovery-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0003`, Identitäts-, Session- und Recovery-Tabellen, gemeinsame Repository-Suiten sowie atomare redigierte Auditwirkung; Tokens/CSRF liegen nur als Digest vor | Kein API-Token, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite oder Retention |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
 | Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
