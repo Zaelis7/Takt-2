@@ -24,7 +24,6 @@ Dieses Verzeichnis ist die verbindliche Spezifikation für eine vollständig AI-
 | `08-roadmap.md` | Lieferumfang und Exit-Kriterien für 0.1, 0.2 und 0.3 |
 | `09-ai-implementation.md` | Arbeitsvertrag für Implementierungs- und Review-Agenten |
 | `10-traceability.md` | Zuordnung der Anforderungen zu Releases und Abnahme |
-| `AGENTS.template.md` | Startvorlage für verbindliche Repository-Anweisungen |
 | `contracts/openapi.yaml` | Maschinenlesbarer HTTP-API-Vertrag |
 | `contracts/takt-config.schema.json` | Schema für deklarative Konfiguration |
 | `contracts/probe.proto` | Maschinenlesbarer Vertrag zwischen Server und Probe |

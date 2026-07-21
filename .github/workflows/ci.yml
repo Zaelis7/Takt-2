@@ -64,6 +64,7 @@ jobs:
       - name: Check architecture and generated-code drift
         run: |
           pnpm check:architecture
+          pnpm check:spec-index
           pnpm check:tracking
           pnpm check:generated
           pnpm check:secrets

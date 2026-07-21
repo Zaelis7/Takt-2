@@ -76,7 +76,7 @@ findings:
     resolution: SPEC-013 defines and tests the normative per-kind mapping across all seven variants. SPEC-019 adds the shared proxy, resolver and address-family schemas, exact applicability, SecretRef-to-ephemeral-key boundary, positive and negative golden fixtures and generated-type drift checks. Framework-free Rust domain types remain explicitly scoped to MON-011.
 
   - id: SPEC-005
-    status: open
+    status: resolved
     severity: medium
     kind: error
     decision: spec_change
@@ -84,7 +84,7 @@ findings:
     locations:
       - specs/README.md
     affects: []
-    resolution: Add the promised template or remove the index entry in a reviewed specification-only change.
+    resolution: SPEC-014 removed the AGENTS.template.md index row because repository history confirms the file never existed and chapter 09 requires the real root AGENTS.md instead. A CI-enforced index check now validates every literal and glob path listed in the document table and rejects missing or escaping paths.
 
   - id: EVID-001
     status: open

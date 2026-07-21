@@ -213,15 +213,35 @@ packages:
 
   - id: SPEC-014
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: []
     findings: [SPEC-005]
     depends_on: [GOV-001]
     outcome: Korrigierter Spezifikationsindex ohne Verweis auf ein fehlendes Artefakt.
+    preflight:
+      in_scope:
+        - Entfernen des historisch unbelegten AGENTS.template.md-Eintrags aus dem Spezifikationsindex
+        - Maschinenlesbarer Index-Link-Check mit positivem Literal-/Glob-Fall und negativem Missing-Path-Fall
+        - CI-, Finding-, Status- und Evidence-Aktualisierung ohne Produktsemantikänderung
+      out_of_scope:
+        - Erfinden oder Hinzufügen einer nicht spezifizierten AGENTS.template.md
+        - Änderungen an Requirements, Acceptance-Szenarien, OpenAPI, JSON Schema, Proto oder Runtime-Verhalten
+        - Änderungen an Datenbanken, Migrationen, AuthZ, Audit, Secrets oder Observability
+      affected_artifacts:
+        - specs/README.md
+        - tools/check-spec-index.mjs
+        - tools/check-spec-index.test.mjs
+        - package.json
+        - .github/workflows/ci.yml
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/spec-014-index-integrity.md
+      estimated_handwritten_lines: 230
+      estimated_validation_minutes: 15
     acceptance:
       - Jeder in specs/README.md gelistete Pfad existiert.
     evidence:
-      - Index-Link-Check
+      - tools/check-spec-index.test.mjs
+      - docs/implementation-evidence/spec-014-index-integrity.md
 
   - id: QA-001
     release: cross-release
