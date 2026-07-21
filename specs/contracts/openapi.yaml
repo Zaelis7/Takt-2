@@ -100,11 +100,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/Session"
         "400":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/InvalidRequestProblem"
         "401":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/AuthenticationProblem"
         "422":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/ValidationProblem"
         "429":
           $ref: "#/components/responses/RateLimitProblem"
   /api/v1/auth/logout:
@@ -125,9 +125,9 @@ paths:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
         "401":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/AuthenticationProblem"
         "403":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/CsrfProblem"
         "429":
           $ref: "#/components/responses/RateLimitProblem"
   /api/v1/auth/session:
@@ -148,7 +148,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Session"
         "401":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/AuthenticationProblem"
         "429":
           $ref: "#/components/responses/RateLimitProblem"
   /api/v1/auth/recovery/request:
@@ -171,9 +171,9 @@ paths:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
         "400":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/InvalidRequestProblem"
         "422":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/ValidationProblem"
         "429":
           $ref: "#/components/responses/RateLimitProblem"
   /api/v1/auth/recovery/complete:
@@ -195,9 +195,9 @@ paths:
             X-Request-Id:
               $ref: "#/components/headers/RequestId"
         "400":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/RecoveryCompletionProblem"
         "422":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/ValidationProblem"
         "429":
           $ref: "#/components/responses/RateLimitProblem"
   /api/v1/projects/{project_id}/monitors:
@@ -654,6 +654,53 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    InvalidRequestProblem:
+      description: The request body is malformed or contains unknown fields
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/InvalidRequestProblem"
+    AuthenticationProblem:
+      description: Authentication failed without disclosing account or session details
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/AuthenticationProblem"
+    CsrfProblem:
+      description: The session-bound CSRF proof is missing or invalid
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/CsrfProblem"
+    RecoveryCompletionProblem:
+      description: The recovery request is malformed or its token cannot be accepted
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/InvalidRequestProblem"
+              - $ref: "#/components/schemas/RecoveryProblem"
+    ValidationProblem:
+      description: One or more bounded input fields are invalid
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ValidationProblem"
     RateLimitProblem:
       description: Rate limit exceeded
       headers:
@@ -1680,6 +1727,61 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/FieldIssue"
+    InvalidRequestProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 400
+            code:
+              type: string
+              const: invalid_request
+    AuthenticationProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 401
+            code:
+              type: string
+              const: authentication_failed
+    CsrfProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 403
+            code:
+              type: string
+              const: csrf_failed
+    RecoveryProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 400
+            code:
+              type: string
+              const: recovery_failed
+    ValidationProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 422
+            code:
+              type: string
+              const: validation_failed
     RateLimitProblem:
       allOf:
         - $ref: "#/components/schemas/Problem"

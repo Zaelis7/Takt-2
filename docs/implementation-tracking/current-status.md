@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `1f3aa3c62966faba93923dd9d189fcd8929094b2`. Der Worktree enthielt zu Beginn von `SPEC-019` die uncommitted implementierten Änderungen aus `GOV-002`. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `5cb6dace3ec75241205b6ad0ed8b9d133490e8e8`. Der Worktree war zu Beginn von `IAM-010` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `1f3aa3c62966faba93923dd9d189fcd8929094b2`. Der Worktree enthie
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 19 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 37 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 82 | 11 implemented, 69 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 82 | 12 implemented, 68 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -20,9 +20,9 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
-| Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header; OpenAPI-Verträge für Browser-Auth/Session/Recovery und sieben vollständig kanonisch abgebildete CheckSpecs einschließlich gemeinsamer Netzwerkoptionen | Kein `/api/v1`-Ressourcen- oder Auth-Laufzeitendpunkt, keine AuthN/AuthZ, kein Metrics-Endpunkt, keine Traces |
+| Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header; OpenAPI-Verträge für Browser-Auth/Session/Recovery mit stabilen Auth-Problem-Codes und sieben vollständig kanonisch abgebildete CheckSpecs einschließlich gemeinsamer Netzwerkoptionen | Kein `/api/v1`-Ressourcen- oder Auth-Laufzeitendpunkt, keine AuthN/AuthZ, kein Metrics-Endpunkt, keine Traces |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
-| Domain/Application | Typisierte UUIDv7-IDs, UTC-Mikrosekunden, Organisation/Projekt/User/Membership/Audit, injizierte Clock/IDs, Argon2id-Port | Kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
+| Domain/Application | Typisierte UUIDv7-IDs, UTC-Mikrosekunden, Organisation/Projekt/User/Membership/Audit, injizierte Clock/IDs, Argon2id-Port sowie deterministische Session-Laufzeit-, Rotation-, Revoke- und CSRF-Regeln | Keine Session-/Recovery-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migration `0001`, sechs Identitätstabellen, gemeinsame Repository-Suite, atomarer lokaler Admin-Bootstrap, append-only Bootstrap-Audit | Keine Sessions/Tokens, Secrets, Monitore/Revisions, Jobs/Observations/Evaluations, Outbox, Statusseiten oder Retention |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
 | Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
@@ -45,8 +45,8 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 
 ## Empfohlene nächste Reihenfolge
 
-1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren; PostgreSQL 16 muss verfügbar sein.
-2. `IAM-010` bis `IAM-013`: sichere Session-/Token-Grenze fertigstellen, bevor fachliche Schreibendpunkte entstehen.
+1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren; PostgreSQL 16 ist lokal verfügbar, aber der IAM-010-Change ist noch uncommitted.
+2. `IAM-011` bis `IAM-013`: sichere Session-/Token-Grenze fertigstellen, bevor fachliche Schreibendpunkte entstehen.
 3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
 5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.
@@ -62,10 +62,10 @@ Die vollständige Abhängigkeitsfolge bis 0.3 steht in `work-packages.yaml`. Die
 | `pnpm contracts:validate` | Exit 0; OpenAPI/Schema/Proto valide und Gherkin syntaktisch geparst |
 | `pnpm check:architecture` | Exit 0 |
 | `pnpm check:generated` | Exit 0 |
-| `cargo test --workspace --all-features` | Exit 101 am verpflichtenden PostgreSQL-Contract: `TAKT_TEST_POSTGRES_URL` fehlt; alle zuvor gestarteten Suites waren grün |
+| `$env:TAKT_TEST_POSTGRES_URL='postgresql://postgres@127.0.0.1:55432/takt_test'; cargo test --workspace --all-features -- --test-threads=1` | Exit 0; vollständiger Workspace einschließlich echter PostgreSQL-16.9- und SQLite-Verträge grün |
 | `cargo build --workspace --all-features --release --locked` | Exit 0; vollständiger optimierter Workspace-Build grün |
 
-Der Docker-Client ist lokal vorhanden, aber seine Engine läuft nicht; native PostgreSQL-Werkzeuge fehlen. Die PostgreSQL-Aussagen bleiben deshalb `evidence_only` aus der bestehenden Evidence und wurden in dieser Bestandsaufnahme nicht als erneut bestanden gewertet. Der vollständige Workspace-Test ist ausdrücklich **nicht bestanden**, während die separat ausführbaren fokussierten Suites, Clippy und der vollständige Release-Build erfolgreich waren.
+Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief gegen das gepinnte Image `postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7` auf Loopback und bestand ohne Skip. Das ist vollständige lokale Working-Tree-Validation, aber noch keine unabhängige, commit-gebundene oder CI-basierte Freigabe; `EVID-001` bleibt deshalb offen.
 
 ## Abschluss von SPEC-010
 
@@ -98,3 +98,7 @@ Der Docker-Client ist lokal vorhanden, aber seine Engine läuft nicht; native Po
 ## Abschluss von SPEC-014
 
 `SPEC-014` ist `implemented`, nicht `verified`. Der nie vorhandene `AGENTS.template.md`-Eintrag wurde aus `specs/README.md` entfernt; Kapitel 09 und das echte Root-`AGENTS.md` bleiben unverändert. `pnpm check:spec-index` validiert alle 16 verbliebenen Literal- und Globpfade und ist in CI verdrahtet. Positive Literal-/Glob-Fälle sowie fehlende, nicht treffende und aus dem Spec-Paket ausbrechende Pfade sind getestet. `SPEC-005` ist gelöst; keine Requirement-Coverage wurde verändert. Der vollständige Rust-Workspace-Test bleibt mangels PostgreSQL nicht bestanden; Details stehen in `docs/implementation-evidence/spec-014-index-integrity.md`.
+
+## Abschluss von IAM-010
+
+`IAM-010` ist `implemented`, nicht `verified`. Die frameworkfreie Domain bildet die standardmäßigen 12 Stunden Inaktivität und sieben Tage absolute Laufzeit, konfigurierbare validierte Grenzen, Aktivitätsverlängerung ohne Überschreiten des absoluten Ablaufs, Rotation nach Login/Rechteänderung/sensibler Aktion, Revoke bei Logout/Recovery sowie sessiongebundene CSRF-Entscheidungen deterministisch ab. Der OpenAPI-Vertrag verwendet für Auth-Fehler jetzt stabile, generische Codes und unterscheidet Recovery-Tokenfehler nicht nach Existenz, Ablauf oder Einmalverwendung. Sämtliche lokalen Gates einschließlich echtem PostgreSQL 16.9, SQLite, Supply Chain, Frontend, Playwright und Release-Build sind grün. Persistenz und Laufzeit folgen in `IAM-011`/`IAM-012`; unabhängige commit-gebundene Review-/CI-Evidence fehlt weiterhin. Details stehen in `docs/implementation-evidence/iam-010-auth-domain-contract.md`.

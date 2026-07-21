@@ -85,7 +85,7 @@ requirements:
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/contracts/openapi.yaml
@@ -111,7 +111,8 @@ requirements:
       - tools/check-acceptance-bindings.mjs
       - tools/check-acceptance-bindings.test.mjs
       - docs/implementation-evidence/qa-001-acceptance-bindings.md
-    note: OpenAPI lint, generated-type drift, browser-auth, complete cross-contract CheckSpec mapping, the OpenAPI codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
+      - docs/implementation-evidence/iam-010-auth-domain-contract.md
+    note: OpenAPI lint, generated-type drift, browser-auth with stable problem codes, complete cross-contract CheckSpec mapping, the OpenAPI codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
   - id: PRD-API-003
     release: "0.1"
     coverage: none
@@ -129,14 +130,16 @@ requirements:
   - id: PRD-API-005
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - crates/api/src/lib.rs
       - crates/api/tests/health_http.rs
       - tools/openapi-auth-contract.test.mjs
       - docs/implementation-evidence/spec-012-auth-contract.md
-    note: Readiness emits a redacted Problem Details response and auth operations contractually expose bounded Problem responses; the general runtime API error boundary is absent.
+      - specs/contracts/openapi.yaml
+      - docs/implementation-evidence/iam-010-auth-domain-contract.md
+    note: Readiness emits a redacted Problem Details response and auth operations contractually expose bounded Problem responses with stable auth-specific codes; the general runtime API error boundary is absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -299,7 +302,7 @@ requirements:
   - id: PRD-IAM-001
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: gap
     evidence:
       - docs/persistence.md
@@ -308,7 +311,10 @@ requirements:
       - specs/contracts/openapi.yaml
       - tools/openapi-auth-contract.test.mjs
       - docs/implementation-evidence/spec-012-auth-contract.md
-    note: Local owner bootstrap and Argon2id credentials exist, and browser session/recovery contracts are explicit; their runtime plus API-token contract/runtime and scopes are absent (SPEC-003).
+      - crates/domain/src/session.rs
+      - crates/domain/tests/session_policy.rs
+      - docs/implementation-evidence/iam-010-auth-domain-contract.md
+    note: Local owner bootstrap, Argon2id credentials, explicit browser session/recovery contracts and deterministic session lifetime/rotation/revocation/CSRF rules exist; session/recovery persistence and runtime plus API-token contract/runtime and scopes are absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none

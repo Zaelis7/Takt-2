@@ -4,6 +4,8 @@ use std::{error::Error, fmt, str::FromStr};
 
 use uuid::{Uuid, Version};
 
+pub mod session;
+
 /// Error returned when an external value is not a valid Takt resource UUIDv7.
 #[derive(Debug)]
 pub enum ParseResourceIdError {

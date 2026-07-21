@@ -801,6 +801,36 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        InvalidRequestProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            code?: "invalid_request";
+        };
+        AuthenticationProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 401;
+            /** @constant */
+            code?: "authentication_failed";
+        };
+        CsrfProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 403;
+            /** @constant */
+            code?: "csrf_failed";
+        };
+        RecoveryProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            code?: "recovery_failed";
+        };
+        ValidationProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 422;
+            /** @constant */
+            code?: "validation_failed";
+        };
         RateLimitProblem: components["schemas"]["Problem"] & {
             /** @constant */
             code?: "rate_limit_exceeded";
@@ -815,6 +845,56 @@ export interface components {
             };
             content: {
                 "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The request body is malformed or contains unknown fields */
+        InvalidRequestProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["InvalidRequestProblem"];
+            };
+        };
+        /** @description Authentication failed without disclosing account or session details */
+        AuthenticationProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["AuthenticationProblem"];
+            };
+        };
+        /** @description The session-bound CSRF proof is missing or invalid */
+        CsrfProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["CsrfProblem"];
+            };
+        };
+        /** @description The recovery request is malformed or its token cannot be accepted */
+        RecoveryCompletionProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["InvalidRequestProblem"] | components["schemas"]["RecoveryProblem"];
+            };
+        };
+        /** @description One or more bounded input fields are invalid */
+        ValidationProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ValidationProblem"];
             };
         };
         /** @description Rate limit exceeded */
@@ -944,9 +1024,9 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            400: components["responses"]["Problem"];
-            401: components["responses"]["Problem"];
-            422: components["responses"]["Problem"];
+            400: components["responses"]["InvalidRequestProblem"];
+            401: components["responses"]["AuthenticationProblem"];
+            422: components["responses"]["ValidationProblem"];
             429: components["responses"]["RateLimitProblem"];
         };
     };
@@ -971,8 +1051,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            401: components["responses"]["Problem"];
-            403: components["responses"]["Problem"];
+            401: components["responses"]["AuthenticationProblem"];
+            403: components["responses"]["CsrfProblem"];
             429: components["responses"]["RateLimitProblem"];
         };
     };
@@ -995,7 +1075,7 @@ export interface operations {
                     "application/json": components["schemas"]["Session"];
                 };
             };
-            401: components["responses"]["Problem"];
+            401: components["responses"]["AuthenticationProblem"];
             429: components["responses"]["RateLimitProblem"];
         };
     };
@@ -1020,8 +1100,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            400: components["responses"]["Problem"];
-            422: components["responses"]["Problem"];
+            400: components["responses"]["InvalidRequestProblem"];
+            422: components["responses"]["ValidationProblem"];
             429: components["responses"]["RateLimitProblem"];
         };
     };
@@ -1046,8 +1126,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            400: components["responses"]["Problem"];
-            422: components["responses"]["Problem"];
+            400: components["responses"]["RecoveryCompletionProblem"];
+            422: components["responses"]["ValidationProblem"];
             429: components["responses"]["RateLimitProblem"];
         };
     };

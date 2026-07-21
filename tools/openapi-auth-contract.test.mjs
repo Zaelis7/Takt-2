@@ -20,6 +20,17 @@ function responseCodes(value) {
   return new Set(Object.keys(value.responses ?? {}));
 }
 
+function assertResponse(value, status, name) {
+  assert.equal(value.responses[status].$ref, `#/components/responses/${name}`);
+}
+
+function assertProblem(name, status, code) {
+  const schema = contract.components.schemas[name];
+  assert.equal(schema.allOf[0].$ref, "#/components/schemas/Problem");
+  assert.equal(schema.allOf[1].properties.status.const, status);
+  assert.equal(schema.allOf[1].properties.code.const, code);
+}
+
 test("PRD-IAM-001 browser auth operations have explicit security boundaries", () => {
   const login = operation("/api/v1/auth/login", "post");
   const logout = operation("/api/v1/auth/logout", "post");
@@ -102,6 +113,32 @@ test("PRD-IAM-001 browser auth operations have explicit security boundaries", ()
 
   assert.equal(recoveryRequest.responses["202"].content, undefined);
   assert.equal(recoveryRequest.responses["404"], undefined);
+
+  assertResponse(login, "400", "InvalidRequestProblem");
+  assertResponse(login, "401", "AuthenticationProblem");
+  assertResponse(login, "422", "ValidationProblem");
+  assertResponse(logout, "401", "AuthenticationProblem");
+  assertResponse(logout, "403", "CsrfProblem");
+  assertResponse(session, "401", "AuthenticationProblem");
+  assertResponse(recoveryRequest, "400", "InvalidRequestProblem");
+  assertResponse(recoveryRequest, "422", "ValidationProblem");
+  assertResponse(recoveryComplete, "400", "RecoveryCompletionProblem");
+  assertResponse(recoveryComplete, "422", "ValidationProblem");
+
+  assertProblem("InvalidRequestProblem", 400, "invalid_request");
+  assertProblem("AuthenticationProblem", 401, "authentication_failed");
+  assertProblem("CsrfProblem", 403, "csrf_failed");
+  assertProblem("RecoveryProblem", 400, "recovery_failed");
+  assertProblem("ValidationProblem", 422, "validation_failed");
+  assert.deepEqual(
+    contract.components.responses.RecoveryCompletionProblem.content[
+      "application/problem+json"
+    ].schema.oneOf,
+    [
+      { $ref: "#/components/schemas/InvalidRequestProblem" },
+      { $ref: "#/components/schemas/RecoveryProblem" },
+    ],
+  );
 });
 
 test("PRD-IAM-001 auth schemas bound and redact credentials and session identifiers", () => {

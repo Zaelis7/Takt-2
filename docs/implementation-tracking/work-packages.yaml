@@ -279,17 +279,42 @@ packages:
 
   - id: IAM-010
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-001, PRD-API-002, PRD-API-005, PRD-IAM-001]
     findings: [SPEC-003]
     depends_on: [DATA-001, SPEC-012]
     outcome: Reviewte Verträge und Domänenregeln für Login, Logout, Session, Recovery und CSRF.
+    preflight:
+      in_scope:
+        - Reine Domain-Regeln für standardmäßige und konfigurierbare Session-Laufzeiten, Aktivitätsverlängerung, absolute Ablaufgrenze und Security-Event-Wirkung.
+        - Session-gebundene CSRF-Entscheidung für Browser-Schreibzugriffe einschließlich abgelaufener Sitzungen.
+        - Stabile Problem-Codes und explizite Response-Verträge für ungültige, unautorisierte, CSRF-fehlerhafte und zu große Auth-Eingaben.
+        - Fokussierte Domain- und OpenAPI-Contract-Tests sowie Tracking und Implementation Evidence.
+      out_of_scope:
+        - Session-, Recovery- und Token-Persistenz oder neue Migrationen; diese folgen in IAM-011.
+        - Laufzeit-Routen, Cookie-Erzeugung, Rate-Limit-Implementierung, Passwort-Recovery-Auslieferung und Audit-Orchestrierung; diese folgen ab IAM-012.
+        - API-Token-Verträge und Scopes; diese folgen in SPEC-015 und IAM-013.
+        - UI, OIDC, sichtbares Multi-Organization-RBAC und Änderungen an Login-/Recovery-Erfolgssichtbarkeit.
+      affected_artifacts:
+        - crates/domain/src/lib.rs
+        - crates/domain/src/session.rs
+        - crates/domain/tests/session_policy.rs
+        - specs/contracts/openapi.yaml
+        - tools/openapi-auth-contract.test.mjs
+        - web/src/generated/openapi.ts
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-010-auth-domain-contract.md
+      estimated_handwritten_lines: 420
+      estimated_validation_minutes: 25
     acceptance:
       - Cookie-, CSRF-, Rotations-, Ablauf- und generische Login-Fehlerregeln sind vertraglich testbar.
       - Ungültige oder zu große Eingaben liefern stabile Problem Codes.
     evidence:
       - OpenAPI-Contract-Tests für Auth-Operationen
       - Domain-Tests für Session-Laufzeiten und Rotation
+      - docs/implementation-evidence/iam-010-auth-domain-contract.md
 
   - id: IAM-011
     release: "0.1"
