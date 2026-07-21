@@ -6,8 +6,9 @@ use std::{
 };
 
 use takt_application::api_token::{
-    API_TOKEN_CREATED_AUDIT_ACTION, ApiTokenHash, ApiTokenListQuery, ApiTokenStore,
-    CreateApiTokenPlan, NewApiToken, StoredApiToken,
+    API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
+    ApiTokenHash, ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenPatch, ApiTokenStore,
+    CreateApiTokenPlan, NewApiToken, RevokeApiTokenPlan, StoredApiToken, UpdateApiTokenPlan,
 };
 use takt_application::{
     ApplicationError, Argon2idConfig, AuditRepository, AuthenticationError, BootstrapService,
@@ -1190,6 +1191,169 @@ pub async fn run_api_token_repository_contract(
         repository.api_token_by_id(rollback_id).await,
         Err(RepositoryError::NotFound),
         "token insert must roll back with duplicate audit ID"
+    );
+    Ok(())
+}
+
+pub async fn run_api_token_lifecycle_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let first_id = ApiTokenId::from_resource_id(resource_id(60_000)?);
+    let second_id = ApiTokenId::from_resource_id(resource_id(60_010)?);
+    let updated_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 2);
+    let updated = repository
+        .update_api_token(UpdateApiTokenPlan {
+            id: first_id,
+            expected_version: 1,
+            patch: ApiTokenPatch {
+                name: Some("renamed".to_owned()),
+                expires_at: None,
+                ip_networks: Some(vec![]),
+            },
+            now: updated_at,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(60_002)?),
+                first_id,
+                API_TOKEN_UPDATED_AUDIT_ACTION,
+                updated_at,
+            )?,
+        })
+        .await?;
+    assert_eq!((updated.name.as_str(), updated.version), ("renamed", 2));
+    assert!(updated.ip_networks.is_empty());
+    assert_eq!(
+        repository
+            .update_api_token(UpdateApiTokenPlan {
+                id: first_id,
+                expected_version: 1,
+                patch: ApiTokenPatch {
+                    name: Some("stale".to_owned()),
+                    expires_at: None,
+                    ip_networks: None,
+                },
+                now: updated_at,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_003)?),
+                    first_id,
+                    API_TOKEN_UPDATED_AUDIT_ACTION,
+                    updated_at,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+
+    let rollback_time = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 3);
+    assert_eq!(
+        repository
+            .update_api_token(UpdateApiTokenPlan {
+                id: second_id,
+                expected_version: 1,
+                patch: ApiTokenPatch {
+                    name: Some("must-roll-back".to_owned()),
+                    expires_at: None,
+                    ip_networks: None,
+                },
+                now: rollback_time,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_001)?),
+                    second_id,
+                    API_TOKEN_UPDATED_AUDIT_ACTION,
+                    rollback_time,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::AlreadyExists)
+    );
+    assert_eq!(repository.api_token_by_id(second_id).await?.name, "second");
+
+    repository
+        .record_api_token_used(second_id, rollback_time)
+        .await?;
+    let used = repository.api_token_by_id(second_id).await?;
+    assert_eq!((used.last_used_at, used.version), (Some(rollback_time), 2));
+    assert_eq!(
+        repository
+            .record_api_token_used(second_id, rollback_time)
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+    assert_eq!(
+        repository
+            .revoke_api_token(RevokeApiTokenPlan {
+                id: second_id,
+                expected_version: 2,
+                now: rollback_time,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_001)?),
+                    second_id,
+                    API_TOKEN_REVOKED_AUDIT_ACTION,
+                    rollback_time,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::AlreadyExists)
+    );
+    assert_eq!(
+        repository.api_token_by_id(second_id).await?.revoked_at,
+        None
+    );
+
+    let revoked_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 4);
+    let revoked = repository
+        .revoke_api_token(RevokeApiTokenPlan {
+            id: first_id,
+            expected_version: 2,
+            now: revoked_at,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(60_004)?),
+                first_id,
+                API_TOKEN_REVOKED_AUDIT_ACTION,
+                revoked_at,
+            )?,
+        })
+        .await?;
+    assert_eq!(
+        (revoked.status(revoked_at), revoked.version),
+        (ApiTokenStatus::Revoked, 3)
+    );
+    assert_eq!(
+        repository.record_api_token_used(first_id, revoked_at).await,
+        Err(RepositoryError::VersionConflict)
+    );
+    let replay_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 5);
+    assert_eq!(
+        repository
+            .revoke_api_token(RevokeApiTokenPlan {
+                id: first_id,
+                expected_version: 3,
+                now: replay_at,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_005)?),
+                    first_id,
+                    API_TOKEN_REVOKED_AUDIT_ACTION,
+                    replay_at,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+    let after_expiry = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 3_600_000_001);
+    assert_eq!(
+        repository
+            .record_api_token_used(second_id, after_expiry)
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(OrganizationId::from_resource_id(resource_id(1)?))
+            .await?
+            .iter()
+            .filter(|event| event.resource_type == "api_token")
+            .count(),
+        4,
+        "failed, stale and replayed writes must not append audit events"
     );
     Ok(())
 }

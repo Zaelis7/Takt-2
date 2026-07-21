@@ -318,7 +318,7 @@ requirements:
   - id: PRD-IAM-001
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: gap
     evidence:
       - docs/persistence.md
@@ -346,7 +346,8 @@ requirements:
       - migrations/sqlite/0004_api_tokens.sql
       - crates/persistence/src/api_token_repository.rs
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope, create and safe query persistence exist, but lifecycle mutations and HTTP authentication remain absent.
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope and full persistence lifecycle exist, but HTTP CRUD/Bearer authentication remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -367,7 +368,7 @@ requirements:
   - id: PRD-IAM-004
     release: "0.3"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: gap
     evidence:
       - crates/application/src/lib.rs
@@ -386,7 +387,7 @@ requirements:
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
@@ -403,12 +404,13 @@ requirements:
       - docs/implementation-evidence/iam-021-api-token-domain.md
       - crates/persistence/tests/common/mod.rs
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: Existing auth writes audit; API-token secret/hash types redact debug output and token creation is atomically audited, while patch/revoke audit, full action coverage, export and tamper evidence remain absent.
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+    note: Existing auth and all API-token create/patch/revoke writes are atomically audited with redacted metadata; full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: clear
     evidence:
       - specs/acceptance/v0.1.feature
@@ -421,11 +423,12 @@ requirements:
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: Identity, bootstrap, session, recovery and API-token create/query persistence share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+    note: Identity, bootstrap, session, recovery and full API-token persistence share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: clear
     evidence:
       - specs/acceptance/v0.1.feature
@@ -439,11 +442,12 @@ requirements:
       - migrations/postgres/0004_api_tokens.sql
       - migrations/sqlite/0004_api_tokens.sql
       - docs/implementation-evidence/iam-023-api-token-storage.md
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
     note: Four forward/repeated migrations, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
@@ -455,7 +459,8 @@ requirements:
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: Persisted identity, session, recovery and API-token entities use UUIDv7, UTC microseconds and monotonic versions; remaining product entities are not implemented.
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+    note: Persisted identity, session, recovery and API-token entities use UUIDv7, UTC microseconds and optimistically monotonic versions; remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -499,7 +504,7 @@ requirements:
   - id: PRD-NFR-002
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: clear
     evidence:
       - docs/persistence.md
@@ -510,7 +515,8 @@ requirements:
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: PostgreSQL 16 migration, identity, session, recovery and API-token storage evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+    note: PostgreSQL 16 migration, identity, session, recovery and API-token lifecycle evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -532,7 +538,7 @@ requirements:
   - id: PRD-NFR-005
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: focused_local
     spec_health: clear
     evidence:
       - docs/persistence.md
@@ -541,7 +547,8 @@ requirements:
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: Identity, session, recovery and API-token persistence use UTC microseconds; IANA timezone selection and UI display are absent.
+      - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+    note: Identity, session, recovery and API-token persistence use monotonic UTC microseconds; IANA timezone selection and UI display are absent.
   - id: PRD-NFR-006
     release: "0.1"
     coverage: none

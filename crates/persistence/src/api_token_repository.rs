@@ -4,8 +4,10 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteRow};
 use takt_application::api_token::{
-    API_TOKEN_CREATED_AUDIT_ACTION, ApiTokenHash, ApiTokenListQuery, ApiTokenStore,
-    CreateApiTokenPlan, NewApiToken, StoredApiToken, validate_new_api_token,
+    API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
+    ApiTokenHash, ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenPatch, ApiTokenStore,
+    CreateApiTokenPlan, NewApiToken, RevokeApiTokenPlan, StoredApiToken, UpdateApiTokenPlan,
+    validate_new_api_token,
 };
 use takt_application::{NewAuditEvent, RepositoryError};
 use takt_domain::{
@@ -53,6 +55,22 @@ const LIST_SQLITE: &str = concat!(
     "SELECT ",
     token_columns!(),
     " FROM api_tokens WHERE organization_id = ?1 AND (?2 IS NULL OR project_id = ?2) AND (?3 IS NULL OR kind = ?3) AND (?4 IS NULL OR (?4 = 'active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?6)) OR (?4 = 'revoked' AND revoked_at IS NOT NULL) OR (?4 = 'expired' AND revoked_at IS NULL AND expires_at <= ?6)) AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(api_tokens.scopes) WHERE value = ?5)) AND (?7 IS NULL OR created_at < ?7 OR (created_at = ?7 AND id < ?8)) ORDER BY created_at DESC, id DESC LIMIT ?9"
+);
+const UPDATE_PG: &str = concat!(
+    "UPDATE api_tokens SET name = COALESCE($3, name), expires_at = CASE WHEN $4 THEN $5 ELSE expires_at END, ip_networks = COALESCE($6, ip_networks), updated_at = $7, version = version + 1 WHERE id = $1 AND version = $2 AND revoked_at IS NULL AND updated_at <= $7 RETURNING ",
+    token_columns!()
+);
+const UPDATE_SQLITE: &str = concat!(
+    "UPDATE api_tokens SET name = COALESCE(?3, name), expires_at = CASE WHEN ?4 THEN ?5 ELSE expires_at END, ip_networks = COALESCE(?6, ip_networks), updated_at = ?7, version = version + 1 WHERE id = ?1 AND version = ?2 AND revoked_at IS NULL AND updated_at <= ?7 RETURNING ",
+    token_columns!()
+);
+const REVOKE_PG: &str = concat!(
+    "UPDATE api_tokens SET revoked_at = $3, updated_at = $3, version = version + 1 WHERE id = $1 AND version = $2 AND revoked_at IS NULL AND updated_at <= $3 RETURNING ",
+    token_columns!()
+);
+const REVOKE_SQLITE: &str = concat!(
+    "UPDATE api_tokens SET revoked_at = ?3, updated_at = ?3, version = version + 1 WHERE id = ?1 AND version = ?2 AND revoked_at IS NULL AND updated_at <= ?3 RETURNING ",
+    token_columns!()
 );
 
 #[async_trait]
@@ -204,6 +222,195 @@ impl ApiTokenStore for SqlxRepository {
                 rows.iter().map(token_from_sqlite).collect()
             }
         }
+    }
+}
+
+#[async_trait]
+impl ApiTokenLifecycleRepository for SqlxRepository {
+    async fn update_api_token(
+        &self,
+        plan: UpdateApiTokenPlan,
+    ) -> Result<ApiToken, RepositoryError> {
+        validate_patch(&plan.patch, plan.now)?;
+        let current = self.api_token_by_id(plan.id).await?;
+        validate_audit(
+            &plan.audit_event,
+            plan.id,
+            current.organization_id,
+            current.project_id,
+            API_TOKEN_UPDATED_AUDIT_ACTION,
+            plan.now,
+        )?;
+        let networks = plan
+            .patch
+            .ip_networks
+            .as_ref()
+            .map(|values| networks_json(values));
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(UPDATE_PG)
+                    .bind(plan.id.as_uuid())
+                    .bind(plan.expected_version)
+                    .bind(&plan.patch.name)
+                    .bind(plan.patch.expires_at.is_some())
+                    .bind(
+                        plan.patch
+                            .expires_at
+                            .flatten()
+                            .map(postgres_time)
+                            .transpose()?,
+                    )
+                    .bind(networks.as_ref())
+                    .bind(postgres_time(plan.now)?)
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return classify_mutation(self, plan.id).await;
+                };
+                insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                token_from_postgres(&row)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(UPDATE_SQLITE)
+                    .bind(plan.id.to_string())
+                    .bind(plan.expected_version)
+                    .bind(&plan.patch.name)
+                    .bind(plan.patch.expires_at.is_some())
+                    .bind(
+                        plan.patch
+                            .expires_at
+                            .flatten()
+                            .map(UtcTimestamp::unix_micros),
+                    )
+                    .bind(networks.map(|value| value.to_string()))
+                    .bind(plan.now.unix_micros())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return classify_mutation(self, plan.id).await;
+                };
+                insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                token_from_sqlite(&row)
+            }
+        }
+    }
+
+    async fn revoke_api_token(
+        &self,
+        plan: RevokeApiTokenPlan,
+    ) -> Result<ApiToken, RepositoryError> {
+        let current = self.api_token_by_id(plan.id).await?;
+        validate_audit(
+            &plan.audit_event,
+            plan.id,
+            current.organization_id,
+            current.project_id,
+            API_TOKEN_REVOKED_AUDIT_ACTION,
+            plan.now,
+        )?;
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(REVOKE_PG)
+                    .bind(plan.id.as_uuid())
+                    .bind(plan.expected_version)
+                    .bind(postgres_time(plan.now)?)
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return classify_mutation(self, plan.id).await;
+                };
+                insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                token_from_postgres(&row)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(REVOKE_SQLITE)
+                    .bind(plan.id.to_string())
+                    .bind(plan.expected_version)
+                    .bind(plan.now.unix_micros())
+                    .fetch_optional(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return classify_mutation(self, plan.id).await;
+                };
+                insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                token_from_sqlite(&row)
+            }
+        }
+    }
+
+    async fn record_api_token_used(
+        &self,
+        id: ApiTokenId,
+        now: UtcTimestamp,
+    ) -> Result<(), RepositoryError> {
+        let affected = match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => sqlx::query("UPDATE api_tokens SET last_used_at = $2, updated_at = $2, version = version + 1 WHERE id = $1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $2) AND updated_at <= $2 AND (last_used_at IS NULL OR last_used_at < $2)")
+                .bind(id.as_uuid()).bind(postgres_time(now)?).execute(pool).await.map_err(map_sqlx_error)?.rows_affected(),
+            DatabasePool::Sqlite(pool) => sqlx::query("UPDATE api_tokens SET last_used_at = ?2, updated_at = ?2, version = version + 1 WHERE id = ?1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?2) AND updated_at <= ?2 AND (last_used_at IS NULL OR last_used_at < ?2)")
+                .bind(id.to_string()).bind(now.unix_micros()).execute(pool).await.map_err(map_sqlx_error)?.rows_affected(),
+        };
+        if affected == 1 {
+            Ok(())
+        } else {
+            classify_mutation(self, id).await.map(|_| ())
+        }
+    }
+}
+
+fn validate_patch(patch: &ApiTokenPatch, now: UtcTimestamp) -> Result<(), RepositoryError> {
+    if patch.name.is_none() && patch.expires_at.is_none() && patch.ip_networks.is_none() {
+        return Err(RepositoryError::ConstraintViolation);
+    }
+    if patch
+        .name
+        .as_ref()
+        .is_some_and(|name| name.is_empty() || name.chars().count() > 120)
+        || patch
+            .expires_at
+            .flatten()
+            .is_some_and(|expiry| expiry <= now)
+        || patch
+            .ip_networks
+            .as_ref()
+            .is_some_and(|values| values.len() > 32)
+    {
+        return Err(RepositoryError::ConstraintViolation);
+    }
+    if let Some(values) = &patch.ip_networks {
+        let mut unique = values.clone();
+        unique.sort_by_key(ToString::to_string);
+        unique.dedup();
+        if unique.len() != values.len() {
+            return Err(RepositoryError::ConstraintViolation);
+        }
+    }
+    Ok(())
+}
+
+async fn classify_mutation(
+    repository: &SqlxRepository,
+    id: ApiTokenId,
+) -> Result<ApiToken, RepositoryError> {
+    match repository.api_token_by_id(id).await {
+        Ok(_) => Err(RepositoryError::VersionConflict),
+        Err(RepositoryError::NotFound) => Err(RepositoryError::NotFound),
+        Err(error) => Err(error),
     }
 }
 
