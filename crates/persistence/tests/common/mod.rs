@@ -6,16 +6,18 @@ use std::{
 };
 
 use takt_application::{
-    ApplicationError, AuditRepository, BootstrapService, BootstrapStatus, Clock, CreateSessionPlan,
-    IdGenerator, LocalUserRepository, MembershipRepository, NewAuditEvent, NewBrowserSession,
-    NewLocalUser, NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
-    PasswordHasher, PasswordHashing, ProjectRepository, RepositoryError, RevokeSessionPlan,
+    ApplicationError, Argon2idConfig, AuditRepository, BootstrapService, BootstrapStatus, Clock,
+    CompleteRecoveryPlan, CreateRecoveryPlan, CreateSessionPlan, IdGenerator, LocalUserRepository,
+    MembershipRepository, NewAuditEvent, NewBrowserSession, NewLocalUser, NewMembership,
+    NewOrganization, NewProject, NewRecoveryToken, OrganizationRepository, PasswordHash,
+    PasswordHasher, PasswordHashing, ProjectRepository, RECOVERY_COMPLETED_AUDIT_ACTION,
+    RECOVERY_ISSUED_AUDIT_ACTION, RecoveryRepository, RepositoryError, RevokeSessionPlan,
     SESSION_CREATED_AUDIT_ACTION, SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest,
     ValidationError,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId, OperationId,
-    OrganizationId, ProjectId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
+    OrganizationId, ProjectId, RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
     session::{SessionPolicy, SessionWindow},
 };
 use takt_persistence::{Database, ReadinessError, SqlxRepository};
@@ -24,10 +26,14 @@ pub const TEST_NOW: UtcTimestamp = UtcTimestamp::from_unix_micros(1_784_445_600_
 pub const TEST_PASSWORD: &str = "correct horse battery";
 pub const TEST_RAW_SESSION_TOKEN: &str = "raw-session-token-must-never-be-stored";
 pub const TEST_RAW_CSRF_TOKEN: &str = "raw-csrf-token-must-never-be-stored";
+pub const TEST_RAW_RECOVERY_TOKEN: &str = "raw-recovery-token-must-never-be-stored";
+pub const TEST_REPLACEMENT_PASSWORD: &str = "replacement horse battery";
 pub const TEST_SESSION_TOKEN_SHA256: &str =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 pub const TEST_CSRF_TOKEN_SHA256: &str =
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+pub const TEST_RECOVERY_TOKEN_SHA256: &str =
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
 pub fn assert_persisted_session_is_redacted(stored: &str, audit_metadata: &str) {
     let digest_count = stored.matches("sha256:").count();
@@ -41,6 +47,26 @@ pub fn assert_persisted_session_is_redacted(stored: &str, audit_metadata: &str) 
         assert!(!audit_metadata.contains(secret));
     }
     assert!(!stored.contains(TEST_RAW_SESSION_TOKEN) && !stored.contains(TEST_RAW_CSRF_TOKEN));
+}
+
+pub fn assert_persisted_recovery_is_redacted(stored: &str, audit_metadata: &str) {
+    assert!(stored.contains("sha256:"));
+    for secret in [
+        TEST_RAW_RECOVERY_TOKEN,
+        TEST_RECOVERY_TOKEN_SHA256,
+        TEST_REPLACEMENT_PASSWORD,
+    ] {
+        assert!(!audit_metadata.contains(secret));
+    }
+    assert!(!stored.contains(TEST_RAW_RECOVERY_TOKEN));
+}
+
+pub fn assert_replacement_password_hash(encoded: &str) -> Result<(), Box<dyn Error>> {
+    let hash = PasswordHash::from_persistence(encoded.to_owned())?;
+    assert!(
+        PasswordHasher::new(Argon2idConfig::testing()).verify(TEST_REPLACEMENT_PASSWORD, &hash)?
+    );
+    Ok(())
 }
 
 pub struct FixedClock;
@@ -712,6 +738,261 @@ pub async fn run_session_repository_contract(
             && !format!("{event:?}").contains(TEST_SESSION_TOKEN_SHA256)
             && !format!("{event:?}").contains(TEST_CSRF_TOKEN_SHA256)
     }));
+    Ok(())
+}
+
+fn recovery_audit_event(
+    audit_id: AuditEventId,
+    recovery_id: RecoveryTokenId,
+    action: &str,
+    occurred_at: UtcTimestamp,
+) -> Result<NewAuditEvent, Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let project_id = ProjectId::from_resource_id(resource_id(2)?);
+    let user_id = UserId::from_resource_id(resource_id(3)?);
+    Ok(NewAuditEvent {
+        event: AuditEvent {
+            id: audit_id,
+            organization_id,
+            project_id: Some(project_id),
+            actor_type: AuditActorType::System,
+            actor_id: Some(user_id),
+            action: action.to_owned(),
+            resource_type: "recovery_token".to_owned(),
+            resource_id: ResourceId::from_uuid(recovery_id.as_uuid())?,
+            request_id: OperationId::from_resource_id(resource_id(49_999)?),
+            metadata: BootstrapAuditMetadata {
+                organization_id,
+                project_id,
+                user_id,
+                membership_id: MembershipId::from_resource_id(resource_id(4)?),
+            },
+            occurred_at,
+        },
+    })
+}
+
+fn new_recovery_token(
+    id_suffix: u64,
+    digest_hex: &str,
+    expires_at: UtcTimestamp,
+) -> Result<NewRecoveryToken, Box<dyn Error>> {
+    Ok(NewRecoveryToken {
+        id: RecoveryTokenId::from_resource_id(resource_id(id_suffix)?),
+        organization_id: OrganizationId::from_resource_id(resource_id(1)?),
+        user_id: UserId::from_resource_id(resource_id(3)?),
+        token_digest: TokenDigest::from_sha256_hex(digest_hex)?,
+        expires_at,
+        now: TEST_NOW,
+    })
+}
+
+fn replacement_password_hash() -> Result<PasswordHash, Box<dyn Error>> {
+    Ok(PasswordHasher::new(Argon2idConfig::testing()).hash(TEST_REPLACEMENT_PASSWORD)?)
+}
+
+fn create_recovery_plan(
+    recovery: NewRecoveryToken,
+    audit_id: AuditEventId,
+) -> Result<CreateRecoveryPlan, Box<dyn Error>> {
+    Ok(CreateRecoveryPlan {
+        audit_event: recovery_audit_event(
+            audit_id,
+            recovery.id,
+            RECOVERY_ISSUED_AUDIT_ACTION,
+            recovery.now,
+        )?,
+        recovery,
+    })
+}
+
+fn complete_recovery_plan(
+    token_digest: TokenDigest,
+    recovery_id: RecoveryTokenId,
+    audit_id: AuditEventId,
+    completed_at: UtcTimestamp,
+    action: &str,
+) -> Result<CompleteRecoveryPlan, Box<dyn Error>> {
+    Ok(CompleteRecoveryPlan {
+        token_digest,
+        replacement_password_hash: replacement_password_hash()?,
+        completed_at,
+        audit_event: recovery_audit_event(audit_id, recovery_id, action, completed_at)?,
+    })
+}
+
+// PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 /
+// PRD-DATA-004 / PRD-NFR-002 / PRD-NFR-005:
+// this exact recovery contract runs against PostgreSQL and SQLite.
+pub async fn run_recovery_repository_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let expiry = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 900_000_000);
+    let digest = TokenDigest::from_sha256_hex(TEST_RECOVERY_TOKEN_SHA256)?;
+    assert!(!format!("{digest:?}").contains(TEST_RECOVERY_TOKEN_SHA256));
+
+    let recovery = new_recovery_token(40_000, TEST_RECOVERY_TOKEN_SHA256, expiry)?;
+    let recovery_id = recovery.id;
+    let issue_audit_id = AuditEventId::from_resource_id(resource_id(40_001)?);
+    let created = repository
+        .create_recovery_token(create_recovery_plan(recovery, issue_audit_id)?)
+        .await?;
+    assert_eq!(created.id, recovery_id);
+    assert_eq!(created.version, 1);
+    assert_eq!(created.consumed_at, None);
+    assert_eq!(repository.recovery_token_by_digest(&digest).await?, created);
+
+    let completed_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 60_000_000);
+    let completed = repository
+        .complete_recovery(complete_recovery_plan(
+            digest.clone(),
+            recovery_id,
+            AuditEventId::from_resource_id(resource_id(40_002)?),
+            completed_at,
+            RECOVERY_COMPLETED_AUDIT_ACTION,
+        )?)
+        .await?;
+    assert_eq!(completed.consumed_at, Some(completed_at));
+    assert_eq!(completed.version, 2);
+    for session_hex in ["f".repeat(64), "2".repeat(64)] {
+        assert_eq!(
+            repository
+                .session_by_token_digest(&TokenDigest::from_sha256_hex(&session_hex)?)
+                .await?
+                .revoked_at,
+            Some(completed_at)
+        );
+    }
+    assert_eq!(
+        repository
+            .complete_recovery(complete_recovery_plan(
+                digest,
+                recovery_id,
+                AuditEventId::from_resource_id(resource_id(40_003)?),
+                completed_at,
+                RECOVERY_COMPLETED_AUDIT_ACTION,
+            )?)
+            .await,
+        Err(RepositoryError::VersionConflict),
+        "a consumed token must reject replay"
+    );
+
+    let expired_digest = TokenDigest::from_sha256_hex(
+        "8888888888888888888888888888888888888888888888888888888888888888",
+    )?;
+    let expired_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 1);
+    let expired = new_recovery_token(40_020, &"8".repeat(64), expired_at)?;
+    let expired_id = expired.id;
+    repository
+        .create_recovery_token(create_recovery_plan(
+            expired,
+            AuditEventId::from_resource_id(resource_id(40_021)?),
+        )?)
+        .await?;
+    assert_eq!(
+        repository
+            .complete_recovery(complete_recovery_plan(
+                expired_digest.clone(),
+                expired_id,
+                AuditEventId::from_resource_id(resource_id(40_022)?),
+                expired_at,
+                RECOVERY_COMPLETED_AUDIT_ACTION,
+            )?)
+            .await,
+        Err(RepositoryError::VersionConflict)
+    );
+    assert_eq!(
+        repository
+            .recovery_token_by_digest(&expired_digest)
+            .await?
+            .consumed_at,
+        None
+    );
+
+    let rollback_digest = TokenDigest::from_sha256_hex(
+        "9999999999999999999999999999999999999999999999999999999999999999",
+    )?;
+    let rollback = new_recovery_token(40_030, &"9".repeat(64), expiry)?;
+    let rollback_id = rollback.id;
+    repository
+        .create_recovery_token(create_recovery_plan(
+            rollback,
+            AuditEventId::from_resource_id(resource_id(40_031)?),
+        )?)
+        .await?;
+    let rollback_session = new_session(40_032, &"0".repeat(64), &"ab".repeat(32))?;
+    let rollback_session_token = rollback_session.token_digest.clone();
+    repository
+        .create_session(CreateSessionPlan {
+            audit_event: session_audit_event(
+                AuditEventId::from_resource_id(resource_id(40_033)?),
+                rollback_session.id,
+                SESSION_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+            session: rollback_session,
+        })
+        .await?;
+    assert_eq!(
+        repository
+            .complete_recovery(complete_recovery_plan(
+                rollback_digest.clone(),
+                rollback_id,
+                issue_audit_id,
+                completed_at,
+                RECOVERY_COMPLETED_AUDIT_ACTION,
+            )?)
+            .await,
+        Err(RepositoryError::AlreadyExists)
+    );
+    assert_eq!(
+        repository
+            .recovery_token_by_digest(&rollback_digest)
+            .await?
+            .consumed_at,
+        None,
+        "token consumption must roll back when the audit insert fails"
+    );
+    assert_eq!(
+        repository
+            .session_by_token_digest(&rollback_session_token)
+            .await?
+            .revoked_at,
+        None,
+        "session revocation must roll back with the failed completion audit"
+    );
+
+    let concurrent_digest = TokenDigest::from_sha256_hex(&"cd".repeat(32))?;
+    let concurrent_recovery = new_recovery_token(40_040, &"cd".repeat(32), expiry)?;
+    let concurrent_id = concurrent_recovery.id;
+    repository
+        .create_recovery_token(create_recovery_plan(
+            concurrent_recovery,
+            AuditEventId::from_resource_id(resource_id(40_041)?),
+        )?)
+        .await?;
+    let (left, right) = tokio::join!(
+        repository.complete_recovery(complete_recovery_plan(
+            concurrent_digest.clone(),
+            concurrent_id,
+            AuditEventId::from_resource_id(resource_id(40_042)?),
+            completed_at,
+            RECOVERY_COMPLETED_AUDIT_ACTION,
+        )?),
+        repository.complete_recovery(complete_recovery_plan(
+            concurrent_digest.clone(),
+            concurrent_id,
+            AuditEventId::from_resource_id(resource_id(40_043)?),
+            completed_at,
+            RECOVERY_COMPLETED_AUDIT_ACTION,
+        )?)
+    );
+    assert!(
+        matches!((&left, &right), (Ok(result), Err(RepositoryError::VersionConflict)) if result.version == 2)
+            || matches!((&left, &right), (Err(RepositoryError::VersionConflict), Ok(result)) if result.version == 2),
+        "exactly one concurrent recovery completion must succeed"
+    );
+
     Ok(())
 }
 

@@ -1,6 +1,6 @@
 schema_version: 1
 as_of: "2026-07-21"
-baseline_commit: d0277f65fa8eb8632914b6b9dcaa4033cf260374
+baseline_commit: a8df4b9960726278db093703956e1c0bb68831f5
 
 # coverage measures product behavior: none, partial, full.
 # verification measures evidence strength independently from coverage.
@@ -316,7 +316,8 @@ requirements:
       - docs/implementation-evidence/iam-010-auth-domain-contract.md
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: Local owner bootstrap, Argon2id credentials, browser-auth contracts/rules and engine-parity session creation/lookup/refresh/revoke exist; recovery/runtime plus API-token contract/runtime and scopes remain absent (SPEC-003).
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Local owner bootstrap, credentials, browser-auth rules and engine-parity session/recovery persistence exist; HTTP runtime plus API-token contract/runtime and scopes remain absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -344,7 +345,8 @@ requirements:
       - docs/implementation-evidence/persistence-admin-bootstrap.md
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: Session persistence carries typed organization/user context, but no resource API performs server-side authorization.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Session and recovery persistence carry typed organization/user context, but no resource API performs server-side authorization.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -356,7 +358,8 @@ requirements:
       - crates/persistence/tests/common/mod.rs
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: Bootstrap, session creation and session revoke write append-only redacted audit events; full action coverage, export and tamper evidence are absent.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Bootstrap, session creation/revoke and recovery issue/complete write append-only redacted audit events; full action coverage, export and tamper evidence are absent.
 
   - id: PRD-DATA-001
     release: "0.1"
@@ -372,7 +375,8 @@ requirements:
       - docs/implementation-evidence/spec-010-data-requirements.md
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: Identity, bootstrap and the complete current session lifecycle share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Identity, bootstrap, session and recovery persistence share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
@@ -386,7 +390,8 @@ requirements:
       - docs/implementation-evidence/persistence-admin-bootstrap.md
       - docs/implementation-evidence/spec-010-data-requirements.md
       - docs/implementation-evidence/iam-011-session-persistence.md
-    note: Two forward/repeated migrations, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Three forward/repeated migrations, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
@@ -400,7 +405,8 @@ requirements:
       - docs/implementation-evidence/spec-010-data-requirements.md
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: Persisted identity and session entities use UUIDv7, UTC microseconds and optimistic monotonic versions; the remaining product entities are not implemented.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Persisted identity, session and recovery entities use UUIDv7, UTC microseconds and optimistic monotonic versions; remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -453,7 +459,8 @@ requirements:
       - docs/implementation-evidence/qa-001-acceptance-bindings.md
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: PostgreSQL 16 migration, identity and full current session-lifecycle evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: PostgreSQL 16 migration, identity, session and recovery evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -482,7 +489,8 @@ requirements:
       - crates/persistence/tests/common/mod.rs
       - docs/implementation-evidence/iam-011-session-persistence.md
       - docs/implementation-evidence/iam-015-session-lifecycle.md
-    note: Identity and versioned session-lifecycle persistence uses UTC microseconds; IANA timezone selection and UI display are absent.
+      - docs/implementation-evidence/iam-014-recovery-persistence.md
+    note: Identity, session and recovery persistence use UTC microseconds; IANA timezone selection and UI display are absent.
   - id: PRD-NFR-006
     release: "0.1"
     coverage: none

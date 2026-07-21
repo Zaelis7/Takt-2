@@ -5,15 +5,17 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteRow};
 use takt_application::{
     AuditRepository, BootstrapPlan, BootstrapRepository, BootstrapResources, BootstrapStoreResult,
-    CreateSessionPlan, ExistingBootstrap, LocalUserRepository, MembershipRepository, NewAuditEvent,
-    NewLocalUser, NewMembership, NewOrganization, NewProject, OrganizationRepository, PasswordHash,
-    ProjectRepository, RepositoryError, RevokeSessionPlan, SESSION_CREATED_AUDIT_ACTION,
-    SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest,
+    CompleteRecoveryPlan, CreateRecoveryPlan, CreateSessionPlan, ExistingBootstrap,
+    LocalUserRepository, MembershipRepository, NewAuditEvent, NewLocalUser, NewMembership,
+    NewOrganization, NewProject, OrganizationRepository, PasswordHash, ProjectRepository,
+    RECOVERY_COMPLETED_AUDIT_ACTION, RECOVERY_ISSUED_AUDIT_ACTION, RecoveryRepository,
+    RepositoryError, RevokeSessionPlan, SESSION_CREATED_AUDIT_ACTION, SESSION_REVOKED_AUDIT_ACTION,
+    SessionRepository, TokenDigest,
 };
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
-    MembershipId, OperationId, Organization, OrganizationId, Project, ProjectId, ResourceId, Role,
-    SessionId, UserId, UtcTimestamp,
+    MembershipId, OperationId, Organization, OrganizationId, Project, ProjectId, RecoveryToken,
+    RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
     session::{BrowserSession, SessionWindow},
 };
 use time::OffsetDateTime;
@@ -741,6 +743,214 @@ async fn classify_session_update(
 }
 
 #[async_trait]
+impl RecoveryRepository for SqlxRepository {
+    async fn create_recovery_token(
+        &self,
+        plan: CreateRecoveryPlan,
+    ) -> Result<RecoveryToken, RepositoryError> {
+        validate_recovery_audit(
+            plan.recovery.id,
+            plan.recovery.organization_id,
+            plan.recovery.user_id,
+            RECOVERY_ISSUED_AUDIT_ACTION,
+            plan.recovery.now,
+            &plan.audit_event,
+        )?;
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let recovery = recovery_from_postgres(
+                    &sqlx::query(
+                        "INSERT INTO recovery_tokens (id, organization_id, user_id, token_digest, expires_at, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $6, 1) RETURNING id, organization_id, user_id, expires_at, consumed_at, created_at, updated_at, version",
+                    )
+                    .bind(plan.recovery.id.as_uuid())
+                    .bind(plan.recovery.organization_id.as_uuid())
+                    .bind(plan.recovery.user_id.as_uuid())
+                    .bind(plan.recovery.token_digest.expose_for_persistence())
+                    .bind(postgres_time(plan.recovery.expires_at)?)
+                    .bind(postgres_time(plan.recovery.now)?)
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?,
+                )?;
+                insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(recovery)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let recovery = recovery_from_sqlite(
+                    &sqlx::query(
+                        "INSERT INTO recovery_tokens (id, organization_id, user_id, token_digest, expires_at, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, 1) RETURNING id, organization_id, user_id, expires_at, consumed_at, created_at, updated_at, version",
+                    )
+                    .bind(plan.recovery.id.to_string())
+                    .bind(plan.recovery.organization_id.to_string())
+                    .bind(plan.recovery.user_id.to_string())
+                    .bind(plan.recovery.token_digest.expose_for_persistence())
+                    .bind(plan.recovery.expires_at.unix_micros())
+                    .bind(plan.recovery.now.unix_micros())
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(map_sqlx_error)?,
+                )?;
+                insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(recovery)
+            }
+        }
+    }
+
+    async fn recovery_token_by_digest(
+        &self,
+        token_digest: &TokenDigest,
+    ) -> Result<RecoveryToken, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => recovery_from_postgres(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, expires_at, consumed_at, created_at, updated_at, version FROM recovery_tokens WHERE token_digest = $1",
+                )
+                .bind(token_digest.expose_for_persistence())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+            DatabasePool::Sqlite(pool) => recovery_from_sqlite(
+                &sqlx::query(
+                    "SELECT id, organization_id, user_id, expires_at, consumed_at, created_at, updated_at, version FROM recovery_tokens WHERE token_digest = ?1",
+                )
+                .bind(token_digest.expose_for_persistence())
+                .fetch_one(pool)
+                .await
+                .map_err(map_sqlx_error)?,
+            ),
+        }
+    }
+
+    async fn complete_recovery(
+        &self,
+        plan: CompleteRecoveryPlan,
+    ) -> Result<RecoveryToken, RepositoryError> {
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "UPDATE recovery_tokens SET consumed_at = $1, updated_at = $1, version = version + 1 WHERE token_digest = $2 AND consumed_at IS NULL AND created_at <= $1 AND expires_at > $1 RETURNING id, organization_id, user_id, expires_at, consumed_at, created_at, updated_at, version",
+                )
+                .bind(postgres_time(plan.completed_at)?)
+                .bind(plan.token_digest.expose_for_persistence())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return classify_recovery_update(self, &plan.token_digest).await;
+                };
+                let recovery = recovery_from_postgres(&row)?;
+                if let Err(error) = validate_recovery_audit(
+                    recovery.id,
+                    recovery.organization_id,
+                    recovery.user_id,
+                    RECOVERY_COMPLETED_AUDIT_ACTION,
+                    plan.completed_at,
+                    &plan.audit_event,
+                ) {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(error);
+                }
+                let credential = sqlx::query(
+                    "UPDATE local_credentials SET password_hash = $1, updated_at = $2, version = version + 1 WHERE user_id = $3 AND updated_at <= $2",
+                )
+                .bind(plan.replacement_password_hash.expose_for_persistence())
+                .bind(postgres_time(plan.completed_at)?)
+                .bind(recovery.user_id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                if credential.rows_affected() != 1 {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict);
+                }
+                sqlx::query(
+                    "UPDATE sessions SET revoked_at = $1, updated_at = $1, version = version + 1 WHERE organization_id = $2 AND user_id = $3 AND revoked_at IS NULL AND updated_at <= $1",
+                )
+                .bind(postgres_time(plan.completed_at)?)
+                .bind(recovery.organization_id.as_uuid())
+                .bind(recovery.user_id.as_uuid())
+                .execute(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(recovery)
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                let row = sqlx::query(
+                    "UPDATE recovery_tokens SET consumed_at = ?1, updated_at = ?1, version = version + 1 WHERE token_digest = ?2 AND consumed_at IS NULL AND created_at <= ?1 AND expires_at > ?1 RETURNING id, organization_id, user_id, expires_at, consumed_at, created_at, updated_at, version",
+                )
+                .bind(plan.completed_at.unix_micros())
+                .bind(plan.token_digest.expose_for_persistence())
+                .fetch_optional(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                let Some(row) = row else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return classify_recovery_update(self, &plan.token_digest).await;
+                };
+                let recovery = recovery_from_sqlite(&row)?;
+                if let Err(error) = validate_recovery_audit(
+                    recovery.id,
+                    recovery.organization_id,
+                    recovery.user_id,
+                    RECOVERY_COMPLETED_AUDIT_ACTION,
+                    plan.completed_at,
+                    &plan.audit_event,
+                ) {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(error);
+                }
+                let credential = sqlx::query(
+                    "UPDATE local_credentials SET password_hash = ?1, updated_at = ?2, version = version + 1 WHERE user_id = ?3 AND updated_at <= ?2",
+                )
+                .bind(plan.replacement_password_hash.expose_for_persistence())
+                .bind(plan.completed_at.unix_micros())
+                .bind(recovery.user_id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                if credential.rows_affected() != 1 {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict);
+                }
+                sqlx::query(
+                    "UPDATE sessions SET revoked_at = ?1, updated_at = ?1, version = version + 1 WHERE organization_id = ?2 AND user_id = ?3 AND revoked_at IS NULL AND updated_at <= ?1",
+                )
+                .bind(plan.completed_at.unix_micros())
+                .bind(recovery.organization_id.to_string())
+                .bind(recovery.user_id.to_string())
+                .execute(&mut *transaction)
+                .await
+                .map_err(map_sqlx_error)?;
+                insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                Ok(recovery)
+            }
+        }
+    }
+}
+
+async fn classify_recovery_update(
+    repository: &SqlxRepository,
+    token_digest: &TokenDigest,
+) -> Result<RecoveryToken, RepositoryError> {
+    match repository.recovery_token_by_digest(token_digest).await {
+        Ok(_) => Err(RepositoryError::VersionConflict),
+        Err(RepositoryError::NotFound) => Err(RepositoryError::NotFound),
+        Err(error) => Err(error),
+    }
+}
+
+#[async_trait]
 impl BootstrapRepository for SqlxRepository {
     async fn bootstrap(
         &self,
@@ -1395,6 +1605,27 @@ fn validate_session_audit(
     validate_audit_event(audit_event)
 }
 
+fn validate_recovery_audit(
+    recovery_id: RecoveryTokenId,
+    organization_id: OrganizationId,
+    user_id: UserId,
+    action: &str,
+    occurred_at: UtcTimestamp,
+    audit_event: &NewAuditEvent,
+) -> Result<(), RepositoryError> {
+    let event = &audit_event.event;
+    if event.organization_id != organization_id
+        || event.actor_id != Some(user_id)
+        || event.action != action
+        || event.resource_type != "recovery_token"
+        || event.resource_id.as_uuid() != recovery_id.as_uuid()
+        || event.occurred_at != occurred_at
+    {
+        return Err(RepositoryError::ConstraintViolation);
+    }
+    validate_audit_event(audit_event)
+}
+
 fn session_from_postgres(row: &PgRow) -> Result<BrowserSession, RepositoryError> {
     Ok(BrowserSession {
         id: SessionId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
@@ -1432,6 +1663,37 @@ fn session_from_sqlite(row: &SqliteRow) -> Result<BrowserSession, RepositoryErro
         )
         .map_err(|_| RepositoryError::UnknownInfrastructure)?,
         revoked_at: optional_timestamp_from_sqlite(row, "revoked_at")?,
+        created_at: timestamp_from_sqlite(row, "created_at")?,
+        updated_at: timestamp_from_sqlite(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn recovery_from_postgres(row: &PgRow) -> Result<RecoveryToken, RepositoryError> {
+    Ok(RecoveryToken {
+        id: RecoveryTokenId::from_uuid(row.try_get("id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        organization_id: OrganizationId::from_uuid(
+            row.try_get("organization_id").map_err(map_sqlx_error)?,
+        )
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        user_id: UserId::from_uuid(row.try_get("user_id").map_err(map_sqlx_error)?)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        expires_at: timestamp_from_postgres(row, "expires_at")?,
+        consumed_at: optional_timestamp_from_postgres(row, "consumed_at")?,
+        created_at: timestamp_from_postgres(row, "created_at")?,
+        updated_at: timestamp_from_postgres(row, "updated_at")?,
+        version: row.try_get("version").map_err(map_sqlx_error)?,
+    })
+}
+
+fn recovery_from_sqlite(row: &SqliteRow) -> Result<RecoveryToken, RepositoryError> {
+    Ok(RecoveryToken {
+        id: parse_id(row, "id")?,
+        organization_id: parse_id(row, "organization_id")?,
+        user_id: parse_id(row, "user_id")?,
+        expires_at: timestamp_from_sqlite(row, "expires_at")?,
+        consumed_at: optional_timestamp_from_sqlite(row, "consumed_at")?,
         created_at: timestamp_from_sqlite(row, "created_at")?,
         updated_at: timestamp_from_sqlite(row, "updated_at")?,
         version: row.try_get("version").map_err(map_sqlx_error)?,

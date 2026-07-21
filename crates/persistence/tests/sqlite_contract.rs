@@ -8,7 +8,10 @@ use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 use takt_application::{BootstrapService, BootstrapStatus};
 use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
 
-use common::{FixedClock, SequenceIds, TEST_PASSWORD, TEST_RAW_SESSION_TOKEN, TestPasswordHasher};
+use common::{
+    FixedClock, SequenceIds, TEST_PASSWORD, TEST_RAW_RECOVERY_TOKEN, TEST_RAW_SESSION_TOKEN,
+    TestPasswordHasher,
+};
 
 async fn sqlite_database(
     directory: &tempfile::TempDir,
@@ -71,14 +74,14 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
     database.migrate().await?;
     let mut connection = raw_connection(&path).await?;
-    sqlx::query("UPDATE _sqlx_migrations SET version = 3 WHERE version = 2")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 4 WHERE version = 3")
         .execute(&mut connection)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 3,
-            supported: 2
+            found: 4,
+            supported: 3
         }
     );
     assert_eq!(
@@ -98,6 +101,7 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
     let repository = SqlxRepository::new(database);
     common::run_repository_contract(&repository).await?;
     common::run_session_repository_contract(&repository).await?;
+    common::run_recovery_repository_contract(&repository).await?;
 
     let mut connection = raw_connection(&path).await?;
     let row = sqlx::query(
@@ -117,6 +121,30 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
             .is_err(),
         "SQLite must reject non-digest session values"
     );
+    let recovery_row = sqlx::query(
+        "SELECT group_concat(token_digest, ' ') AS stored, (SELECT group_concat(metadata, ' ') FROM audit_events WHERE resource_type = 'recovery_token') AS metadata FROM recovery_tokens",
+    )
+    .fetch_one(&mut connection)
+    .await?;
+    common::assert_persisted_recovery_is_redacted(
+        &recovery_row.try_get::<String, _>("stored")?,
+        &recovery_row.try_get::<String, _>("metadata")?,
+    );
+    assert!(
+        sqlx::query("UPDATE recovery_tokens SET token_digest = ?1")
+            .bind(TEST_RAW_RECOVERY_TOKEN)
+            .execute(&mut connection)
+            .await
+            .is_err(),
+        "SQLite must reject non-digest recovery values"
+    );
+    let credential: String =
+        sqlx::query("SELECT password_hash FROM local_credentials WHERE user_id = ?1")
+            .bind(common::resource_id(3)?.to_string())
+            .fetch_one(&mut connection)
+            .await?
+            .try_get("password_hash")?;
+    common::assert_replacement_password_hash(&credential)?;
     Ok(())
 }
 

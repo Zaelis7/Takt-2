@@ -8,7 +8,10 @@ use sqlx::{PgPool, Row};
 use takt_application::{BootstrapService, BootstrapStatus};
 use takt_persistence::{Database, DatabaseConfig, ReadinessError, SchemaStatus, SqlxRepository};
 
-use common::{FixedClock, SequenceIds, TEST_PASSWORD, TEST_RAW_SESSION_TOKEN, TestPasswordHasher};
+use common::{
+    FixedClock, SequenceIds, TEST_PASSWORD, TEST_RAW_RECOVERY_TOKEN, TEST_RAW_SESSION_TOKEN,
+    TestPasswordHasher,
+};
 
 fn test_url() -> Result<String, Box<dyn Error>> {
     env::var("TAKT_TEST_POSTGRES_URL").map_err(|_| {
@@ -67,6 +70,7 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     assert!(server_version >= 160_000);
     common::run_repository_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_session_repository_contract(&SqlxRepository::new(database.clone())).await?;
+    common::run_recovery_repository_contract(&SqlxRepository::new(database.clone())).await?;
     let row = sqlx::query(
         "SELECT string_agg(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
     )
@@ -84,6 +88,30 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .is_err(),
         "PostgreSQL must reject non-digest session values"
     );
+    let recovery_row = sqlx::query(
+        "SELECT string_agg(token_digest, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'recovery_token') AS metadata FROM recovery_tokens",
+    )
+    .fetch_one(&raw)
+    .await?;
+    common::assert_persisted_recovery_is_redacted(
+        &recovery_row.try_get::<String, _>("stored")?,
+        &recovery_row.try_get::<String, _>("metadata")?,
+    );
+    assert!(
+        sqlx::query("UPDATE recovery_tokens SET token_digest = $1")
+            .bind(TEST_RAW_RECOVERY_TOKEN)
+            .execute(&raw)
+            .await
+            .is_err(),
+        "PostgreSQL must reject non-digest recovery values"
+    );
+    let credential: String =
+        sqlx::query("SELECT password_hash FROM local_credentials WHERE user_id = $1")
+            .bind(common::resource_id(3)?.as_uuid())
+            .fetch_one(&raw)
+            .await?
+            .try_get("password_hash")?;
+    common::assert_replacement_password_hash(&credential)?;
     let audit_id = common::resource_id(5)?;
     assert!(
         sqlx::query("UPDATE audit_events SET action = 'mutated' WHERE id = $1")
@@ -205,14 +233,14 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .try_get::<i64, _>("count")?,
         1
     );
-    sqlx::query("UPDATE _sqlx_migrations SET version = 3 WHERE version = 2")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 4 WHERE version = 3")
         .execute(&raw)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 3,
-            supported: 2
+            found: 4,
+            supported: 3
         }
     );
     assert!(database.migrate().await.is_err());

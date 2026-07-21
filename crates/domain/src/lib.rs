@@ -125,6 +125,7 @@ typed_id!(MembershipId);
 typed_id!(AuditEventId);
 typed_id!(OperationId);
 typed_id!(SessionId);
+typed_id!(RecoveryTokenId);
 
 /// UTC time represented as signed microseconds since the Unix epoch.
 ///
@@ -287,4 +288,17 @@ pub struct AuditEvent {
     pub request_id: OperationId,
     pub metadata: BootstrapAuditMetadata,
     pub occurred_at: UtcTimestamp,
+}
+
+/// Persisted, secret-free representation of a one-time password recovery token.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryToken {
+    pub id: RecoveryTokenId,
+    pub organization_id: OrganizationId,
+    pub user_id: UserId,
+    pub expires_at: UtcTimestamp,
+    pub consumed_at: Option<UtcTimestamp>,
+    pub created_at: UtcTimestamp,
+    pub updated_at: UtcTimestamp,
+    pub version: i64,
 }

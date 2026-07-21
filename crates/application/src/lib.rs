@@ -16,8 +16,8 @@ use argon2::{
 use async_trait::async_trait;
 use takt_domain::{
     AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, Membership, MembershipId,
-    OperationId, Organization, OrganizationId, Project, ProjectId, ResourceId, Role, SessionId,
-    UserId, UtcTimestamp,
+    OperationId, Organization, OrganizationId, Project, ProjectId, RecoveryToken, RecoveryTokenId,
+    ResourceId, Role, SessionId, UserId, UtcTimestamp,
     session::{BrowserSession, SessionWindow},
 };
 use uuid::Uuid;
@@ -257,6 +257,8 @@ pub struct NewAuditEvent {
 
 pub const SESSION_CREATED_AUDIT_ACTION: &str = "auth.session.created";
 pub const SESSION_REVOKED_AUDIT_ACTION: &str = "auth.session.revoked";
+pub const RECOVERY_ISSUED_AUDIT_ACTION: &str = "auth.recovery.issued";
+pub const RECOVERY_COMPLETED_AUDIT_ACTION: &str = "auth.recovery.completed";
 
 #[derive(Clone, Debug)]
 pub struct NewBrowserSession {
@@ -279,6 +281,30 @@ pub struct RevokeSessionPlan {
     pub session_id: SessionId,
     pub expected_version: i64,
     pub revoked_at: UtcTimestamp,
+    pub audit_event: NewAuditEvent,
+}
+
+#[derive(Clone, Debug)]
+pub struct NewRecoveryToken {
+    pub id: RecoveryTokenId,
+    pub organization_id: OrganizationId,
+    pub user_id: UserId,
+    pub token_digest: TokenDigest,
+    pub expires_at: UtcTimestamp,
+    pub now: UtcTimestamp,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreateRecoveryPlan {
+    pub recovery: NewRecoveryToken,
+    pub audit_event: NewAuditEvent,
+}
+
+#[derive(Clone, Debug)]
+pub struct CompleteRecoveryPlan {
+    pub token_digest: TokenDigest,
+    pub replacement_password_hash: PasswordHash,
+    pub completed_at: UtcTimestamp,
     pub audit_event: NewAuditEvent,
 }
 
@@ -399,6 +425,22 @@ pub trait SessionRepository: Send + Sync {
         &self,
         plan: RevokeSessionPlan,
     ) -> Result<BrowserSession, RepositoryError>;
+}
+
+#[async_trait]
+pub trait RecoveryRepository: Send + Sync {
+    async fn create_recovery_token(
+        &self,
+        plan: CreateRecoveryPlan,
+    ) -> Result<RecoveryToken, RepositoryError>;
+    async fn recovery_token_by_digest(
+        &self,
+        token_digest: &TokenDigest,
+    ) -> Result<RecoveryToken, RepositoryError>;
+    async fn complete_recovery(
+        &self,
+        plan: CompleteRecoveryPlan,
+    ) -> Result<RecoveryToken, RepositoryError>;
 }
 
 #[derive(Clone, Debug)]

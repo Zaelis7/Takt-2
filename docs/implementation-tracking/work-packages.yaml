@@ -401,11 +401,39 @@ packages:
 
   - id: IAM-014
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
     findings: []
     depends_on: [IAM-015]
     outcome: Engine-paritäre Recovery-Token-Persistenz mit Hashspeicherung, Einmalverbrauch und atomarer Auditwirkung.
+    preflight:
+      in_scope:
+        - Forward-only Migration 0003 für UUIDv7-Recovery-Tokens mit ausschließlich gehashtem Tokenwert, UTC-Ablauf-/Verbrauchszeit und monotoner Version.
+        - Typisierter gemeinsamer PostgreSQL-/SQLite-Repository-Vertrag für atomare Ausgabe und einmaligen, ablaufgeschützten Verbrauch.
+        - Atomare Passwort-Hash-Ersetzung, Revoke aller aktiven Nutzersessions und redigiertes Recovery-Audit bei erfolgreichem Verbrauch.
+        - Konkurrenz-, Replay-, Ablauf-, Constraint-, Redaction- und Failpoint-Tests sowie Tracking, Persistenzdokumentation und Implementation Evidence.
+      out_of_scope:
+        - Roh-Token-Erzeugung, Recovery-Auslieferung, lokaler Admin-CLI-Fallback und HTTP-Recovery-Orchestrierung; diese Laufzeitgrenzen folgen in IAM-012.
+        - Login-, Logout- und Session-HTTP-Routen, Cookie-/CSRF-Verifikation und Rate Limits; diese folgen in IAM-012.
+        - API-Tokens, Scopes, Permission Engine, OIDC, UI und neue externe Daten- oder Observability-Flüsse.
+        - Vollständige Audit-Hashverkettung und Export; diese bleiben IAM-033 zugeordnet.
+      affected_artifacts:
+        - migrations/postgres/0003_recovery_tokens.sql
+        - migrations/sqlite/0003_recovery_tokens.sql
+        - crates/domain/src/lib.rs
+        - crates/application/src/lib.rs
+        - crates/persistence/src/repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - crates/server/tests/admin_bootstrap_cli.rs
+        - docs/persistence.md
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-014-recovery-persistence.md
+      estimated_handwritten_lines: 780
+      estimated_validation_minutes: 25
     acceptance:
       - Derselbe Recovery-Repository-Contract läuft unverändert auf PostgreSQL und SQLite.
       - Tokenwerte werden nur gehasht gespeichert; Ablauf, erfolgreicher Einmalverbrauch und Replay-Ablehnung sind deterministisch getestet.
