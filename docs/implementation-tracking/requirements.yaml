@@ -1,6 +1,6 @@
 schema_version: 1
 as_of: "2026-07-21"
-baseline_commit: 8654ff15b269b6bff5a975d855deea0aef7c8ed1
+baseline_commit: 1f3aa3c62966faba93923dd9d189fcd8929094b2
 
 # coverage measures product behavior: none, partial, full.
 # verification measures evidence strength independently from coverage.
@@ -16,7 +16,7 @@ requirements:
     release: "0.1"
     coverage: partial
     verification: focused_local
-    spec_health: conflict
+    spec_health: clear
     evidence:
       - specs/04-probes-and-checks.md
       - specs/contracts/openapi.yaml
@@ -26,7 +26,9 @@ requirements:
       - specs/contracts/fixtures/check-spec-invalid.json
       - tools/check-spec-contract.test.mjs
       - docs/implementation-evidence/spec-013-check-spec-contract.md
-    note: All seven per-kind CheckSpec shapes now share a tested canonical mapping; common proxy, resolver and address-family options remain in SPEC-019, while Rust domain types, executors and typed observations remain in MON-011 and later CHECK packages (SPEC-004).
+      - crates/probe-protocol/tests/generated_contract.rs
+      - docs/implementation-evidence/spec-019-network-options-contract.md
+    note: All seven per-kind CheckSpec shapes and the common proxy, resolver and address-family options now share a tested canonical mapping; Rust domain types, executors and typed observations remain in MON-011 and later CHECK packages.
   - id: PRD-MON-003
     release: "0.1"
     coverage: none
@@ -84,7 +86,7 @@ requirements:
     release: "0.1"
     coverage: partial
     verification: focused_local
-    spec_health: conflict
+    spec_health: clear
     evidence:
       - specs/contracts/openapi.yaml
       - tools/openapi-types.mjs
@@ -96,7 +98,16 @@ requirements:
       - docs/implementation-evidence/implementation-tracking.md
       - docs/implementation-evidence/spec-012-auth-contract.md
       - docs/implementation-evidence/spec-013-check-spec-contract.md
-    note: OpenAPI lint, generated-type drift, browser-auth and per-kind cross-contract CheckSpec checks pass; common network options remain in SPEC-019, runtime conformance and compatibility against a released baseline are absent, and the OpenAPI codegen toolchain has an open transitive high advisory (SPEC-004, SEC-001).
+      - pnpm-workspace.yaml
+      - pnpm-lock.yaml
+      - tools/node-supply-chain.test.mjs
+      - docs/implementation-evidence/gov-002-node-supply-chain.md
+      - specs/04-probes-and-checks.md
+      - specs/contracts/takt-config.schema.json
+      - specs/contracts/probe.proto
+      - crates/probe-protocol/tests/generated_contract.rs
+      - docs/implementation-evidence/spec-019-network-options-contract.md
+    note: OpenAPI lint, generated-type drift, browser-auth, complete cross-contract CheckSpec mapping and the OpenAPI codegen supply-chain guard pass; runtime conformance and compatibility against a released baseline remain absent.
   - id: PRD-API-003
     release: "0.1"
     coverage: none

@@ -203,6 +203,22 @@ pub struct SecretValueRef {
     pub ephemeral_key: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProxyBasicAuth {
+    #[prost(message, optional, tag = "1")]
+    pub username: ::core::option::Option<SecretValueRef>,
+    #[prost(message, optional, tag = "2")]
+    pub password: ::core::option::Option<SecretValueRef>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProxyOptions {
+    /// Authority-only URL using http, https, or socks5. Credentials are carried
+    /// exclusively by auth and refer to the sealed ephemeral secret bundle.
+    #[prost(string, tag = "1")]
+    pub url: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub auth: ::core::option::Option<ProxyBasicAuth>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct HeaderValue {
     #[prost(oneof = "header_value::Value", tags = "1, 2")]
     pub value: ::core::option::Option<header_value::Value>,
@@ -298,6 +314,12 @@ pub struct HttpCheck {
     pub max_response_time_ms: u32,
     #[prost(message, optional, tag = "17")]
     pub auth: ::core::option::Option<HttpAuth>,
+    #[prost(message, optional, tag = "18")]
+    pub proxy: ::core::option::Option<ProxyOptions>,
+    #[prost(string, tag = "19")]
+    pub resolver: ::prost::alloc::string::String,
+    #[prost(enumeration = "AddressFamily", tag = "20")]
+    pub address_family: i32,
     #[prost(oneof = "http_check::Body", tags = "4, 5")]
     pub body: ::core::option::Option<http_check::Body>,
 }
@@ -321,6 +343,12 @@ pub struct TcpCheck {
     pub send_bytes: ::prost::alloc::vec::Vec<u8>,
     #[prost(bytes = "vec", tag = "4")]
     pub expect_prefix: ::prost::alloc::vec::Vec<u8>,
+    #[prost(message, optional, tag = "5")]
+    pub proxy: ::core::option::Option<ProxyOptions>,
+    #[prost(string, tag = "6")]
+    pub resolver: ::prost::alloc::string::String,
+    #[prost(enumeration = "AddressFamily", tag = "7")]
+    pub address_family: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct DnsCheck {
@@ -340,6 +368,8 @@ pub struct DnsCheck {
     pub minimum_answers: ::core::option::Option<u32>,
     #[prost(enumeration = "DnsValueMatch", tag = "7")]
     pub value_match: i32,
+    #[prost(enumeration = "AddressFamily", tag = "8")]
+    pub address_family: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct IcmpCheck {
@@ -351,6 +381,10 @@ pub struct IcmpCheck {
     pub required_successes: u32,
     #[prost(uint32, tag = "4")]
     pub max_latency_ms: u32,
+    #[prost(string, tag = "5")]
+    pub resolver: ::prost::alloc::string::String,
+    #[prost(enumeration = "AddressFamily", tag = "6")]
+    pub address_family: i32,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TlsCheck {
@@ -365,6 +399,12 @@ pub struct TlsCheck {
     /// Presence distinguishes the canonical default 7 from an explicit zero.
     #[prost(uint32, optional, tag = "5")]
     pub critical_days: ::core::option::Option<u32>,
+    #[prost(message, optional, tag = "6")]
+    pub proxy: ::core::option::Option<ProxyOptions>,
+    #[prost(string, tag = "7")]
+    pub resolver: ::prost::alloc::string::String,
+    #[prost(enumeration = "AddressFamily", tag = "8")]
+    pub address_family: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PushCheck {
@@ -460,6 +500,12 @@ pub struct BrowserCheck {
     pub screenshot_on_failure_max_bytes: ::core::option::Option<u32>,
     #[prost(uint32, tag = "4")]
     pub max_network_response_bytes: u32,
+    #[prost(message, optional, tag = "5")]
+    pub proxy: ::core::option::Option<ProxyOptions>,
+    #[prost(string, tag = "6")]
+    pub resolver: ::prost::alloc::string::String,
+    #[prost(enumeration = "AddressFamily", tag = "7")]
+    pub address_family: i32,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct TimingPhases {
@@ -579,6 +625,35 @@ impl AckDisposition {
             "ACK_DISPOSITION_REJECTED_OVERLOADED" => Some(Self::RejectedOverloaded),
             "ACK_DISPOSITION_REJECTED_EXPIRED" => Some(Self::RejectedExpired),
             "ACK_DISPOSITION_REJECTED_INVALID" => Some(Self::RejectedInvalid),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AddressFamily {
+    Auto = 0,
+    Ipv4 = 1,
+    Ipv6 = 2,
+}
+impl AddressFamily {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Auto => "ADDRESS_FAMILY_AUTO",
+            Self::Ipv4 => "ADDRESS_FAMILY_IPV4",
+            Self::Ipv6 => "ADDRESS_FAMILY_IPV6",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ADDRESS_FAMILY_AUTO" => Some(Self::Auto),
+            "ADDRESS_FAMILY_IPV4" => Some(Self::Ipv4),
+            "ADDRESS_FAMILY_IPV6" => Some(Self::Ipv6),
             _ => None,
         }
     }

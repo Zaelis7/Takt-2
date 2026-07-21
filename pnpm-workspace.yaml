@@ -1,2 +1,5 @@
 packages:
   - web
+
+overrides:
+  js-yaml: 4.3.0

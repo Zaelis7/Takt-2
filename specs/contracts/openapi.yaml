@@ -985,6 +985,39 @@ components:
           maxLength: 100
           default: value
       description: Persistent secret reference resolved only at the execution boundary; secret values are never returned.
+    ResolverUri:
+      type: string
+      format: uri
+      pattern: "^(?:udp|tcp|tls)://(?![^/?#]*@)[^/?#]+/?$"
+      maxLength: 2048
+      description: Authority-only DNS resolver URI without credentials, path, query, or fragment.
+    AddressFamily:
+      type: string
+      enum: [auto, ipv4, ipv6]
+      default: auto
+      description: Address family used to connect to the target, resolver, or proxy; it does not change a DNS record type.
+    ProxyBasicAuth:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          $ref: "#/components/schemas/SecretRef"
+        password:
+          $ref: "#/components/schemas/SecretRef"
+    ProxySpec:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          pattern: "^(?:http|https|socks5)://(?![^/?#]*@)[^/?#]+/?$"
+          maxLength: 2048
+          description: Authority-only proxy URL; credentials are forbidden in the URL.
+        auth:
+          $ref: "#/components/schemas/ProxyBasicAuth"
     HttpValue:
       oneOf:
         - type: string
@@ -1112,6 +1145,12 @@ components:
           default: 1048576
         auth:
           $ref: "#/components/schemas/HttpAuth"
+        proxy:
+          $ref: "#/components/schemas/ProxySpec"
+        resolver:
+          $ref: "#/components/schemas/ResolverUri"
+        address_family:
+          $ref: "#/components/schemas/AddressFamily"
     TcpCheckSpec:
       type: object
       additionalProperties: false
@@ -1135,6 +1174,12 @@ components:
           type: string
           maxLength: 4096
           description: UTF-8 text encoded to bytes for the Probe contract; the runtime enforces the 4096-byte limit.
+        proxy:
+          $ref: "#/components/schemas/ProxySpec"
+        resolver:
+          $ref: "#/components/schemas/ResolverUri"
+        address_family:
+          $ref: "#/components/schemas/AddressFamily"
     DnsCheckSpec:
       type: object
       additionalProperties: false
@@ -1156,11 +1201,9 @@ components:
             type: string
             maxLength: 4096
         resolver:
-          type: string
-          format: uri
-          pattern: "^(?:udp|tcp|tls)://"
-          maxLength: 2048
-          description: Resolver URI using udp, tcp, or tls scheme.
+          $ref: "#/components/schemas/ResolverUri"
+        address_family:
+          $ref: "#/components/schemas/AddressFamily"
         expected_rcode:
           type: string
           enum: [NOERROR, NXDOMAIN, SERVFAIL, REFUSED]
@@ -1199,6 +1242,10 @@ components:
           type: integer
           minimum: 1
           maximum: 300000
+        resolver:
+          $ref: "#/components/schemas/ResolverUri"
+        address_family:
+          $ref: "#/components/schemas/AddressFamily"
     TlsCheckSpec:
       type: object
       additionalProperties: false
@@ -1229,6 +1276,12 @@ components:
           minimum: 0
           maximum: 3650
           default: 7
+        proxy:
+          $ref: "#/components/schemas/ProxySpec"
+        resolver:
+          $ref: "#/components/schemas/ResolverUri"
+        address_family:
+          $ref: "#/components/schemas/AddressFamily"
     PushCheckSpec:
       type: object
       additionalProperties: false
@@ -1300,6 +1353,12 @@ components:
           minimum: 0
           maximum: 10485760
           default: 1048576
+        proxy:
+          $ref: "#/components/schemas/ProxySpec"
+        resolver:
+          $ref: "#/components/schemas/ResolverUri"
+        address_family:
+          $ref: "#/components/schemas/AddressFamily"
     ObservationOutcome:
       type: string
       enum: [SUCCESS, TARGET_FAILURE, PROBE_FAILURE, CANCELLED]

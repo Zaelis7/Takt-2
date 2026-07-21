@@ -88,6 +88,42 @@
         }
       }
     },
+    "resolverUri": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^(?:udp|tcp|tls)://(?![^/?#]*@)[^/?#]+/?$",
+      "maxLength": 2048,
+      "description": "Authority-only DNS resolver URI without credentials, path, query, or fragment."
+    },
+    "addressFamily": {
+      "enum": ["auto", "ipv4", "ipv6"],
+      "default": "auto",
+      "description": "Address family used to connect to the target, resolver, or proxy; it does not change a DNS record type."
+    },
+    "proxyBasicAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["username", "password"],
+      "properties": {
+        "username": { "$ref": "#/$defs/secretRef" },
+        "password": { "$ref": "#/$defs/secretRef" }
+      }
+    },
+    "proxySpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^(?:http|https|socks5)://(?![^/?#]*@)[^/?#]+/?$",
+          "maxLength": 2048,
+          "description": "Authority-only proxy URL; credentials are forbidden in the URL."
+        },
+        "auth": { "$ref": "#/$defs/proxyBasicAuth" }
+      }
+    },
     "httpValue": {
       "oneOf": [
         { "type": "string", "maxLength": 1048576 },
@@ -266,7 +302,10 @@
         "jsonPointerContains": { "$ref": "#/$defs/jsonPointerAssertion" },
         "maxResponseTime": { "$ref": "#/$defs/checkDuration" },
         "responseBodyLimitBytes": { "type": "integer", "minimum": 1, "maximum": 1048576, "default": 1048576 },
-        "auth": { "$ref": "#/$defs/httpAuth" }
+        "auth": { "$ref": "#/$defs/httpAuth" },
+        "proxy": { "$ref": "#/$defs/proxySpec" },
+        "resolver": { "$ref": "#/$defs/resolverUri" },
+        "addressFamily": { "$ref": "#/$defs/addressFamily" }
       }
     },
     "tcpTarget": {
@@ -277,7 +316,10 @@
         "host": { "type": "string", "minLength": 1, "maxLength": 253 },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "sendText": { "type": "string", "maxLength": 4096 },
-        "expectPrefix": { "type": "string", "maxLength": 4096 }
+        "expectPrefix": { "type": "string", "maxLength": 4096 },
+        "proxy": { "$ref": "#/$defs/proxySpec" },
+        "resolver": { "$ref": "#/$defs/resolverUri" },
+        "addressFamily": { "$ref": "#/$defs/addressFamily" }
       }
     },
     "dnsTarget": {
@@ -292,7 +334,8 @@
           "maxItems": 100,
           "items": { "type": "string", "maxLength": 4096 }
         },
-        "resolver": { "type": "string", "format": "uri", "pattern": "^(?:udp|tcp|tls)://", "maxLength": 2048, "description": "Resolver URI using udp, tcp, or tls scheme." },
+        "resolver": { "$ref": "#/$defs/resolverUri" },
+        "addressFamily": { "$ref": "#/$defs/addressFamily" },
         "expectedRcode": { "enum": ["NOERROR", "NXDOMAIN", "SERVFAIL", "REFUSED"], "default": "NOERROR" },
         "minimumAnswers": { "type": "integer", "minimum": 0, "maximum": 100, "default": 1 },
         "valueMatch": { "enum": ["exact", "contains"], "default": "contains" }
@@ -306,7 +349,9 @@
         "host": { "type": "string", "minLength": 1, "maxLength": 253 },
         "packets": { "type": "integer", "minimum": 1, "maximum": 5, "default": 3 },
         "requiredSuccesses": { "type": "integer", "minimum": 1, "maximum": 5, "default": 1 },
-        "maxLatencyMs": { "type": "integer", "minimum": 1, "maximum": 300000 }
+        "maxLatencyMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
+        "resolver": { "$ref": "#/$defs/resolverUri" },
+        "addressFamily": { "$ref": "#/$defs/addressFamily" }
       }
     },
     "tlsTarget": {
@@ -318,7 +363,10 @@
         "port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 443 },
         "serverName": { "type": "string", "minLength": 1, "maxLength": 253 },
         "warningDays": { "type": "integer", "minimum": 1, "maximum": 3650, "default": 30 },
-        "criticalDays": { "type": "integer", "minimum": 0, "maximum": 3650, "default": 7 }
+        "criticalDays": { "type": "integer", "minimum": 0, "maximum": 3650, "default": 7 },
+        "proxy": { "$ref": "#/$defs/proxySpec" },
+        "resolver": { "$ref": "#/$defs/resolverUri" },
+        "addressFamily": { "$ref": "#/$defs/addressFamily" }
       }
     },
     "pushTarget": {
@@ -366,7 +414,10 @@
           "items": { "$ref": "#/$defs/browserStep" }
         },
         "maxNetworkResponseBytes": { "type": "integer", "minimum": 1, "maximum": 10485760, "default": 10485760 },
-        "screenshotOnFailureMaxBytes": { "type": "integer", "minimum": 0, "maximum": 10485760, "default": 1048576 }
+        "screenshotOnFailureMaxBytes": { "type": "integer", "minimum": 0, "maximum": 10485760, "default": 1048576 },
+        "proxy": { "$ref": "#/$defs/proxySpec" },
+        "resolver": { "$ref": "#/$defs/resolverUri" },
+        "addressFamily": { "$ref": "#/$defs/addressFamily" }
       }
     },
     "notificationChannel": {

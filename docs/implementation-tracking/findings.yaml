@@ -60,7 +60,7 @@ findings:
     resolution: The oversized package was split into SPEC-012 and dependency-gated SPEC-015 through SPEC-018. SPEC-012 now defines browser auth/session/recovery; the finding remains open until the token, monitor/SSE, notification and status-page contract packages are implemented. Do not infer response or error semantics from prose alone.
 
   - id: SPEC-004
-    status: open
+    status: resolved
     severity: high
     kind: conflict
     decision: spec_change
@@ -73,7 +73,7 @@ findings:
     affects:
       - PRD-API-002
       - PRD-MON-002
-    resolution: SPEC-013 defines and tests the normative per-kind field, unit, default, limit and SecretRef-to-ephemeral-key mapping across all seven variants. SPEC-019 must still align common proxy, resolver and address-family options before this finding can be resolved. Framework-free Rust domain types remain explicitly scoped to MON-011.
+    resolution: SPEC-013 defines and tests the normative per-kind mapping across all seven variants. SPEC-019 adds the shared proxy, resolver and address-family schemas, exact applicability, SecretRef-to-ephemeral-key boundary, positive and negative golden fixtures and generated-type drift checks. Framework-free Rust domain types remain explicitly scoped to MON-011.
 
   - id: SPEC-005
     status: open
@@ -140,14 +140,16 @@ findings:
     resolution: Record owner decisions in versioned ADRs or specification decisions before public packaging and signing work is approved.
 
   - id: SEC-001
-    status: open
+    status: resolved
     severity: high
     kind: gap
     decision: implementation
     summary: The OpenAPI code-generation toolchain resolves js-yaml 4.2.0 through openapi-typescript and is affected by GHSA-52cp-r559-cp3m, causing the mandatory full Node audit gate to fail.
     locations:
-      - package.json
+      - pnpm-workspace.yaml
       - pnpm-lock.yaml
+      - tools/node-supply-chain.test.mjs
+      - docs/implementation-evidence/gov-002-node-supply-chain.md
     affects:
       - PRD-API-002
-    resolution: Update or override the OpenAPI tooling dependency so the lockfile resolves js-yaml 4.3.0 or newer, then rerun contract, generated-drift, license and full Node audit gates without weakening audit policy.
+    resolution: Resolved by a pnpm 11 workspace override to js-yaml 4.3.0, a lockfile regression test that rejects every older js-yaml package, and green contract, generated-drift, license and full Node audit gates without an audit exception.

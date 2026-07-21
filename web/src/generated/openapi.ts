@@ -452,6 +452,29 @@ export interface components {
             /** @default value */
             key: string;
         };
+        /**
+         * Format: uri
+         * @description Authority-only DNS resolver URI without credentials, path, query, or fragment.
+         */
+        ResolverUri: string;
+        /**
+         * @description Address family used to connect to the target, resolver, or proxy; it does not change a DNS record type.
+         * @default auto
+         * @enum {string}
+         */
+        AddressFamily: "auto" | "ipv4" | "ipv6";
+        ProxyBasicAuth: {
+            username: components["schemas"]["SecretRef"];
+            password: components["schemas"]["SecretRef"];
+        };
+        ProxySpec: {
+            /**
+             * Format: uri
+             * @description Authority-only proxy URL; credentials are forbidden in the URL.
+             */
+            url: string;
+            auth?: components["schemas"]["ProxyBasicAuth"];
+        };
         HttpValue: string | components["schemas"]["SecretRef"];
         JsonPointerAssertion: {
             pointer: string;
@@ -522,6 +545,9 @@ export interface components {
             /** @default 1048576 */
             response_body_limit_bytes: number;
             auth?: components["schemas"]["HttpAuth"];
+            proxy?: components["schemas"]["ProxySpec"];
+            resolver?: components["schemas"]["ResolverUri"];
+            address_family?: components["schemas"]["AddressFamily"];
         };
         TcpCheckSpec: {
             /**
@@ -535,6 +561,9 @@ export interface components {
             send_text?: string;
             /** @description UTF-8 text encoded to bytes for the Probe contract; the runtime enforces the 4096-byte limit. */
             expect_prefix?: string;
+            proxy?: components["schemas"]["ProxySpec"];
+            resolver?: components["schemas"]["ResolverUri"];
+            address_family?: components["schemas"]["AddressFamily"];
         };
         DnsCheckSpec: {
             /**
@@ -546,11 +575,8 @@ export interface components {
             /** @enum {string} */
             record_type: "A" | "AAAA" | "CNAME" | "MX" | "TXT" | "NS" | "SOA" | "CAA";
             expected_values?: string[];
-            /**
-             * Format: uri
-             * @description Resolver URI using udp, tcp, or tls scheme.
-             */
-            resolver?: string;
+            resolver?: components["schemas"]["ResolverUri"];
+            address_family?: components["schemas"]["AddressFamily"];
             /**
              * @default NOERROR
              * @enum {string}
@@ -576,6 +602,8 @@ export interface components {
             /** @default 1 */
             required_successes: number;
             max_latency_ms?: number;
+            resolver?: components["schemas"]["ResolverUri"];
+            address_family?: components["schemas"]["AddressFamily"];
         };
         TlsCheckSpec: {
             /**
@@ -591,6 +619,9 @@ export interface components {
             warning_days: number;
             /** @default 7 */
             critical_days: number;
+            proxy?: components["schemas"]["ProxySpec"];
+            resolver?: components["schemas"]["ResolverUri"];
+            address_family?: components["schemas"]["AddressFamily"];
         };
         PushCheckSpec: {
             /**
@@ -621,6 +652,9 @@ export interface components {
             max_network_response_bytes: number;
             /** @default 1048576 */
             screenshot_on_failure_max_bytes: number;
+            proxy?: components["schemas"]["ProxySpec"];
+            resolver?: components["schemas"]["ResolverUri"];
+            address_family?: components["schemas"]["AddressFamily"];
         };
         /** @enum {string} */
         ObservationOutcome: "SUCCESS" | "TARGET_FAILURE" | "PROBE_FAILURE" | "CANCELLED";

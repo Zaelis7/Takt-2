@@ -24,7 +24,16 @@
       "auth": {
         "type": "bearer",
         "token": { "secret_ref": "api-auth", "key": "bearer-token" }
-      }
+      },
+      "proxy": {
+        "url": "https://proxy.example.test:8443",
+        "auth": {
+          "username": { "secret_ref": "proxy-auth", "key": "username" },
+          "password": { "secret_ref": "proxy-auth", "key": "password" }
+        }
+      },
+      "resolver": "tls://dns.example.test:853",
+      "address_family": "ipv4"
     },
     "config_target": {
       "url": "https://example.test/health",
@@ -47,7 +56,16 @@
       "auth": {
         "type": "bearer",
         "token": { "secretRef": "api-auth", "key": "bearer-token" }
-      }
+      },
+      "proxy": {
+        "url": "https://proxy.example.test:8443",
+        "auth": {
+          "username": { "secretRef": "proxy-auth", "key": "username" },
+          "password": { "secretRef": "proxy-auth", "key": "password" }
+        }
+      },
+      "resolver": "tls://dns.example.test:853",
+      "addressFamily": "ipv4"
     },
     "proto": {
       "url": "https://example.test/health",
@@ -65,32 +83,35 @@
       "json_pointer_contains": {},
       "max_response_time_ms": 2000,
       "response_body_limit_bytes": 1048576,
-      "auth": {}
+      "auth": {},
+      "proxy": { "url": "https://proxy.example.test:8443", "auth": { "username": {}, "password": {} } },
+      "resolver": "tls://dns.example.test:853",
+      "address_family": "ADDRESS_FAMILY_IPV4"
     }
   },
   {
     "kind": "tcp",
-    "api": { "type": "tcp", "host": "tcp.example.test", "port": 443, "send_text": "PING", "expect_prefix": "PONG" },
-    "config_target": { "host": "tcp.example.test", "port": 443, "sendText": "PING", "expectPrefix": "PONG" },
-    "proto": { "host": "tcp.example.test", "port": 443, "send_bytes": {}, "expect_prefix": {} }
+    "api": { "type": "tcp", "host": "tcp.example.test", "port": 443, "send_text": "PING", "expect_prefix": "PONG", "proxy": { "url": "socks5://proxy.example.test:1080" }, "resolver": "udp://dns.example.test:53", "address_family": "auto" },
+    "config_target": { "host": "tcp.example.test", "port": 443, "sendText": "PING", "expectPrefix": "PONG", "proxy": { "url": "socks5://proxy.example.test:1080" }, "resolver": "udp://dns.example.test:53", "addressFamily": "auto" },
+    "proto": { "host": "tcp.example.test", "port": 443, "send_bytes": {}, "expect_prefix": {}, "proxy": { "url": "socks5://proxy.example.test:1080" }, "resolver": "udp://dns.example.test:53", "address_family": "ADDRESS_FAMILY_AUTO" }
   },
   {
     "kind": "dns",
-    "api": { "type": "dns", "name": "example.test", "record_type": "A", "expected_values": ["192.0.2.1"], "resolver": "tls://dns.example.test:853", "expected_rcode": "NOERROR", "minimum_answers": 1, "value_match": "contains" },
-    "config_target": { "name": "example.test", "recordType": "A", "expectedValues": ["192.0.2.1"], "resolver": "tls://dns.example.test:853", "expectedRcode": "NOERROR", "minimumAnswers": 1, "valueMatch": "contains" },
-    "proto": { "name": "example.test", "record_type": "A", "expected_values": {}, "resolver": "tls://dns.example.test:853", "expected_rcode": "NOERROR", "minimum_answers": 1, "value_match": "DNS_VALUE_MATCH_CONTAINS" }
+    "api": { "type": "dns", "name": "example.test", "record_type": "A", "expected_values": ["192.0.2.1"], "resolver": "tls://dns.example.test:853", "address_family": "ipv6", "expected_rcode": "NOERROR", "minimum_answers": 1, "value_match": "contains" },
+    "config_target": { "name": "example.test", "recordType": "A", "expectedValues": ["192.0.2.1"], "resolver": "tls://dns.example.test:853", "addressFamily": "ipv6", "expectedRcode": "NOERROR", "minimumAnswers": 1, "valueMatch": "contains" },
+    "proto": { "name": "example.test", "record_type": "A", "expected_values": {}, "resolver": "tls://dns.example.test:853", "address_family": "ADDRESS_FAMILY_IPV6", "expected_rcode": "NOERROR", "minimum_answers": 1, "value_match": "DNS_VALUE_MATCH_CONTAINS" }
   },
   {
     "kind": "icmp",
-    "api": { "type": "icmp", "host": "192.0.2.1", "packets": 5, "required_successes": 3, "max_latency_ms": 500 },
-    "config_target": { "host": "192.0.2.1", "packets": 5, "requiredSuccesses": 3, "maxLatencyMs": 500 },
-    "proto": { "host": "192.0.2.1", "packets": 5, "required_successes": 3, "max_latency_ms": 500 }
+    "api": { "type": "icmp", "host": "icmp.example.test", "packets": 5, "required_successes": 3, "max_latency_ms": 500, "resolver": "tcp://dns.example.test:53", "address_family": "ipv4" },
+    "config_target": { "host": "icmp.example.test", "packets": 5, "requiredSuccesses": 3, "maxLatencyMs": 500, "resolver": "tcp://dns.example.test:53", "addressFamily": "ipv4" },
+    "proto": { "host": "icmp.example.test", "packets": 5, "required_successes": 3, "max_latency_ms": 500, "resolver": "tcp://dns.example.test:53", "address_family": "ADDRESS_FAMILY_IPV4" }
   },
   {
     "kind": "tls",
-    "api": { "type": "tls", "host": "example.test", "port": 443, "server_name": "example.test", "warning_days": 30, "critical_days": 7 },
-    "config_target": { "host": "example.test", "port": 443, "serverName": "example.test", "warningDays": 30, "criticalDays": 7 },
-    "proto": { "host": "example.test", "port": 443, "server_name": "example.test", "warning_days": 30, "critical_days": 7 }
+    "api": { "type": "tls", "host": "example.test", "port": 443, "server_name": "example.test", "warning_days": 30, "critical_days": 7, "proxy": { "url": "http://proxy.example.test:8080" }, "resolver": "udp://dns.example.test:53", "address_family": "auto" },
+    "config_target": { "host": "example.test", "port": 443, "serverName": "example.test", "warningDays": 30, "criticalDays": 7, "proxy": { "url": "http://proxy.example.test:8080" }, "resolver": "udp://dns.example.test:53", "addressFamily": "auto" },
+    "proto": { "host": "example.test", "port": 443, "server_name": "example.test", "warning_days": 30, "critical_days": 7, "proxy": { "url": "http://proxy.example.test:8080" }, "resolver": "udp://dns.example.test:53", "address_family": "ADDRESS_FAMILY_AUTO" }
   },
   {
     "kind": "push",
@@ -108,7 +129,10 @@
         { "action": "assert_status", "value": "200" }
       ],
       "max_network_response_bytes": 10485760,
-      "screenshot_on_failure_max_bytes": 1048576
+      "screenshot_on_failure_max_bytes": 1048576,
+      "proxy": { "url": "http://proxy.example.test:8080" },
+      "resolver": "tls://dns.example.test:853",
+      "address_family": "ipv6"
     },
     "config_target": {
       "startUrl": "https://example.test/login",
@@ -117,7 +141,10 @@
         { "action": "assertStatus", "value": "200" }
       ],
       "maxNetworkResponseBytes": 10485760,
-      "screenshotOnFailureMaxBytes": 1048576
+      "screenshotOnFailureMaxBytes": 1048576,
+      "proxy": { "url": "http://proxy.example.test:8080" },
+      "resolver": "tls://dns.example.test:853",
+      "addressFamily": "ipv6"
     },
     "proto": {
       "start_url": "https://example.test/login",
@@ -126,7 +153,10 @@
         { "action": "ACTION_ASSERT_STATUS", "literal": "200" }
       ],
       "max_network_response_bytes": 10485760,
-      "screenshot_on_failure_max_bytes": 1048576
+      "screenshot_on_failure_max_bytes": 1048576,
+      "proxy": { "url": "http://proxy.example.test:8080" },
+      "resolver": "tls://dns.example.test:853",
+      "address_family": "ADDRESS_FAMILY_IPV6"
     }
   }
 ]

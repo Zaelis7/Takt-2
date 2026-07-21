@@ -142,6 +142,24 @@ message SecretValueRef {
   string ephemeral_key = 1;
 }
 
+enum AddressFamily {
+  ADDRESS_FAMILY_AUTO = 0;
+  ADDRESS_FAMILY_IPV4 = 1;
+  ADDRESS_FAMILY_IPV6 = 2;
+}
+
+message ProxyBasicAuth {
+  SecretValueRef username = 1;
+  SecretValueRef password = 2;
+}
+
+message ProxyOptions {
+  // Authority-only URL using http, https, or socks5. Credentials are carried
+  // exclusively by auth and refer to the sealed ephemeral secret bundle.
+  string url = 1;
+  ProxyBasicAuth auth = 2;
+}
+
 message HeaderValue {
   oneof value {
     string literal = 1;
@@ -205,6 +223,9 @@ message HttpCheck {
   JsonPointerAssertion json_pointer_contains = 15;
   uint32 max_response_time_ms = 16;
   HttpAuth auth = 17;
+  ProxyOptions proxy = 18;
+  string resolver = 19;
+  AddressFamily address_family = 20;
 }
 
 message TcpCheck {
@@ -212,6 +233,9 @@ message TcpCheck {
   uint32 port = 2;
   bytes send_bytes = 3;
   bytes expect_prefix = 4;
+  ProxyOptions proxy = 5;
+  string resolver = 6;
+  AddressFamily address_family = 7;
 }
 
 message DnsCheck {
@@ -224,6 +248,7 @@ message DnsCheck {
   // Presence distinguishes the canonical default 1 from an explicit zero.
   optional uint32 minimum_answers = 6;
   DnsValueMatch value_match = 7;
+  AddressFamily address_family = 8;
 }
 
 enum DnsValueMatch {
@@ -236,6 +261,8 @@ message IcmpCheck {
   uint32 packets = 2;
   uint32 required_successes = 3;
   uint32 max_latency_ms = 4;
+  string resolver = 5;
+  AddressFamily address_family = 6;
 }
 
 message TlsCheck {
@@ -245,6 +272,9 @@ message TlsCheck {
   uint32 warning_days = 4;
   // Presence distinguishes the canonical default 7 from an explicit zero.
   optional uint32 critical_days = 5;
+  ProxyOptions proxy = 6;
+  string resolver = 7;
+  AddressFamily address_family = 8;
 }
 
 message PushCheck {
@@ -280,6 +310,9 @@ message BrowserCheck {
   // Presence distinguishes the canonical default 1 MiB from an explicit zero.
   optional uint32 screenshot_on_failure_max_bytes = 3;
   uint32 max_network_response_bytes = 4;
+  ProxyOptions proxy = 5;
+  string resolver = 6;
+  AddressFamily address_family = 7;
 }
 
 enum ObservationOutcome {

@@ -81,6 +81,49 @@ function protoFixtureShapeIsDeclared(fixture) {
   }
 }
 
+const proxiedCheckKinds = new Set(["http", "tcp", "tls", "browser"]);
+const resolverUriPattern = /^(?:udp|tcp|tls):\/\/(?![^/?#]*@)[^/?#]+\/?$/;
+const proxyUriPattern = /^(?:http|https|socks5):\/\/(?![^/?#]*@)[^/?#]+\/?$/;
+
+function protoNetworkOptionsAreSemanticallyValid(kind, value) {
+  if (
+    value.address_family !== undefined &&
+    ![
+      "ADDRESS_FAMILY_AUTO",
+      "ADDRESS_FAMILY_IPV4",
+      "ADDRESS_FAMILY_IPV6",
+    ].includes(value.address_family)
+  ) {
+    return false;
+  }
+  if (
+    value.resolver !== undefined &&
+    (typeof value.resolver !== "string" ||
+      !resolverUriPattern.test(value.resolver))
+  ) {
+    return false;
+  }
+  if (value.proxy === undefined) {
+    return true;
+  }
+  if (!proxiedCheckKinds.has(kind)) {
+    return false;
+  }
+  if (
+    typeof value.proxy.url !== "string" ||
+    !proxyUriPattern.test(value.proxy.url)
+  ) {
+    return false;
+  }
+  if (value.proxy.auth === undefined) {
+    return true;
+  }
+  return (
+    !JSON.stringify(value.proxy.auth).includes("literal") &&
+    Object.keys(value.proxy.auth).sort().join(",") === "password,username"
+  );
+}
+
 function assertExactFields(actual, expected, label) {
   assert.deepEqual(
     [...actual].sort(),
@@ -91,6 +134,9 @@ function assertExactFields(actual, expected, label) {
 
 function protoFixtureIsSemanticallyValid({ kind, proto: value }) {
   if (value.auth !== undefined && JSON.stringify(value.auth).includes("literal")) {
+    return false;
+  }
+  if (!protoNetworkOptionsAreSemanticallyValid(kind, value)) {
     return false;
   }
   const portValid = value.port === undefined || (value.port >= 1 && value.port <= 65535);
@@ -226,5 +272,71 @@ test("PRD-MON-002 CheckSpec defaults and limits are canonical", () => {
     "DNS_VALUE_MATCH_CONTAINS = 0",
   ]) {
     assert.ok(proto.includes(declaration), `Proto default/presence drift: ${declaration}`);
+  }
+});
+
+test("PRD-API-002 and PRD-MON-002 common network options are canonical", () => {
+  const api = openapi.components.schemas;
+  const config = configSchema.$defs;
+  const schemaNames = {
+    http: ["HttpCheckSpec", "httpTarget"],
+    tcp: ["TcpCheckSpec", "tcpTarget"],
+    dns: ["DnsCheckSpec", "dnsTarget"],
+    icmp: ["IcmpCheckSpec", "icmpTarget"],
+    tls: ["TlsCheckSpec", "tlsTarget"],
+    browser: ["BrowserCheckSpec", "browserTarget"],
+  };
+
+  for (const [kind, [apiName, configName]] of Object.entries(schemaNames)) {
+    assert.equal(
+      api[apiName].properties.resolver.$ref,
+      "#/components/schemas/ResolverUri",
+      `${kind} OpenAPI resolver drift`,
+    );
+    assert.equal(
+      config[configName].properties.resolver.$ref,
+      "#/$defs/resolverUri",
+      `${kind} config resolver drift`,
+    );
+    assert.equal(api[apiName].properties.address_family.$ref, "#/components/schemas/AddressFamily");
+    assert.equal(config[configName].properties.addressFamily.$ref, "#/$defs/addressFamily");
+    if (proxiedCheckKinds.has(kind)) {
+      assert.equal(api[apiName].properties.proxy.$ref, "#/components/schemas/ProxySpec");
+      assert.equal(config[configName].properties.proxy.$ref, "#/$defs/proxySpec");
+    } else {
+      assert.equal(api[apiName].properties.proxy, undefined);
+      assert.equal(config[configName].properties.proxy, undefined);
+    }
+  }
+
+  assert.equal(api.ResolverUri.pattern, config.resolverUri.pattern);
+  assert.deepEqual(api.AddressFamily.enum, config.addressFamily.enum);
+  assert.equal(api.AddressFamily.default, config.addressFamily.default);
+  assertExactFields(Object.keys(api.ProxySpec.properties), Object.keys(config.proxySpec.properties), "proxy");
+  assert.equal(api.ProxySpec.properties.url.pattern, config.proxySpec.properties.url.pattern);
+  assertExactFields(
+    Object.keys(api.ProxyBasicAuth.properties),
+    Object.keys(config.proxyBasicAuth.properties),
+    "proxy auth",
+  );
+  for (const field of ["username", "password"]) {
+    assert.equal(api.ProxyBasicAuth.properties[field].$ref, "#/components/schemas/SecretRef");
+    assert.equal(config.proxyBasicAuth.properties[field].$ref, "#/$defs/secretRef");
+  }
+  assert.equal(api.PushCheckSpec.properties.proxy, undefined);
+  assert.equal(api.PushCheckSpec.properties.resolver, undefined);
+  assert.equal(api.PushCheckSpec.properties.address_family, undefined);
+  assert.equal(config.pushTarget.properties.proxy, undefined);
+  assert.equal(config.pushTarget.properties.resolver, undefined);
+  assert.equal(config.pushTarget.properties.addressFamily, undefined);
+
+  for (const declaration of [
+    "ADDRESS_FAMILY_AUTO = 0",
+    "ADDRESS_FAMILY_IPV4 = 1",
+    "ADDRESS_FAMILY_IPV6 = 2",
+    "message ProxyBasicAuth",
+    "message ProxyOptions",
+  ]) {
+    assert.ok(proto.includes(declaration), `Proto network option drift: ${declaration}`);
   }
 });

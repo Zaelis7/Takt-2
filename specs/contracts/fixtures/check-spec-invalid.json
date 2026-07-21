@@ -68,5 +68,40 @@
     "api": { "type": "http", "url": "https://example.test", "auth": { "type": "bearer", "token": "raw-token" } },
     "config_target": { "url": "https://example.test", "auth": { "type": "bearer", "token": "raw-token" } },
     "proto": { "url": "https://example.test", "auth": { "bearer": { "literal": "raw-token" } } }
+  },
+  {
+    "name": "HTTP proxy uses an unsupported scheme",
+    "kind": "http",
+    "api": { "type": "http", "url": "https://example.test", "proxy": { "url": "ftp://proxy.example.test" } },
+    "config_target": { "url": "https://example.test", "proxy": { "url": "ftp://proxy.example.test" } },
+    "proto": { "url": "https://example.test", "proxy": { "url": "ftp://proxy.example.test" } }
+  },
+  {
+    "name": "HTTP proxy URL embeds credentials",
+    "kind": "http",
+    "api": { "type": "http", "url": "https://example.test", "proxy": { "url": "http://user:password@proxy.example.test" } },
+    "config_target": { "url": "https://example.test", "proxy": { "url": "http://user:password@proxy.example.test" } },
+    "proto": { "url": "https://example.test", "proxy": { "url": "http://user:password@proxy.example.test" } }
+  },
+  {
+    "name": "TCP proxy auth contains a literal secret",
+    "kind": "tcp",
+    "api": { "type": "tcp", "host": "example.test", "port": 443, "proxy": { "url": "http://proxy.example.test", "auth": { "username": "raw-user", "password": { "secret_ref": "proxy-auth" } } } },
+    "config_target": { "host": "example.test", "port": 443, "proxy": { "url": "http://proxy.example.test", "auth": { "username": "raw-user", "password": { "secretRef": "proxy-auth" } } } },
+    "proto": { "host": "example.test", "port": 443, "proxy": { "url": "http://proxy.example.test", "auth": { "literal_username": "raw-user", "password": {} } } }
+  },
+  {
+    "name": "ICMP resolver uses an unsupported scheme",
+    "kind": "icmp",
+    "api": { "type": "icmp", "host": "example.test", "resolver": "https://dns.example.test/dns-query" },
+    "config_target": { "host": "example.test", "resolver": "https://dns.example.test/dns-query" },
+    "proto": { "host": "example.test", "resolver": "https://dns.example.test/dns-query" }
+  },
+  {
+    "name": "TLS address family is unsupported",
+    "kind": "tls",
+    "api": { "type": "tls", "host": "example.test", "address_family": "ipv10" },
+    "config_target": { "host": "example.test", "addressFamily": "ipv10" },
+    "proto": { "host": "example.test", "address_family": "ADDRESS_FAMILY_IPV10" }
   }
 ]

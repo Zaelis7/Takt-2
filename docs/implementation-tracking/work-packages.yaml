@@ -49,11 +49,31 @@ packages:
 
   - id: GOV-002
     release: cross-release
-    status: planned
+    status: implemented
     requirements: [PRD-API-002]
     findings: [SEC-001]
     depends_on: [GOV-001]
     outcome: Gepatchter YAML-Parser im OpenAPI-Codegen-Tooling ohne High-Severity-Advisory.
+    preflight:
+      in_scope:
+        - Regressionsschutz fuer die minimale sichere js-yaml-Version im committed pnpm-Lockfile.
+        - Gepinnte transitive Aufloesung auf js-yaml 4.3.0 oder neuer ohne Audit-Ausnahme.
+        - Node-, Contract-, Generated-Drift-, Tracking- und Evidence-Validierung fuer GOV-002.
+      out_of_scope:
+        - Aenderungen an OpenAPI-Semantik, generierten API-Typen oder Produktlaufzeit.
+        - Allgemeine Dependency-Upgrades ausserhalb des betroffenen js-yaml-Pfads.
+        - Unabhaengige Clean-Checkout-Releasefreigabe und PostgreSQL-Evidence.
+      affected_artifacts:
+        - pnpm-workspace.yaml
+        - pnpm-lock.yaml
+        - tools/node-supply-chain.test.mjs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/findings.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/gov-002-node-supply-chain.md
+      estimated_handwritten_lines: 120
+      estimated_validation_minutes: 25
     acceptance:
       - Der transitive `js-yaml`-Pfad verwendet mindestens Version 4.3.0.
       - Contract-, Generated-Drift- und vollständiger Node-Audit-Gate bleiben grün.
@@ -151,11 +171,39 @@ packages:
 
   - id: SPEC-019
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-002, PRD-MON-002]
     findings: [SPEC-004]
     depends_on: [SPEC-013]
     outcome: Kanonisches Mapping gemeinsamer Proxy-, Resolver- und Adressfamilienoptionen für alle aktiven Netzwerkchecks.
+    preflight:
+      in_scope:
+        - Normatives Mapping fuer Resolver und Adressfamilie auf HTTP, TCP, DNS, ICMP, TLS und Browser.
+        - Proxy-URL und ausschliesslich referenzierte Basic-Zugangsdaten fuer HTTP, TCP, TLS und Browser.
+        - Positive und negative Cross-Contract-Fixtures fuer OpenAPI, Config Schema und Proto.
+        - Regenerierte OpenAPI- und Proto-Typen sowie Tracking und Implementation Evidence.
+      out_of_scope:
+        - Push-Heartbeat ohne ausgehende Netzwerkverbindung sowie Proxy-Unterstuetzung fuer DNS und ICMP.
+        - Rust-Domaenentypen, Resolver- oder Proxy-Executor und Laufzeitvalidierung ausserhalb der Maschinenvertraege.
+        - Migrationen, API-Endpunkte, UI und Veraenderungen an Egress-Policies.
+      affected_artifacts:
+        - specs/04-probes-and-checks.md
+        - specs/contracts/openapi.yaml
+        - specs/contracts/takt-config.schema.json
+        - specs/contracts/probe.proto
+        - specs/contracts/fixtures/check-spec-valid.json
+        - specs/contracts/fixtures/check-spec-invalid.json
+        - tools/check-spec-contract.test.mjs
+        - web/src/generated/openapi.ts
+        - crates/probe-protocol/src/generated/takt.probe.v1.rs
+        - crates/probe-protocol/tests/generated_contract.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/findings.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/spec-019-network-options-contract.md
+      estimated_handwritten_lines: 560
+      estimated_validation_minutes: 25
     acceptance:
       - OpenAPI, Config Schema und Proto besitzen dieselben Netzwerkfelder, SecretRef-Grenzen und Namen.
       - Positive und negative Golden-Fixtures prüfen Proxy-URLs, Proxy-Auth, Resolver und Adressfamilien.
