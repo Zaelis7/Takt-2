@@ -84,7 +84,8 @@ requirements:
       - crates/server/src/main.rs
       - crates/api/tests/auth_http.rs
       - docs/implementation-evidence/iam-018-auth-runtime.md
-    note: Browser login, session and logout now run through `/api/v1`; recovery and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: Browser login, session and logout run through `/api/v1`, and API-token CRUD is contracted; token/recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
@@ -115,21 +116,29 @@ requirements:
       - tools/check-acceptance-bindings.test.mjs
       - docs/implementation-evidence/qa-001-acceptance-bindings.md
       - docs/implementation-evidence/iam-010-auth-domain-contract.md
-    note: OpenAPI lint, generated-type drift, browser-auth with stable problem codes, complete cross-contract CheckSpec mapping, the OpenAPI codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
+      - tools/openapi-token-contract.test.mjs
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: OpenAPI lint, generated-type drift, browser-auth/API-token contracts, complete cross-contract CheckSpec mapping, the codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
   - id: PRD-API-003
     release: "0.1"
-    coverage: none
-    verification: none
+    coverage: partial
+    verification: evidence_only
     spec_health: clear
-    evidence: []
-    note: Idempotency keys and HTTP ETag behavior are not implemented.
+    evidence:
+      - specs/contracts/openapi.yaml
+      - tools/openapi-token-contract.test.mjs
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: API-token writes contractually expose idempotency and ETag/If-Match boundaries; no runtime write implements them yet.
   - id: PRD-API-004
     release: "0.1"
-    coverage: none
-    verification: none
+    coverage: partial
+    verification: evidence_only
     spec_health: clear
-    evidence: []
-    note: No production list endpoint implements cursor pagination, filtering or stable sorting.
+    evidence:
+      - specs/contracts/openapi.yaml
+      - tools/openapi-token-contract.test.mjs
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: API-token listing contractually exposes cursor pagination and bounded filters; no production list endpoint implements them yet.
   - id: PRD-API-005
     release: "0.1"
     coverage: partial
@@ -145,7 +154,8 @@ requirements:
       - docs/implementation-evidence/iam-020-auth-http-boundary.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/iam-012-login-rate-limit.md
-    note: Readiness and browser auth emit bounded, redacted Problem Details with stable codes, including 429 plus Retry-After; the general resource runtime error boundary is absent.
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: Readiness/browser auth emit bounded redacted Problems and API-token CRUD has explicit problem responses; the general resource runtime error boundary is absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -327,7 +337,8 @@ requirements:
       - docs/implementation-evidence/iam-020-auth-http-boundary.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/iam-012-login-rate-limit.md
-    note: Local owner and composed login/session/logout runtime exist with secure cookies, CSRF and fixed IP/account rate limits; API-token contract/runtime and scopes remain absent (SPEC-003).
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: Local owner and browser-auth runtime exist; API-token CRUD/scopes are contracted with one-time output, but token persistence/authentication/enforcement remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -358,7 +369,8 @@ requirements:
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-016-auth-application.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
-    note: Browser-auth HTTP operations enforce session and CSRF server-side, but no general resource API performs permission authorization.
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: Browser-auth enforces session/CSRF and the token contract declares authentication/403 boundaries, but no general resource runtime performs permission authorization.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -373,7 +385,8 @@ requirements:
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-016-auth-application.md
       - docs/implementation-evidence/iam-018-auth-runtime.md
-    note: Bootstrap, runtime login failure/success, logout and recovery write append-only redacted audit events; full action coverage, export and tamper evidence are absent.
+      - docs/implementation-evidence/spec-015-api-token-contract.md
+    note: Existing auth writes audit; the API-token contract prevents secret readback, while token-write audit runtime, full action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"

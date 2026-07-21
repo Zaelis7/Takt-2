@@ -141,6 +141,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/api-tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List redacted API-token metadata
+         * @description Results use stable ordering by created_at descending and then id descending.
+         */
+        get: operations["listApiTokens"];
+        put?: never;
+        /**
+         * Create an API token and reveal its value once
+         * @description The opaque token value is returned only by this operation and cannot be retrieved later.
+         */
+        post: operations["createApiToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/api-tokens/{api_token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_token_id: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        /** Get redacted API-token metadata */
+        get: operations["getApiToken"];
+        put?: never;
+        post?: never;
+        /** Revoke an API token */
+        delete: operations["revokeApiToken"];
+        options?: never;
+        head?: never;
+        /**
+         * Update non-privilege-bearing API-token metadata
+         * @description Scopes, kind, organization and project are immutable; replace the token to change its authorization.
+         */
+        patch: operations["updateApiToken"];
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/monitors": {
         parameters: {
             query?: never;
@@ -384,6 +432,56 @@ export interface components {
              * @description Absolute expiry, 7 days by default and configurable by the operator.
              */
             absolute_expires_at: string;
+        };
+        /** @enum {string} */
+        ApiTokenKind: "personal" | "service";
+        /** @enum {string} */
+        ApiTokenStatus: "active" | "revoked" | "expired";
+        ApiTokenScope: string;
+        /** @description Canonical IPv4 or IPv6 CIDR validated by the runtime. */
+        IpNetwork: string;
+        ApiTokenCreate: {
+            name: string;
+            kind: components["schemas"]["ApiTokenKind"];
+            scopes: components["schemas"]["ApiTokenScope"][];
+            project_id?: components["schemas"]["Uuid"];
+            /** Format: date-time */
+            expires_at?: string;
+            ip_networks?: components["schemas"]["IpNetwork"][];
+        };
+        ApiTokenPatch: {
+            name?: string;
+            expires_at?: string | null;
+            ip_networks?: components["schemas"]["IpNetwork"][];
+        };
+        ApiToken: {
+            id: components["schemas"]["Uuid"];
+            organization_id: components["schemas"]["Uuid"];
+            project_id: components["schemas"]["Uuid"] | null;
+            name: string;
+            kind: components["schemas"]["ApiTokenKind"];
+            /** @description Non-secret lookup prefix; never sufficient to authenticate. */
+            token_prefix: string;
+            scopes: components["schemas"]["ApiTokenScope"][];
+            ip_networks: components["schemas"]["IpNetwork"][];
+            status: components["schemas"]["ApiTokenStatus"];
+            expires_at: string | null;
+            last_used_at: string | null;
+            revoked_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            version: number;
+        };
+        ApiTokenCreated: {
+            /** @description Opaque bearer token returned only in the successful creation response. */
+            readonly token: string;
+            api_token: components["schemas"]["ApiToken"];
+        };
+        ApiTokenPage: {
+            items: components["schemas"]["ApiToken"][];
+            next_cursor: string | null;
         };
         /** @enum {string} */
         MonitorKind: "http" | "tcp" | "dns" | "icmp" | "tls" | "push" | "browser";
@@ -910,6 +1008,7 @@ export interface components {
         };
     };
     parameters: {
+        ApiTokenId: components["schemas"]["Uuid"];
         ProjectId: components["schemas"]["Uuid"];
         MonitorId: components["schemas"]["Uuid"];
         Limit: number;
@@ -918,6 +1017,8 @@ export interface components {
         IfMatch: string;
         /** @description Session-bound token required for browser state changes. */
         CsrfToken: string;
+        /** @description Required when the operation is authorized with the browser session cookie; ignored for bearer authentication. */
+        CsrfTokenIfSession: string;
     };
     requestBodies: never;
     headers: {
@@ -1129,6 +1230,171 @@ export interface operations {
             400: components["responses"]["RecoveryCompletionProblem"];
             422: components["responses"]["ValidationProblem"];
             429: components["responses"]["RateLimitProblem"];
+        };
+    };
+    listApiTokens: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["Limit"];
+                cursor?: components["parameters"]["Cursor"];
+                project_id?: components["schemas"]["Uuid"];
+                kind?: components["schemas"]["ApiTokenKind"];
+                status?: components["schemas"]["ApiTokenStatus"];
+                scope?: components["schemas"]["ApiTokenScope"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stable cursor page containing redacted token metadata */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiTokenPage"];
+                };
+            };
+            400: components["responses"]["InvalidRequestProblem"];
+            401: components["responses"]["AuthenticationProblem"];
+            403: components["responses"]["Problem"];
+        };
+    };
+    createApiToken: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Required when the operation is authorized with the browser session cookie; ignored for bearer authentication. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfTokenIfSession"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApiTokenCreate"];
+            };
+        };
+        responses: {
+            /** @description Token created; this is the only response containing its opaque value */
+            201: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    Location?: string;
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiTokenCreated"];
+                };
+            };
+            400: components["responses"]["InvalidRequestProblem"];
+            401: components["responses"]["AuthenticationProblem"];
+            403: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["ValidationProblem"];
+        };
+    };
+    getApiToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                api_token_id: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted token metadata */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiToken"];
+                };
+            };
+            401: components["responses"]["AuthenticationProblem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+        };
+    };
+    revokeApiToken: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: components["parameters"]["IfMatch"];
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Required when the operation is authorized with the browser session cookie; ignored for bearer authentication. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfTokenIfSession"];
+            };
+            path: {
+                api_token_id: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Token revoked */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["AuthenticationProblem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            412: components["responses"]["Problem"];
+        };
+    };
+    updateApiToken: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: components["parameters"]["IfMatch"];
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+                /** @description Required when the operation is authorized with the browser session cookie; ignored for bearer authentication. */
+                "X-CSRF-Token"?: components["parameters"]["CsrfTokenIfSession"];
+            };
+            path: {
+                api_token_id: components["parameters"]["ApiTokenId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/merge-patch+json": components["schemas"]["ApiTokenPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated redacted token metadata */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["RequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiToken"];
+                };
+            };
+            400: components["responses"]["InvalidRequestProblem"];
+            401: components["responses"]["AuthenticationProblem"];
+            403: components["responses"]["Problem"];
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            412: components["responses"]["Problem"];
+            422: components["responses"]["ValidationProblem"];
         };
     };
     listMonitors: {

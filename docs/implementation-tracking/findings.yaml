@@ -41,7 +41,7 @@ findings:
     severity: high
     kind: gap
     decision: spec_change
-    summary: Browser login, logout, session and recovery are now contracted, but the normative OpenAPI still omits required 0.1 operations for API-token management, monitor transitions and pause/resume, operation lookup, notification-channel management, status-page management and authenticated SSE.
+    summary: Browser auth/recovery and API-token management are now contracted, but the normative OpenAPI still omits required 0.1 operations for monitor transitions and pause/resume, operation lookup, notification-channel management, status-page management and authenticated SSE.
     locations:
       - specs/contracts/openapi.yaml
       - specs/03-api-and-automation.md
@@ -57,7 +57,7 @@ findings:
       - PRD-NOT-003
       - PRD-NOT-004
       - PRD-STA-001
-    resolution: The oversized package was split into SPEC-012 and dependency-gated SPEC-015 through SPEC-018. SPEC-012 now defines browser auth/session/recovery; the finding remains open until the token, monitor/SSE, notification and status-page contract packages are implemented. Do not infer response or error semantics from prose alone.
+    resolution: The oversized package was split into SPEC-012 and dependency-gated SPEC-015 through SPEC-018. SPEC-012 defines browser auth/session/recovery and SPEC-015 defines API-token CRUD, one-time output, scopes, filters and concurrency boundaries. The finding remains open until the monitor/SSE, notification and status-page contract packages are implemented. Do not infer response or error semantics from prose alone.
 
   - id: SPEC-004
     status: resolved

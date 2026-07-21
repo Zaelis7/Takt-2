@@ -200,6 +200,191 @@ paths:
           $ref: "#/components/responses/ValidationProblem"
         "429":
           $ref: "#/components/responses/RateLimitProblem"
+  /api/v1/api-tokens:
+    get:
+      tags: [Identity]
+      operationId: listApiTokens
+      summary: List redacted API-token metadata
+      description: Results use stable ordering by created_at descending and then id descending.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: project_id
+          in: query
+          schema:
+            $ref: "#/components/schemas/Uuid"
+        - name: kind
+          in: query
+          schema:
+            $ref: "#/components/schemas/ApiTokenKind"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/ApiTokenStatus"
+        - name: scope
+          in: query
+          schema:
+            $ref: "#/components/schemas/ApiTokenScope"
+      responses:
+        "200":
+          description: Stable cursor page containing redacted token metadata
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenPage"
+        "400":
+          $ref: "#/components/responses/InvalidRequestProblem"
+        "401":
+          $ref: "#/components/responses/AuthenticationProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [Identity]
+      operationId: createApiToken
+      summary: Create an API token and reveal its value once
+      description: The opaque token value is returned only by this operation and cannot be retrieved later.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfTokenIfSession"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiTokenCreate"
+      responses:
+        "201":
+          description: Token created; this is the only response containing its opaque value
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            Location:
+              schema:
+                type: string
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiTokenCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequestProblem"
+        "401":
+          $ref: "#/components/responses/AuthenticationProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/ValidationProblem"
+  /api/v1/api-tokens/{api_token_id}:
+    parameters:
+      - $ref: "#/components/parameters/ApiTokenId"
+    get:
+      tags: [Identity]
+      operationId: getApiToken
+      summary: Get redacted API-token metadata
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Redacted token metadata
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiToken"
+        "401":
+          $ref: "#/components/responses/AuthenticationProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    patch:
+      tags: [Identity]
+      operationId: updateApiToken
+      summary: Update non-privilege-bearing API-token metadata
+      description: Scopes, kind, organization and project are immutable; replace the token to change its authorization.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfTokenIfSession"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/ApiTokenPatch"
+      responses:
+        "200":
+          description: Updated redacted token metadata
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiToken"
+        "400":
+          $ref: "#/components/responses/InvalidRequestProblem"
+        "401":
+          $ref: "#/components/responses/AuthenticationProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/ValidationProblem"
+    delete:
+      tags: [Identity]
+      operationId: revokeApiToken
+      summary: Revoke an API token
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfTokenIfSession"
+      responses:
+        "204":
+          description: Token revoked
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/RequestId"
+        "401":
+          $ref: "#/components/responses/AuthenticationProblem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "412":
+          $ref: "#/components/responses/Problem"
   /api/v1/projects/{project_id}/monitors:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -573,6 +758,12 @@ components:
       in: cookie
       name: takt_session
   parameters:
+    ApiTokenId:
+      name: api_token_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Uuid"
     ProjectId:
       name: project_id
       in: path
@@ -618,6 +809,15 @@ components:
       in: header
       required: true
       description: Session-bound token required for browser state changes.
+      schema:
+        type: string
+        minLength: 32
+        maxLength: 512
+    CsrfTokenIfSession:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required when the operation is authorized with the browser session cookie; ignored for bearer authentication.
       schema:
         type: string
         minLength: 32
@@ -826,6 +1026,177 @@ components:
           type: string
           format: date-time
           description: Absolute expiry, 7 days by default and configurable by the operator.
+    ApiTokenKind:
+      type: string
+      enum: [personal, service]
+    ApiTokenStatus:
+      type: string
+      enum: [active, revoked, expired]
+    ApiTokenScope:
+      type: string
+      pattern: "^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$"
+      maxLength: 100
+    IpNetwork:
+      type: string
+      minLength: 3
+      maxLength: 64
+      pattern: "^[0-9A-Fa-f:.]+/[0-9]{1,3}$"
+      description: Canonical IPv4 or IPv6 CIDR validated by the runtime.
+    ApiTokenCreate:
+      type: object
+      additionalProperties: false
+      required: [name, kind, scopes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        kind:
+          $ref: "#/components/schemas/ApiTokenKind"
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ApiTokenScope"
+        project_id:
+          $ref: "#/components/schemas/Uuid"
+        expires_at:
+          type: string
+          format: date-time
+        ip_networks:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/IpNetwork"
+    ApiTokenPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        expires_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        ip_networks:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/IpNetwork"
+    ApiToken:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - organization_id
+        - project_id
+        - name
+        - kind
+        - token_prefix
+        - scopes
+        - ip_networks
+        - status
+        - expires_at
+        - last_used_at
+        - revoked_at
+        - created_at
+        - updated_at
+        - version
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        organization_id:
+          $ref: "#/components/schemas/Uuid"
+        project_id:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        kind:
+          $ref: "#/components/schemas/ApiTokenKind"
+        token_prefix:
+          type: string
+          minLength: 8
+          maxLength: 32
+          pattern: "^takt_[A-Za-z0-9_-]+$"
+          description: Non-secret lookup prefix; never sufficient to authenticate.
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ApiTokenScope"
+        ip_networks:
+          type: array
+          maxItems: 32
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/IpNetwork"
+        status:
+          $ref: "#/components/schemas/ApiTokenStatus"
+        expires_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        last_used_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        revoked_at:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+    ApiTokenCreated:
+      type: object
+      additionalProperties: false
+      required: [token, api_token]
+      properties:
+        token:
+          type: string
+          minLength: 48
+          maxLength: 512
+          pattern: "^takt_[A-Za-z0-9_-]+$"
+          readOnly: true
+          description: Opaque bearer token returned only in the successful creation response.
+        api_token:
+          $ref: "#/components/schemas/ApiToken"
+    ApiTokenPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/ApiToken"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 2048
     MonitorKind:
       type: string
       enum: [http, tcp, dns, icmp, tls, push, browser]

@@ -603,11 +603,31 @@ packages:
 
   - id: SPEC-015
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-001, PRD-API-002, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
     depends_on: [IAM-012]
     outcome: Reviewter OpenAPI-Vertrag für API-Token-CRUD, einmalige Wertausgabe, Scopes und Listenfilter.
+    preflight:
+      in_scope:
+        - OpenAPI-Pfade für Listen, Erzeugen, Lesen, Ändern und Widerrufen von persönlichen oder Service-API-Tokens.
+        - Geschlossene Create-/Patch-/Safe-/One-time-Response-Schemas mit Scopes, Projekt-, Ablauf- und IP-Netz-Einschränkungen.
+        - Idempotency-, ETag-, Cursor-, Auth-/Permission-, CSRF- und Problem-Response-Verträge samt generierten TypeScript-Typen.
+      out_of_scope:
+        - Migrationen, Hash-/Präfixpersistenz, Tokenauthentifizierung und Scope-Enforcement; diese folgen in IAM-013.
+        - Browser-Recovery, Permission Engine, OIDC, Token-UI und taktctl-Kommandos.
+        - Änderungen an bestehenden freigegebenen Pfaden oder Schemas.
+      affected_artifacts:
+        - specs/contracts/openapi.yaml
+        - tools/openapi-token-contract.test.mjs
+        - web/src/generated/openapi.ts
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-tracking/findings.yaml
+        - docs/implementation-evidence/spec-015-api-token-contract.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 25
     acceptance:
       - Tokenwerte erscheinen nur in der Create-Antwort und nie in Listen-, Get-, Audit- oder Fehler-Schemas.
       - CRUD besitzt Idempotenz, ETag, Pagination sowie Auth-, Permission-, Erfolgs- und Problem-Responses.

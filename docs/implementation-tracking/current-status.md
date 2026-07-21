@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `225a306165f4e2d286f0277759495e1428116310`. Der Worktree war zu Beginn von `IAM-012` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `2361f5e`. Der Worktree war zu Beginn von `SPEC-015` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -8,9 +8,9 @@ Baseline: Commit `225a306165f4e2d286f0277759495e1428116310`. Der Worktree war zu
 |---|---:|---|
 | Requirements gesamt | 57 | Kanonische IDs aus `specs/00-product-requirements.md` |
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
-| Coverage `partial` | 20 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
-| Coverage `none` | 36 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 87 | 19 implemented, 66 planned, 2 durch dokumentierte Entscheidungen blockiert |
+| Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
+| Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
+| Arbeitspakete | 87 | 20 implemented, 65 planned, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -20,7 +20,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
-| Öffentliche Systemgrenze | `/health/live`, DB-/Migrations-abhängige `/health/ready`, UUIDv7 Request-ID, redigierte Problem Response, Security Header sowie komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit | Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
+| Öffentliche Systemgrenze | Health und komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit; API-Token-CRUD ist mit One-time-Ausgabe, Scopes, Filtern, Idempotenz und ETag vertraglich definiert | API-Token- und Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
 | Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert | Keine Recovery-HTTP-Orchestrierung; kein Monitor, CheckSpec-Domainmodell, Scheduler, Evaluator, Uptime, Outbox oder Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0003`, Identitäts-, Session- und Recovery-Tabellen, gemeinsame Repository-Suiten sowie atomare redigierte Auditwirkung; Tokens/CSRF liegen nur als Digest vor | Kein API-Token, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite oder Retention |
@@ -46,7 +46,7 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 ## Empfohlene nächste Reihenfolge
 
 1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `SPEC-015`, `IAM-013`: API-Token-Vertrag und -Runtime fertigstellen, bevor fachliche Schreibendpunkte entstehen.
+2. `IAM-013`: API-Token-Persistenz, Authentifizierung und Scope-Enforcement fertigstellen, bevor fachliche Schreibendpunkte entstehen.
 3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
 5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.
