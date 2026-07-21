@@ -57,19 +57,19 @@ const LIST_SQLITE: &str = concat!(
     " FROM api_tokens WHERE organization_id = ?1 AND (?2 IS NULL OR project_id = ?2) AND (?3 IS NULL OR kind = ?3) AND (?4 IS NULL OR (?4 = 'active' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?6)) OR (?4 = 'revoked' AND revoked_at IS NOT NULL) OR (?4 = 'expired' AND revoked_at IS NULL AND expires_at <= ?6)) AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(api_tokens.scopes) WHERE value = ?5)) AND (?7 IS NULL OR created_at < ?7 OR (created_at = ?7 AND id < ?8)) ORDER BY created_at DESC, id DESC LIMIT ?9"
 );
 const UPDATE_PG: &str = concat!(
-    "UPDATE api_tokens SET name = COALESCE($3, name), expires_at = CASE WHEN $4 THEN $5 ELSE expires_at END, ip_networks = COALESCE($6, ip_networks), updated_at = $7, version = version + 1 WHERE id = $1 AND version = $2 AND revoked_at IS NULL AND updated_at <= $7 RETURNING ",
+    "UPDATE api_tokens SET name = COALESCE($3, name), expires_at = CASE WHEN $4 THEN $5 ELSE expires_at END, ip_networks = COALESCE($6, ip_networks), updated_at = $7, version = version + 1 WHERE id = $1 AND version = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $7) AND updated_at <= $7 RETURNING ",
     token_columns!()
 );
 const UPDATE_SQLITE: &str = concat!(
-    "UPDATE api_tokens SET name = COALESCE(?3, name), expires_at = CASE WHEN ?4 THEN ?5 ELSE expires_at END, ip_networks = COALESCE(?6, ip_networks), updated_at = ?7, version = version + 1 WHERE id = ?1 AND version = ?2 AND revoked_at IS NULL AND updated_at <= ?7 RETURNING ",
+    "UPDATE api_tokens SET name = COALESCE(?3, name), expires_at = CASE WHEN ?4 THEN ?5 ELSE expires_at END, ip_networks = COALESCE(?6, ip_networks), updated_at = ?7, version = version + 1 WHERE id = ?1 AND version = ?2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?7) AND updated_at <= ?7 RETURNING ",
     token_columns!()
 );
 const REVOKE_PG: &str = concat!(
-    "UPDATE api_tokens SET revoked_at = $3, updated_at = $3, version = version + 1 WHERE id = $1 AND version = $2 AND revoked_at IS NULL AND updated_at <= $3 RETURNING ",
+    "UPDATE api_tokens SET revoked_at = $3, updated_at = $3, version = version + 1 WHERE id = $1 AND version = $2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > $3) AND updated_at <= $3 RETURNING ",
     token_columns!()
 );
 const REVOKE_SQLITE: &str = concat!(
-    "UPDATE api_tokens SET revoked_at = ?3, updated_at = ?3, version = version + 1 WHERE id = ?1 AND version = ?2 AND revoked_at IS NULL AND updated_at <= ?3 RETURNING ",
+    "UPDATE api_tokens SET revoked_at = ?3, updated_at = ?3, version = version + 1 WHERE id = ?1 AND version = ?2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?3) AND updated_at <= ?3 RETURNING ",
     token_columns!()
 );
 

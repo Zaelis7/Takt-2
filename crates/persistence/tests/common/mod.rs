@@ -1347,6 +1347,45 @@ pub async fn run_api_token_lifecycle_contract(
     );
     assert_eq!(
         repository
+            .update_api_token(UpdateApiTokenPlan {
+                id: second_id,
+                expected_version: 2,
+                patch: ApiTokenPatch {
+                    name: Some("expired-must-not-change".to_owned()),
+                    expires_at: Some(None),
+                    ip_networks: None,
+                },
+                now: after_expiry,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_006)?),
+                    second_id,
+                    API_TOKEN_UPDATED_AUDIT_ACTION,
+                    after_expiry,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::VersionConflict),
+        "an expired token must not be patched back into an active state"
+    );
+    assert_eq!(
+        repository
+            .revoke_api_token(RevokeApiTokenPlan {
+                id: second_id,
+                expected_version: 2,
+                now: after_expiry,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_007)?),
+                    second_id,
+                    API_TOKEN_REVOKED_AUDIT_ACTION,
+                    after_expiry,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::VersionConflict),
+        "an expired token must not be mutated during revoke"
+    );
+    assert_eq!(
+        repository
             .audit_events_for_organization(OrganizationId::from_resource_id(resource_id(1)?))
             .await?
             .iter()

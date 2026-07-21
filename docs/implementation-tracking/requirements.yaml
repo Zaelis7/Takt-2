@@ -1,6 +1,6 @@
 schema_version: 1
 as_of: "2026-07-21"
-baseline_commit: a8df4b9960726278db093703956e1c0bb68831f5
+baseline_commit: 6dd79d11bc14b5b209c3b67c20c92faa1bf4e746
 
 # coverage measures product behavior: none, partial, full.
 # verification measures evidence strength independently from coverage.
@@ -318,7 +318,7 @@ requirements:
   - id: PRD-IAM-001
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: gap
     evidence:
       - docs/persistence.md
@@ -368,7 +368,7 @@ requirements:
   - id: PRD-IAM-004
     release: "0.3"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: gap
     evidence:
       - crates/application/src/lib.rs
@@ -387,7 +387,7 @@ requirements:
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
@@ -410,7 +410,7 @@ requirements:
   - id: PRD-DATA-001
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/acceptance/v0.1.feature
@@ -428,7 +428,7 @@ requirements:
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/acceptance/v0.1.feature
@@ -447,7 +447,7 @@ requirements:
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
@@ -504,7 +504,7 @@ requirements:
   - id: PRD-NFR-002
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - docs/persistence.md
@@ -538,7 +538,7 @@ requirements:
   - id: PRD-NFR-005
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: full_local
     spec_health: clear
     evidence:
       - docs/persistence.md

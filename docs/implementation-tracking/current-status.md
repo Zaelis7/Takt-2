@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `c6c2981`. Der Worktree war zu Beginn von `IAM-022` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `6dd79d1`. Der Worktree war zu Beginn der Fortsetzung von `IAM-022` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `c6c2981`. Der Worktree war zu Beginn von `IAM-022` sauber. Die
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 90 | 22 implemented, 65 planned, 1 in progress, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 90 | 23 implemented, 65 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -46,7 +46,7 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 ## Empfohlene nächste Reihenfolge
 
 1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `IAM-022` nach Freigabe des neu gebauten `takt-server.exe` durch die Windows-Code-Integrity-Policy vollständig validieren; danach `IAM-013` umsetzen.
+2. `IAM-013`: API-Token-HTTP-CRUD, persistente Idempotenz, Bearer-Authentifizierung und serverseitige Scope-Prüfung umsetzen.
 3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
 5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.
@@ -123,6 +123,6 @@ Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief g
 
 `IAM-023` ist nach der tatsächlichen Diffmessung separat vom Lifecycle-Paket `IAM-022` `implemented`, nicht `verified`. Migration `0004` speichert API-Token auf PostgreSQL und SQLite ausschließlich als sicheren Lookup-Präfix plus Argon2id-Hash; Create und redigiertes Audit committen oder rollen gemeinsam zurück. Beide Engines bestehen denselben Get-/Präfix-/Filter-/Cursor-Sortiervertrag, Schema-Wiederholung und Newer-Schema-Rejection. Patch, Revoke und Last-used folgen in `IAM-022`; HTTP bleibt in `IAM-013`. Alle lokalen Gates sind grün; Details stehen in `docs/implementation-evidence/iam-023-api-token-storage.md`.
 
-## Zwischenstand von IAM-022
+## Abschluss von IAM-022
 
-`IAM-022` bleibt `in_progress`. PostgreSQL 16.9 und SQLite bestehen fokussiert denselben optimistisch versionierten Patch-/Revoke-/Last-used-Vertrag. Der vollständige Workspace-Gate ist jedoch rot, weil Windows Smart App Control das neu gebaute unsignierte `target/debug/takt-server.exe` mit OS-Code 4551 und Enterprise-Policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}` blockiert. Das ist außerhalb des Pakets nicht behebbar; deshalb gibt es keinen Commit und `IAM-013` wurde nicht begonnen. Details stehen in `docs/implementation-evidence/iam-022-api-token-lifecycle.md`.
+`IAM-022` ist `implemented`, nicht `verified`. Der gemeinsame PostgreSQL-16.9-/SQLite-Vertrag deckt optimistisch versioniertes Patch/Revoke, monotones Last-used, atomaren redigierten Audit-Rollback sowie Stale-, Replay-, Revoke-, Ablauf- und Rückwärtszeit-Negativfälle ab. Beim Fortsetzungsreview wurde ein Ablauf-Bypass gefunden und test-first geschlossen: Ein abgelaufenes Token kann weder gepatcht und durch Entfernen des Ablaufdatums reaktiviert noch nachträglich revokiert werden. Nach dem Rebuild ließ die Windows-Code-Integrity-Policy die neue Test-Binary zu; sämtliche lokalen Repository-Gates einschließlich der fünf echten CLI-Prozesstests sind grün. Unabhängige commit-gebundene Review-/CI-Evidence fehlt weiterhin. Details stehen in `docs/implementation-evidence/iam-022-api-token-lifecycle.md`.
