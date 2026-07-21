@@ -74,14 +74,14 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
     database.migrate().await?;
     let mut connection = raw_connection(&path).await?;
-    sqlx::query("UPDATE _sqlx_migrations SET version = 4 WHERE version = 3")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 5 WHERE version = 4")
         .execute(&mut connection)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 4,
-            supported: 3
+            found: 5,
+            supported: 4
         }
     );
     assert_eq!(
@@ -102,6 +102,7 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
     common::run_repository_contract(&repository).await?;
     common::run_session_repository_contract(&repository).await?;
     common::run_recovery_repository_contract(&repository).await?;
+    common::run_api_token_repository_contract(&repository).await?;
     common::run_browser_authentication_contract(&repository).await?;
 
     let mut connection = raw_connection(&path).await?;
@@ -138,6 +139,23 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
             .await
             .is_err(),
         "SQLite must reject non-digest recovery values"
+    );
+    let token_row = sqlx::query(
+        "SELECT group_concat(token_hash, ' ') AS stored, (SELECT group_concat(metadata, ' ') FROM audit_events WHERE resource_type = 'api_token') AS metadata FROM api_tokens",
+    )
+    .fetch_one(&mut connection)
+    .await?;
+    common::assert_persisted_api_tokens_are_redacted(
+        &token_row.try_get::<String, _>("stored")?,
+        &token_row.try_get::<String, _>("metadata")?,
+    );
+    assert!(
+        sqlx::query("UPDATE api_tokens SET token_hash = ?1")
+            .bind(TEST_RAW_SESSION_TOKEN)
+            .execute(&mut connection)
+            .await
+            .is_err(),
+        "SQLite must reject non-Argon2 API-token hashes"
     );
     let credential: String =
         sqlx::query("SELECT password_hash FROM local_credentials WHERE user_id = ?1")

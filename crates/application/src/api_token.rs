@@ -16,6 +16,10 @@ const PREFIX_HEX_BYTES: usize = 8;
 const SECRET_BYTES: usize = 32;
 const PREFIX_LENGTH: usize = "takt_".len() + PREFIX_HEX_BYTES * 2;
 
+pub const API_TOKEN_CREATED_AUDIT_ACTION: &str = "auth.api_token.created";
+pub const API_TOKEN_UPDATED_AUDIT_ACTION: &str = "auth.api_token.updated";
+pub const API_TOKEN_REVOKED_AUDIT_ACTION: &str = "auth.api_token.revoked";
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct ApiTokenSecret(Zeroizing<String>);
 
@@ -195,7 +199,7 @@ pub struct ApiTokenListQuery {
 }
 
 #[async_trait]
-pub trait ApiTokenRepository: Send + Sync {
+pub trait ApiTokenStore: Send + Sync {
     async fn create_api_token(&self, plan: CreateApiTokenPlan)
     -> Result<ApiToken, RepositoryError>;
     async fn api_token_by_id(&self, id: ApiTokenId) -> Result<ApiToken, RepositoryError>;
@@ -207,6 +211,10 @@ pub trait ApiTokenRepository: Send + Sync {
         &self,
         query: ApiTokenListQuery,
     ) -> Result<Vec<ApiToken>, RepositoryError>;
+}
+
+#[async_trait]
+pub trait ApiTokenLifecycleRepository: Send + Sync {
     async fn update_api_token(&self, plan: UpdateApiTokenPlan)
     -> Result<ApiToken, RepositoryError>;
     async fn revoke_api_token(&self, plan: RevokeApiTokenPlan)
@@ -217,6 +225,10 @@ pub trait ApiTokenRepository: Send + Sync {
         now: UtcTimestamp,
     ) -> Result<(), RepositoryError>;
 }
+
+pub trait ApiTokenRepository: ApiTokenStore + ApiTokenLifecycleRepository {}
+
+impl<T> ApiTokenRepository for T where T: ApiTokenStore + ApiTokenLifecycleRepository {}
 
 pub fn authenticated_token_actor(
     stored: &ApiToken,

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod api_token_repository;
 mod config;
 mod database;
 mod repository;

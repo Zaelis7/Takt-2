@@ -71,6 +71,7 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     common::run_repository_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_session_repository_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_recovery_repository_contract(&SqlxRepository::new(database.clone())).await?;
+    common::run_api_token_repository_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_browser_authentication_contract(&SqlxRepository::new(database.clone())).await?;
     let row = sqlx::query(
         "SELECT string_agg(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
@@ -105,6 +106,23 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .await
             .is_err(),
         "PostgreSQL must reject non-digest recovery values"
+    );
+    let token_row = sqlx::query(
+        "SELECT string_agg(token_hash, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'api_token') AS metadata FROM api_tokens",
+    )
+    .fetch_one(&raw)
+    .await?;
+    common::assert_persisted_api_tokens_are_redacted(
+        &token_row.try_get::<String, _>("stored")?,
+        &token_row.try_get::<String, _>("metadata")?,
+    );
+    assert!(
+        sqlx::query("UPDATE api_tokens SET token_hash = $1")
+            .bind(TEST_RAW_SESSION_TOKEN)
+            .execute(&raw)
+            .await
+            .is_err(),
+        "PostgreSQL must reject non-Argon2 API-token hashes"
     );
     let credential: String =
         sqlx::query("SELECT password_hash FROM local_credentials WHERE user_id = $1")
@@ -234,14 +252,14 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .try_get::<i64, _>("count")?,
         1
     );
-    sqlx::query("UPDATE _sqlx_migrations SET version = 4 WHERE version = 3")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 5 WHERE version = 4")
         .execute(&raw)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 4,
-            supported: 3
+            found: 5,
+            supported: 4
         }
     );
     assert!(database.migrate().await.is_err());

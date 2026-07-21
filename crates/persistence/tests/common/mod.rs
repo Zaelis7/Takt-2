@@ -5,6 +5,10 @@ use std::{
     sync::atomic::{AtomicI64, AtomicU64, Ordering},
 };
 
+use takt_application::api_token::{
+    API_TOKEN_CREATED_AUDIT_ACTION, ApiTokenHash, ApiTokenListQuery, ApiTokenStore,
+    CreateApiTokenPlan, NewApiToken, StoredApiToken,
+};
 use takt_application::{
     ApplicationError, Argon2idConfig, AuditRepository, AuthenticationError, BootstrapService,
     BootstrapStatus, BrowserAuthenticationService, Clock, CompleteRecoveryPlan, CreateRecoveryPlan,
@@ -16,8 +20,10 @@ use takt_application::{
     SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest, TokenGenerator, ValidationError,
 };
 use takt_domain::{
-    AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId, OperationId,
-    OrganizationId, ProjectId, RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
+    ApiTokenId, AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId,
+    OperationId, OrganizationId, ProjectId, RecoveryTokenId, ResourceId, Role, SessionId, UserId,
+    UtcTimestamp,
+    api_token::{ApiTokenKind, ApiTokenPrefix, ApiTokenScope, ApiTokenStatus, IpNetwork},
     session::{SessionPolicy, SessionWindow},
 };
 use takt_persistence::{Database, ReadinessError, SqlxRepository};
@@ -62,6 +68,13 @@ pub fn assert_persisted_recovery_is_redacted(stored: &str, audit_metadata: &str)
         assert!(!audit_metadata.contains(secret));
     }
     assert!(!stored.contains(TEST_RAW_RECOVERY_TOKEN));
+}
+
+pub fn assert_persisted_api_tokens_are_redacted(stored: &str, audit_metadata: &str) {
+    assert!(stored.contains("$argon2id$"));
+    assert!(!stored.contains(TEST_PASSWORD));
+    assert!(!audit_metadata.contains(TEST_PASSWORD));
+    assert!(!audit_metadata.contains("argon2"));
 }
 
 pub fn assert_replacement_password_hash(encoded: &str) -> Result<(), Box<dyn Error>> {
@@ -1023,6 +1036,161 @@ pub async fn run_recovery_repository_contract(
         "exactly one concurrent recovery completion must succeed"
     );
 
+    Ok(())
+}
+
+fn api_token_audit_event(
+    audit_id: AuditEventId,
+    token_id: ApiTokenId,
+    action: &str,
+    occurred_at: UtcTimestamp,
+) -> Result<NewAuditEvent, Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let project_id = ProjectId::from_resource_id(resource_id(2)?);
+    let user_id = UserId::from_resource_id(resource_id(3)?);
+    Ok(NewAuditEvent {
+        event: AuditEvent {
+            id: audit_id,
+            organization_id,
+            project_id: Some(project_id),
+            actor_type: AuditActorType::System,
+            actor_id: Some(user_id),
+            action: action.to_owned(),
+            resource_type: "api_token".to_owned(),
+            resource_id: ResourceId::from_uuid(token_id.as_uuid())?,
+            request_id: OperationId::from_resource_id(resource_id(69_999)?),
+            metadata: BootstrapAuditMetadata {
+                organization_id,
+                project_id,
+                user_id,
+                membership_id: MembershipId::from_resource_id(resource_id(4)?),
+            },
+            occurred_at,
+        },
+    })
+}
+
+fn new_api_token(
+    id_suffix: u64,
+    prefix: &str,
+    name: &str,
+    now: UtcTimestamp,
+) -> Result<NewApiToken, Box<dyn Error>> {
+    let password_hash = PasswordHasher::new(Argon2idConfig::testing()).hash(TEST_PASSWORD)?;
+    Ok(NewApiToken {
+        id: ApiTokenId::from_resource_id(resource_id(id_suffix)?),
+        organization_id: OrganizationId::from_resource_id(resource_id(1)?),
+        project_id: Some(ProjectId::from_resource_id(resource_id(2)?)),
+        name: name.to_owned(),
+        kind: ApiTokenKind::Personal,
+        token_prefix: prefix.parse::<ApiTokenPrefix>()?,
+        token_hash: ApiTokenHash::from_persistence(
+            password_hash.expose_for_persistence().to_owned(),
+        )?,
+        scopes: vec!["monitors:read".parse::<ApiTokenScope>()?],
+        ip_networks: vec!["192.0.2.0/24".parse::<IpNetwork>()?],
+        expires_at: Some(UtcTimestamp::from_unix_micros(
+            TEST_NOW.unix_micros() + 3_600_000_000,
+        )),
+        now,
+    })
+}
+
+// PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 /
+// PRD-DATA-004 / PRD-NFR-002 / PRD-NFR-005: both engines execute this contract.
+pub async fn run_api_token_repository_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let first = new_api_token(60_000, "takt_0011223344556677", "first", TEST_NOW)?;
+    let first_id = first.id;
+    let first_prefix = first.token_prefix.clone();
+    let created = repository
+        .create_api_token(CreateApiTokenPlan {
+            token: first,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(60_001)?),
+                first_id,
+                API_TOKEN_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+        })
+        .await?;
+    assert_eq!(created.version, 1);
+    assert_eq!(created.name, "first");
+    assert_eq!(repository.api_token_by_id(first_id).await?, created);
+    let StoredApiToken { token, token_hash } =
+        repository.api_token_by_prefix(&first_prefix).await?;
+    assert_eq!(token, created);
+    assert_eq!(format!("{token_hash:?}"), "ApiTokenHash([REDACTED])");
+
+    let later = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 1);
+    let second = new_api_token(60_010, "takt_8899aabbccddeeff", "second", later)?;
+    let second_id = second.id;
+    repository
+        .create_api_token(CreateApiTokenPlan {
+            token: second,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(60_011)?),
+                second_id,
+                API_TOKEN_CREATED_AUDIT_ACTION,
+                later,
+            )?,
+        })
+        .await?;
+    let page = repository
+        .list_api_tokens(ApiTokenListQuery {
+            organization_id: OrganizationId::from_resource_id(resource_id(1)?),
+            project_id: None,
+            kind: Some(ApiTokenKind::Personal),
+            status: Some(ApiTokenStatus::Active),
+            scope: Some("monitors:read".parse::<ApiTokenScope>()?),
+            before: None,
+            limit: 200,
+            now: TEST_NOW,
+        })
+        .await?;
+    assert_eq!(
+        page.iter().map(|token| token.id).collect::<Vec<_>>(),
+        vec![second_id, first_id]
+    );
+    let next = repository
+        .list_api_tokens(ApiTokenListQuery {
+            organization_id: OrganizationId::from_resource_id(resource_id(1)?),
+            project_id: None,
+            kind: None,
+            status: None,
+            scope: None,
+            before: Some((later, second_id)),
+            limit: 1,
+            now: TEST_NOW,
+        })
+        .await?;
+    assert_eq!(
+        next.iter().map(|token| token.id).collect::<Vec<_>>(),
+        vec![first_id]
+    );
+
+    let rollback = new_api_token(60_020, "takt_1020304050607080", "rollback", TEST_NOW)?;
+    let rollback_id = rollback.id;
+    assert_eq!(
+        repository
+            .create_api_token(CreateApiTokenPlan {
+                token: rollback,
+                audit_event: api_token_audit_event(
+                    AuditEventId::from_resource_id(resource_id(60_001)?),
+                    rollback_id,
+                    API_TOKEN_CREATED_AUDIT_ACTION,
+                    TEST_NOW,
+                )?,
+            })
+            .await,
+        Err(RepositoryError::AlreadyExists)
+    );
+    assert_eq!(
+        repository.api_token_by_id(rollback_id).await,
+        Err(RepositoryError::NotFound),
+        "token insert must roll back with duplicate audit ID"
+    );
     Ok(())
 }
 

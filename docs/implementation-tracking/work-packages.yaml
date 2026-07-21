@@ -601,7 +601,7 @@ packages:
         - Repository- und Use-Case-Pläne für Create, List, Get, Patch, Revoke und Bearer-Authentifizierung ohne Framework- oder Datenbankabhängigkeit.
         - Test-first Positiv-/Negativfälle für Validierung, Ablauf, IP-Bindung, Scope-Ableitung und Secret-Redaktion.
       out_of_scope:
-        - SQL-Migrationen und engine-paritäre Repository-Implementierung; diese folgen in IAM-022.
+        - SQL-Migrationen und engine-paritäre Repository-Implementierung; diese folgen in IAM-023 und IAM-022.
         - Öffentliche HTTP-Routen, Cursor-Signierung, Idempotency-Key-Speicherung und Produktionskomposition; diese verbleiben in IAM-013.
         - Monitor-CRUD; IAM-013 liefert die wiederverwendbare Scope-Entscheidung, die API-010 auf Monitor-Use-Cases anwendet.
       affected_artifacts:
@@ -624,19 +624,20 @@ packages:
       - Domain-/Application-Vertragstests für Scope, Ablauf, IP und Validierung
       - Negative Secret-Redaction- und Hash-/Verify-Tests
 
-  - id: IAM-022
+  - id: IAM-023
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
     findings: []
     depends_on: [IAM-021]
-    outcome: Engine-paritäre API-Token-Persistenz mit ausschließlicher Präfix-/Hashspeicherung, optimistischer Versionierung und atomarer Auditwirkung.
+    outcome: Engine-paritäre API-Token-Schemabasis mit ausschließlicher Präfix-/Hashspeicherung, atomarem Create und stabilen sicheren Abfragen.
     preflight:
       in_scope:
         - Vorwärtsgerichtete PostgreSQL-/SQLite-Migration für API-Token-Metadaten, Präfix, Argon2id-Hash, Scopes, CIDRs, Ablauf, Revoke und Version.
-        - Gemeinsamer Create/List/Get/Lookup/Patch/Revoke-Repository-Vertrag mit stabiler Sortierung auf beiden Engines.
-        - Atomare redigierte Auditwirkung für Create, Patch und Revoke sowie Rollback-, Replay- und Constraint-Negativfälle.
+        - Gemeinsamer Create/List/Get/Präfix-Lookup-Vertrag mit stabiler Filterung und Sortierung auf beiden Engines.
+        - Atomare redigierte Create-Auditwirkung sowie Rollback-, Redaction- und Constraint-Negativfälle.
       out_of_scope:
+        - Patch, Revoke, Last-used und deren optimistische/atomare Auditwirkung; diese folgen separat in IAM-022.
         - Öffentliche HTTP-Routen, Cursor-Signierung, Idempotency-Key-Speicherung und Produktionskomposition; diese verbleiben in IAM-013.
         - Argon2-Ausführung, Raw-Token-Ausgabe und Scope-Entscheidungen; diese liegen in IAM-021 beziehungsweise IAM-013.
         - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, CLI und UI.
@@ -651,16 +652,51 @@ packages:
         - docs/implementation-tracking/requirements.yaml
         - docs/implementation-tracking/work-packages.yaml
         - docs/implementation-tracking/current-status.md
-        - docs/implementation-evidence/iam-022-api-token-persistence.md
-      estimated_handwritten_lines: 800
+        - docs/implementation-evidence/iam-023-api-token-storage.md
+      estimated_handwritten_lines: 780
       estimated_validation_minutes: 25
     acceptance:
       - PostgreSQL und SQLite speichern niemals den Tokenwert, sondern nur getrennten Lookup-Präfix und langsamen Hash.
-      - Create, Patch und Revoke committen Tokenzustand und genau ein redigiertes Audit-Event gemeinsam oder rollen vollständig zurück.
-      - Listen sind stabil nach created_at absteigend und id absteigend; Versionskonflikte verändern keine Daten.
+      - Create committet Tokenzustand und genau ein redigiertes Audit-Event gemeinsam oder rollt vollständig zurück.
+      - Get, Präfix-Lookup und Listen liefern ausschließlich sichere Metadaten; Listen sind stabil nach created_at absteigend und id absteigend.
     evidence:
       - Gemeinsame Repository-Suite beider Engines
-      - Migration-, Redaction-, Replay-, Versions- und Rollback-Tests
+      - Migration-, Redaction-, Filter-, Sortier- und Create-Rollback-Tests
+
+  - id: IAM-022
+    release: "0.1"
+    status: planned
+    requirements: [PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [IAM-023]
+    outcome: Engine-paritärer API-Token-Lifecycle mit optimistischem Patch/Revoke, monotonem Last-used und atomarer redigierter Auditwirkung.
+    preflight:
+      in_scope:
+        - Gemeinsamer Patch-/Revoke-/Last-used-Repository-Vertrag auf PostgreSQL und SQLite.
+        - Optimistische Versionierung, Ablauf-/Revoke-Schutz und monotone Nutzungszeit.
+        - Atomare redigierte Auditwirkung für Patch und Revoke samt Versions-, Replay- und Rollback-Negativfällen.
+      out_of_scope:
+        - Migration, Create und sichere Abfragen; diese liegen in IAM-023.
+        - Öffentliche HTTP-Routen, Cursor-Signierung, Idempotency-Key-Speicherung und Produktionskomposition; diese verbleiben in IAM-013.
+        - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, CLI und UI.
+      affected_artifacts:
+        - crates/persistence/src/api_token_repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-022-api-token-lifecycle.md
+      estimated_handwritten_lines: 500
+      estimated_validation_minutes: 25
+    acceptance:
+      - Patch und Revoke sind optimistisch versioniert und verändern bei veraltetem ETag keine Daten.
+      - Patch und Revoke committen Zustandsänderung und genau ein redigiertes Audit-Event gemeinsam oder rollen vollständig zurück.
+      - Last-used ist monoton und kann abgelaufene oder widerrufene Token nicht reaktivieren.
+    evidence:
+      - Gemeinsame Repository-Suite beider Engines
+      - Redaction-, Replay-, Versions- und Rollback-Tests
 
   - id: IAM-013
     release: "0.1"

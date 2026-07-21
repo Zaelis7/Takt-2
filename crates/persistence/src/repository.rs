@@ -24,7 +24,7 @@ use crate::database::{Database, DatabasePool};
 
 #[derive(Clone)]
 pub struct SqlxRepository {
-    database: Database,
+    pub(crate) database: Database,
 }
 
 impl SqlxRepository {
@@ -1888,7 +1888,7 @@ where
         .transpose()
 }
 
-fn postgres_time(timestamp: UtcTimestamp) -> Result<OffsetDateTime, RepositoryError> {
+pub(crate) fn postgres_time(timestamp: UtcTimestamp) -> Result<OffsetDateTime, RepositoryError> {
     OffsetDateTime::from_unix_timestamp_nanos(i128::from(timestamp.unix_micros()) * 1_000)
         .map_err(|_| RepositoryError::ConstraintViolation)
 }
@@ -1977,7 +1977,7 @@ fn validate_bounded_text(value: &str, maximum_characters: usize) -> Result<(), R
     }
 }
 
-fn map_sqlx_error(error: sqlx::Error) -> RepositoryError {
+pub(crate) fn map_sqlx_error(error: sqlx::Error) -> RepositoryError {
     match error {
         sqlx::Error::RowNotFound => RepositoryError::NotFound,
         sqlx::Error::PoolTimedOut

@@ -4,7 +4,7 @@
 - Contract delta: no public API or persistence change; this package implements the framework-free domain/application boundary under the already reviewed `SPEC-015` OpenAPI contract.
 - Behavior: typed token IDs, kinds, prefixes, exact scopes, status and canonical IPv4/IPv6 CIDRs; source-IP/expiry/revoke authorization; 320 generated random bits split into a public 64-bit lookup prefix and 256 secret bits; Argon2id hash/verify boundary and repository plans for CRUD/authentication.
 - Security review: raw token and slow hash use zeroizing, redacted wrappers; permission checks are exact-match and cannot derive `monitors:write` from `monitors:read`; malformed scopes, non-canonical CIDRs, expired/revoked/IP-mismatched tokens and unsafe metadata fail closed.
-- Known limits: SQL storage, atomic write audit, idempotency, signed cursors, HTTP CRUD and production Bearer composition remain explicitly in `IAM-022`/`IAM-013`; the v0.1 monitor-scope scenario remains planned until `API-010` supplies monitor routes.<br>Verdict: builder review and `full_local` validation passed; `implemented`, not independently `verified`; `EVID-001` remains open.
+- Known limits: SQL storage, lifecycle audit, idempotency, signed cursors, HTTP CRUD and production Bearer composition remain explicitly in `IAM-023`/`IAM-022`/`IAM-013`; the v0.1 monitor-scope scenario remains planned until `API-010` supplies monitor routes.<br>Verdict: builder review and `full_local` validation passed; `implemented`, not independently `verified`; `EVID-001` remains open.
 
 ## Test-first and validation
 | Command | Exit | Result |
