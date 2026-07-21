@@ -482,19 +482,69 @@ packages:
       - Gemeinsame Application-/Repository-Suite beider Engines
       - Negative Auth-, CSRF-, Ablauf-, Rotation- und Secret-Redaction-Tests
 
-  - id: IAM-012
+  - id: IAM-020
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-005, PRD-IAM-001]
+    findings: []
+    depends_on: [IAM-016]
+    outcome: Injizierbare Auth-HTTP-Grenze mit gebundenen JSON-Eingaben, generischen Problem Details und registrierten Login-/Session-/Logout-Routen.
+    preflight:
+      in_scope:
+        - Öffentlicher High-Level-Use-Case-Port und injizierbare Login-, Session- und Logout-Handler.
+        - OpenAPI-konforme generische Problem Details, Request-ID, begrenzte JSON-Bodies und Ablehnung unbekannter Felder.
+        - Cookie-/CSRF-Parsing und secret-freie Serialisierung als Transportimplementierung für IAM-018.
+      out_of_scope:
+        - Recovery-Auslieferung, Recovery-HTTP-Orchestrierung und lokaler Recovery-CLI-Vertrag.
+        - API-Token-Vertrag/-Runtime; diese folgen getrennt in SPEC-015 und IAM-013.
+        - Vollständige Erfolgs-, Cookie-, CSRF-, Fixation-, Ablauf- und Runtime-Kompositions-E2E; diese folgen in IAM-018.
+        - Login-Rate-Limit/Peer-IP-Auswertung, Recovery, API-Tokens, Permission Engine, OIDC und UI.
+      affected_artifacts:
+        - Cargo.toml
+        - crates/api/Cargo.toml
+        - crates/api/src/lib.rs
+        - crates/api/src/auth.rs
+        - crates/api/tests/auth_http.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-020-auth-http-boundary.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 25
+    acceptance:
+      - Unbekannter Nutzer und falsches Passwort liefern über echtes HTTP denselben `401 authentication_failed`-Body.
+      - Unbekannte JSON-Felder liefern `400 invalid_request`; Request/Problem enthalten keine Credential-Werte.
+    evidence:
+      - Laufzeitantworten gegen OpenAPI validiert
+      - HTTP-Integrationstests für generische Fehler und Eingabegrenzen
+
+  - id: IAM-018
     release: "0.1"
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: []
-    depends_on: [IAM-016]
-    outcome: Login-/Logout-/Session-HTTP-Pfad mit sicherem Cookie, CSRF und Rate Limit.
+    depends_on: [IAM-020]
+    outcome: Vollständiger Login-/Logout-/Session-HTTP-Pfad mit sicherem Cookie, CSRF und Produktionskomposition.
     acceptance:
-      - Login rotiert die Session und verrät nicht, ob ein Nutzer existiert.
-      - Schreibzugriffe ohne gültiges CSRF oder mit abgelaufener Session ändern keine Daten.
+      - Login rotiert die Session; Cookie-Flags und Session-JSON entsprechen OpenAPI und Laufzeitprofil.
+      - Fehlendes/falsches CSRF oder eine abgelaufene/widerrufene Session ändern keine Daten; gültiger Logout löscht das Cookie.
     evidence:
+      - Runtime-Kompositions- und OpenAPI-Antworttests
+      - HTTP-Integrationstests für CSRF, Fixation und Ablauf
+
+  - id: IAM-012
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-003, PRD-API-005, PRD-IAM-001]
+    findings: []
+    depends_on: [IAM-018]
+    outcome: Nicht deaktivierbares Login-Limit je Peer-IP und Konto mit Retry-After und zunehmender Fehlversuchsverzögerung.
+    acceptance:
+      - Der elfte Loginversuch je Minute und Peer-IP oder Konto liefert `429 rate_limit_exceeded` mit `Retry-After`.
+      - Unbekannte und bekannte Konten durchlaufen dieselbe Limit- und Verzögerungslogik.
+    evidence:
+      - HTTP-Integrationstests für IP-/Kontolimit und Verzögerung
       - Laufzeitantworten gegen OpenAPI validiert
-      - HTTP-Integrationstests für CSRF, Fixation, Ablauf und Rate Limit
 
   - id: IAM-013
     release: "0.1"

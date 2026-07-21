@@ -139,7 +139,8 @@ requirements:
       - docs/implementation-evidence/spec-012-auth-contract.md
       - specs/contracts/openapi.yaml
       - docs/implementation-evidence/iam-010-auth-domain-contract.md
-    note: Readiness emits a redacted Problem Details response and auth operations contractually expose bounded Problem responses with stable auth-specific codes; the general runtime API error boundary is absent.
+      - docs/implementation-evidence/iam-020-auth-http-boundary.md
+    note: Readiness and the injected auth HTTP boundary emit bounded, redacted Problem Details with stable codes; the general resource runtime error boundary is absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -318,7 +319,8 @@ requirements:
       - docs/implementation-evidence/iam-015-session-lifecycle.md
       - docs/implementation-evidence/iam-014-recovery-persistence.md
       - docs/implementation-evidence/iam-016-auth-application.md
-    note: Local owner bootstrap, credentials, browser-auth orchestration and engine-parity session/recovery persistence exist; HTTP runtime plus API-token contract/runtime and scopes remain absent (SPEC-003).
+      - docs/implementation-evidence/iam-020-auth-http-boundary.md
+    note: Local owner, auth orchestration and an injected browser-auth HTTP boundary exist; production composition/rate limit plus API-token contract/runtime and scopes remain absent (SPEC-003).
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none

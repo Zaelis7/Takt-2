@@ -1,5 +1,12 @@
 #![forbid(unsafe_code)]
 
+mod auth;
+
+pub use auth::{
+    AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HttpAuthentication, HttpLogin,
+    HttpSecret,
+};
+
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -9,7 +16,7 @@ use async_trait::async_trait;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{OriginalUri, Request, State},
+    extract::{DefaultBodyLimit, OriginalUri, Request, State},
     http::{
         HeaderName, HeaderValue, StatusCode,
         header::{CACHE_CONTROL, CONTENT_TYPE},
@@ -31,9 +38,11 @@ const REQUEST_ID_HEADER: &str = "x-request-id";
 struct WebAssets;
 
 #[derive(Clone)]
-struct ApiState {
+pub(crate) struct ApiState {
     readiness: Arc<dyn ReadinessCheck>,
     health_metrics: Arc<HealthMetrics>,
+    authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
+    auth_config: AuthHttpConfig,
 }
 
 #[derive(Serialize)]
@@ -112,14 +121,48 @@ pub fn router_with_readiness(
     readiness: Arc<dyn ReadinessCheck>,
     health_metrics: Arc<HealthMetrics>,
 ) -> Router {
+    build_router(readiness, health_metrics, None, AuthHttpConfig::localhost())
+}
+
+pub fn router_with_auth(
+    authentication: Arc<dyn BrowserAuthenticationHttpPort>,
+    config: AuthHttpConfig,
+) -> Router {
+    build_router(
+        Arc::new(AlwaysReady),
+        Arc::new(HealthMetrics::default()),
+        Some(authentication),
+        config,
+    )
+}
+
+pub fn router_with_dependencies(
+    readiness: Arc<dyn ReadinessCheck>,
+    health_metrics: Arc<HealthMetrics>,
+    authentication: Arc<dyn BrowserAuthenticationHttpPort>,
+    config: AuthHttpConfig,
+) -> Router {
+    build_router(readiness, health_metrics, Some(authentication), config)
+}
+
+fn build_router(
+    readiness: Arc<dyn ReadinessCheck>,
+    health_metrics: Arc<HealthMetrics>,
+    authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
+    auth_config: AuthHttpConfig,
+) -> Router {
     Router::new()
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness_handler))
+        .merge(auth::routes())
         .fallback(serve_web_asset)
         .with_state(ApiState {
             readiness,
             health_metrics,
+            authentication,
+            auth_config,
         })
+        .layer(DefaultBodyLimit::max(4 * 1024))
         .layer(middleware::from_fn(attach_request_id))
 }
 

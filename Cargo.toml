@@ -32,7 +32,7 @@ sha2 = "=0.10.9"
 sqlx = { version = "=0.9.0", default-features = false, features = ["json", "macros", "migrate", "postgres", "runtime-tokio", "sqlite", "time", "uuid"] }
 tempfile = "=3.27.0"
 subtle = "=2.6.1"
-time = "=0.3.53"
+time = { version = "=0.3.53", features = ["formatting"] }
 tokio = { version = "=1.53.0", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "time"] }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["fmt", "json"] }
