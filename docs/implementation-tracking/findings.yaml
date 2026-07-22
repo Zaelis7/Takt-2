@@ -59,6 +59,24 @@ findings:
       - PRD-STA-001
     resolution: The oversized package was split into SPEC-012 and dependency-gated SPEC-015 through SPEC-018. SPEC-012 defines browser auth/session/recovery and SPEC-015 defines API-token CRUD, one-time output, scopes, filters and concurrency boundaries. The finding remains open until the monitor/SSE, notification and status-page contract packages are implemented. Do not infer response or error semantics from prose alone.
 
+  - id: SPEC-006
+    status: resolved
+    severity: high
+    kind: conflict
+    decision: spec_change
+    summary: API-token Create requires a token-bearing 201 response and 24-hour idempotency, while the prose says the token is visible only once and does not define replay response or safe persistence semantics.
+    locations:
+      - specs/contracts/openapi.yaml
+      - specs/01-architecture.md
+      - specs/03-api-and-automation.md
+      - tools/openapi-token-contract.test.mjs
+    affects:
+      - PRD-API-002
+      - PRD-API-003
+      - PRD-IAM-001
+      - PRD-IAM-005
+    resolution: SPEC-020 defines that an identical replay returns the same token-bearing 201 status, relevant headers and body for 24 hours, bound to actor, method, path and request hash. A different hash returns 409 idempotency_key_reused without business or audit effect. The replay payload must use authenticated encryption and remain absent from ordinary reads, audit, Problems, logs and telemetry. IAM-024 implements the persistence and encryption boundary; IAM-025 and IAM-013 provide application and HTTP runtime behavior.
+
   - id: SPEC-004
     status: resolved
     severity: high

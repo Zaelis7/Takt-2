@@ -698,19 +698,115 @@ packages:
       - Gemeinsame Repository-Suite beider Engines
       - Redaction-, Replay-, Versions- und Rollback-Tests
 
+  - id: SPEC-020
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-002, PRD-API-003, PRD-IAM-001, PRD-IAM-005]
+    findings: [SPEC-006]
+    depends_on: [SPEC-015]
+    outcome: Eindeutiger, sicherer Vertrag für API-Token-Create-Replays innerhalb des 24-Stunden-Idempotenzfensters.
+    preflight:
+      in_scope:
+        - Additive Klarstellung der identischen Create-Replay-Antwort und der Bindung an Actor, Methode, Pfad, Idempotency Key und Request-Hash.
+        - Vertragliche Pflicht zur verschlüsselten, zeitlich begrenzten Ablage des tokenhaltigen Replay-Ergebnisses ohne Ausgabe über Get, List, Audit, Problems, Logs oder Telemetrie.
+        - Negativer OpenAPI-Contract-Test für abweichenden Request-Hash und Secret-Ausgabe außerhalb von Create beziehungsweise dessen identischem Replay.
+      out_of_scope:
+        - SQL-Migration, Verschlüsselungsadapter und engine-paritäre Idempotenzpersistenz; diese folgen in IAM-024.
+        - Application-Use-Cases und Bearer-Authentifizierung; diese folgen in IAM-025.
+        - HTTP-Handler, Cursor, Produktionskomposition und Monitor-Scope-Acceptance; diese verbleiben in IAM-013 und API-010.
+      affected_artifacts:
+        - specs/01-architecture.md
+        - specs/03-api-and-automation.md
+        - specs/contracts/openapi.yaml
+        - tools/openapi-token-contract.test.mjs
+        - web/src/generated/openapi.ts
+        - docs/implementation-tracking/findings.yaml
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
+      estimated_handwritten_lines: 220
+      estimated_validation_minutes: 20
+    acceptance:
+      - Der Vertrag verlangt für 24 Stunden dieselbe 201-Antwort einschließlich desselben Tokenwerts; für einen abweichenden Request-Hash verlangt er 409 idempotency_key_reused.
+      - Der Vertrag verlangt authentifizierte Verschlüsselung der Replay-Payload und beschränkt die Tokenausgabe auf Create beziehungsweise dessen logisch identischen Replay.
+    evidence:
+      - API-Token-Idempotency-OpenAPI-Contract-Test
+      - pnpm contracts:openapi und pnpm test:tools
+
+  - id: IAM-024
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-003, PRD-IAM-001, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: [SPEC-006]
+    depends_on: [IAM-022, SPEC-020]
+    outcome: Engine-paritäre, verschlüsselte und atomare Idempotenzpersistenz für API-Token-Create/Patch/Revoke.
+    preflight:
+      in_scope:
+        - Forward-only Migration und gemeinsamer PostgreSQL-/SQLite-Vertrag für Actor-/Method-/Path-/Key-/Request-Hash-Bindung und 24-Stunden-Ablauf.
+        - Verschlüsselte Create-Replay-Payload sowie sichere Patch-/Revoke-Ergebnisreferenzen ohne Klartext-Token in Datenbank, Audit oder Debug-Ausgaben.
+        - Atomarer Write-plus-Idempotency-Commit, identischer Replay, Hash-Konflikt, Ablauf, Konkurrenz und Rollback auf beiden Engines.
+      out_of_scope:
+        - HTTP-Serialisierung, CSRF, Bearer-Middleware und Cursor.
+        - Allgemeiner ressourcenübergreifender Idempotenzdienst außerhalb der drei API-Token-Schreiboperationen.
+      affected_artifacts:
+        - migrations/postgres/0005_api_token_idempotency.sql
+        - migrations/sqlite/0005_api_token_idempotency.sql
+        - crates/application/src/api_token.rs
+        - crates/persistence/src/api_token_repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+      estimated_handwritten_lines: 580
+      estimated_validation_minutes: 25
+    acceptance:
+      - Identische Requests liefern auf beiden Engines dasselbe Ergebnis; derselbe Key mit anderem Hash ändert weder Token noch Audit.
+      - Tokenhaltige Replay-Daten liegen ausschließlich authentifiziert verschlüsselt und höchstens 24 Stunden vor.
+    evidence:
+      - Gemeinsame Idempotenz-/Migration-/Rollback-Suite beider Engines
+
+  - id: IAM-025
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-022]
+    outcome: Frameworkfreie API-Token-Verwaltungs-Use-Cases und Bearer-Authentifizierung mit exakter Scope-Entscheidung.
+    preflight:
+      in_scope:
+        - Create/List/Get/Patch/Revoke-Orchestrierung mit Actor-/Organisations-/Projektkontext und typisierten Fehlern.
+        - Bearer-Präfixsuche, langsame Hashprüfung, Ablauf-/IP-Bindung, monotones Last-used und exakte Scope-Entscheidung.
+        - Positive und negative Application-Tests für Authentifizierung, Permission, Kontexttrennung und Secret-Redaktion.
+      out_of_scope:
+        - Idempotenzpersistenz, HTTP/Problem-Serialisierung, CSRF, Cursor und Produktionsrouter.
+        - Monitor-CRUD und allgemeine Rollen-/Permission-Engine.
+      affected_artifacts:
+        - crates/application/src/api_token.rs
+        - crates/application/tests/api_tokens.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-025-api-token-application.md
+      estimated_handwritten_lines: 560
+      estimated_validation_minutes: 20
+    acceptance:
+      - Ungültige, abgelaufene, widerrufene, IP-fremde oder falsch gehashte Bearer-Werte authentifizieren keinen Actor.
+      - Ein monitors:read-Actor leitet weder monitors:write noch checks:execute oder fremden Projektzugriff ab.
+    evidence:
+      - Frameworkfreie Application-Tests für CRUD, Bearer und Scopes
+
   - id: IAM-013
     release: "0.1"
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-022]
-    outcome: API-Token-CRUD, einmalige Ausgabe, Hashspeicherung und serverseitige Scope-Prüfung.
+    depends_on: [IAM-024, IAM-025]
+    outcome: OpenAPI-konforme API-Token-CRUD-HTTP-Runtime mit sicherer Browser-/Bearer-Grenze und signierten Cursorn.
     preflight:
       in_scope:
-        - OpenAPI-konforme CRUD-Handler mit One-time-Ausgabe, sicheren Metadatenprojektionen, ETag/If-Match und stabil signierten Filter-Cursorn.
-        - Persistente Idempotency-Key-Semantik für Create, Patch und Revoke einschließlich Konflikt bei abweichendem Request-Hash.
-        - Bearer-Authentifizierung, Ablauf-/IP-Prüfung, serverseitige Scope-Entscheidung und Produktionskomposition ohne Secret-Logging.
-        - Echte SQLite-HTTP-Tests sowie engine-paritäre Idempotenz-Persistenztests und Contract-/Secret-Negativfälle.
+        - OpenAPI-konforme CRUD-Handler mit Create-/Replay-Ausgabe, sicheren Metadatenprojektionen, ETag/If-Match und stabil signierten Filter-Cursorn.
+        - Browser-Session/CSRF- und Bearer-Actor-Anbindung an die vorhandenen Application- und Idempotenzports.
+        - Produktionskomposition sowie echte SQLite-HTTP-, Contract-, Cursor-, Permission- und Secret-Negativfälle.
       out_of_scope:
         - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
         - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
@@ -719,15 +815,13 @@ packages:
         - crates/api/src/api_tokens.rs
         - crates/api/src/lib.rs
         - crates/api/tests/api_tokens_http.rs
-        - crates/application/src/api_token.rs
-        - crates/persistence/src/repository.rs
         - crates/server/src/main.rs
         - specs/acceptance/bindings.yaml
         - docs/implementation-tracking/requirements.yaml
         - docs/implementation-tracking/work-packages.yaml
         - docs/implementation-tracking/current-status.md
         - docs/implementation-evidence/iam-013-api-token-runtime.md
-      estimated_handwritten_lines: 800
+      estimated_handwritten_lines: 720
       estimated_validation_minutes: 30
     acceptance:
       - Ein monitors:read-Token authentifiziert einen Actor, der lesen, aber weder erstellen noch Rechte ableiten darf; API-010 bindet diese Entscheidung an Monitor-HTTP.

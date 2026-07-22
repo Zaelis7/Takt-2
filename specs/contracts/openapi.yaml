@@ -248,7 +248,15 @@ paths:
       tags: [Identity]
       operationId: createApiToken
       summary: Create an API token and reveal its value once
-      description: The opaque token value is returned only by this operation and cannot be retrieved later.
+      description: An identical idempotency replay returns the same 201 response with the same token for 24 hours; the opaque value is otherwise returned only by this operation and cannot be retrieved later.
+      x-takt-idempotency:
+        retention_hours: 24
+        scope: [actor, method, path]
+        request_hash: required
+        identical_replay: same_status_headers_body
+        secret_storage: authenticated_encryption
+        secret_exposure: create_or_identical_replay_only
+        conflict_code: idempotency_key_reused
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -283,7 +291,7 @@ paths:
         "403":
           $ref: "#/components/responses/Problem"
         "409":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/IdempotencyKeyReusedProblem"
         "422":
           $ref: "#/components/responses/ValidationProblem"
   /api/v1/api-tokens/{api_token_id}:
@@ -854,6 +862,15 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    IdempotencyKeyReusedProblem:
+      description: The same actor reused an Idempotency-Key for the same method and path with a different request hash
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/IdempotencyKeyReusedProblem"
     InvalidRequestProblem:
       description: The request body is malformed or contains unknown fields
       headers:
@@ -2109,6 +2126,17 @@ components:
             code:
               type: string
               const: invalid_request
+    IdempotencyKeyReusedProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 409
+            code:
+              type: string
+              const: idempotency_key_reused
     AuthenticationProblem:
       allOf:
         - $ref: "#/components/schemas/Problem"

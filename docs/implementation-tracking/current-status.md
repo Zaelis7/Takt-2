@@ -1,6 +1,6 @@
 # Implementierungsstand am 21. Juli 2026
 
-Baseline: Commit `6dd79d1`. Der Worktree war zu Beginn der Fortsetzung von `IAM-022` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `51349e3`. Der Worktree war zu Beginn von `SPEC-020` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `6dd79d1`. Der Worktree war zu Beginn der Fortsetzung von `IAM-
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 90 | 23 implemented, 65 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 93 | 24 implemented, 67 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -31,7 +31,7 @@ Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0
 
 ## Wichtigste gefundene Probleme
 
-`SPEC-001` ist gelöst: Die Daten-IDs sind kanonisch nachverfolgt. `SPEC-013` vereinheitlicht die prüfungsspezifischen CheckSpec-Felder; `SPEC-019` ergänzt die gemeinsamen Proxy-, Resolver- und Adressfamilienoptionen mit denselben Namen, Grenzen und SecretRefs in allen drei Maschinenverträgen. Damit ist `SPEC-004` vollständig gelöst. `SPEC-005` ist durch Entfernen des historisch unbelegten Template-Eintrags und einen CI-geprüften Spec-Index gelöst. `SEC-001` ist durch die gepinnte `js-yaml@4.3.0`-Auflösung, einen Lockfile-Regressionsfall und den grünen vollständigen Node-Audit gelöst.
+`SPEC-001` ist gelöst: Die Daten-IDs sind kanonisch nachverfolgt. `SPEC-013` vereinheitlicht die prüfungsspezifischen CheckSpec-Felder; `SPEC-019` ergänzt die gemeinsamen Proxy-, Resolver- und Adressfamilienoptionen mit denselben Namen, Grenzen und SecretRefs in allen drei Maschinenverträgen. Damit ist `SPEC-004` vollständig gelöst. `SPEC-005` ist durch Entfernen des historisch unbelegten Template-Eintrags und einen CI-geprüften Spec-Index gelöst. `SPEC-006` ist durch den eindeutigen, verschlüsselten und auf 24 Stunden begrenzten API-Token-Create-Replay-Vertrag gelöst. `SEC-001` ist durch die gepinnte `js-yaml@4.3.0`-Auflösung, einen Lockfile-Regressionsfall und den grünen vollständigen Node-Audit gelöst.
 
 | Finding | Wirkung |
 |---|---|
@@ -46,10 +46,10 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 ## Empfohlene nächste Reihenfolge
 
 1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `IAM-013`: API-Token-HTTP-CRUD, persistente Idempotenz, Bearer-Authentifizierung und serverseitige Scope-Prüfung umsetzen.
-3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
-4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox.
-5. Erst danach weitere 0.1-Checktypen, Notifications, deklarative Automation, Statusseiten, vollständige UI und Operations-/Release-Hardening.
+2. `IAM-024`: verschlüsselte, engine-paritäre API-Token-Idempotenzpersistenz implementieren.
+3. `IAM-025`, danach `IAM-013`: frameworkfreie CRUD-/Bearer-Use-Cases und anschließend die OpenAPI-konforme HTTP-Runtime umsetzen.
+4. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
+5. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox; erst danach weitere 0.1-Features und Release-Hardening.
 
 Die vollständige Abhängigkeitsfolge bis 0.3 steht in `work-packages.yaml`. Die zwei Pakete `ALERT-030` und `OPS-030` sind bewusst blockiert, bis die referenzierte Spec- beziehungsweise Eigentümerentscheidung vorliegt.
 
@@ -126,3 +126,7 @@ Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief g
 ## Abschluss von IAM-022
 
 `IAM-022` ist `implemented`, nicht `verified`. Der gemeinsame PostgreSQL-16.9-/SQLite-Vertrag deckt optimistisch versioniertes Patch/Revoke, monotones Last-used, atomaren redigierten Audit-Rollback sowie Stale-, Replay-, Revoke-, Ablauf- und Rückwärtszeit-Negativfälle ab. Beim Fortsetzungsreview wurde ein Ablauf-Bypass gefunden und test-first geschlossen: Ein abgelaufenes Token kann weder gepatcht und durch Entfernen des Ablaufdatums reaktiviert noch nachträglich revokiert werden. Nach dem Rebuild ließ die Windows-Code-Integrity-Policy die neue Test-Binary zu; sämtliche lokalen Repository-Gates einschließlich der fünf echten CLI-Prozesstests sind grün. Unabhängige commit-gebundene Review-/CI-Evidence fehlt weiterhin. Details stehen in `docs/implementation-evidence/iam-022-api-token-lifecycle.md`.
+
+## Abschluss von SPEC-020
+
+`SPEC-020` ist `implemented`, nicht `verified`. Die Preflight-Nachprüfung ergab, dass das ursprünglich nächste, bereits am 800-Zeilen-Limit liegende Paket `IAM-013` wegen der zusätzlich erforderlichen, bislang ungeplanten Migration den zulässigen Umfang überschreiten würde. Es wurde deshalb vor der Umsetzung in `SPEC-020`, `IAM-024`, `IAM-025` und den verbleibenden HTTP-Slice `IAM-013` geteilt. Der Vertrag legt jetzt fest, dass ein identischer API-Token-Create-Replay 24 Stunden lang dieselbe `201`-Antwort einschließlich desselben Tokenwerts liefert, während derselbe Key mit abweichendem Request-Hash ohne Geschäfts- oder Auditwirkung als `409 idempotency_key_reused` scheitert. Die tokenhaltige Replay-Payload muss authentifiziert verschlüsselt, an Actor/Methode/Pfad/Request-Hash gebunden und von normalen Reads, Audit, Problems, Logs und Telemetrie ausgeschlossen sein. Alle lokalen Gates einschließlich echtem PostgreSQL 16.9, SQLite, Frontend, Playwright und Release-Build sind grün. Persistenz, Application/Bearer und HTTP-Runtime folgen in `IAM-024`, `IAM-025` und `IAM-013`; unabhängige commit-gebundene Review-/CI-Evidence fehlt. Details stehen in `docs/implementation-evidence/spec-020-api-token-idempotency-contract.md`.

@@ -26,7 +26,7 @@ Der Vertrag in `openapi.yaml` enthält die Kernressourcen. Jeder neue produktive
 ### API
 
 - Persönliche oder Service-Account-Tokens als `Authorization: Bearer <token>`
-- Tokenwert mindestens 256 Bit Entropie, nur einmal bei Erzeugung sichtbar
+- Tokenwert mindestens 256 Bit Entropie; sichtbar nur im erfolgreichen Create-Ergebnis und dessen logisch identischem Idempotency-Replay innerhalb von 24 Stunden
 - Speicherung nur als langsamer Hash mit separatem Token-Präfix zur Suche
 - Scopes folgen `resource:verb`, z. B. `monitors:read`, `monitors:write`, `checks:execute`
 - Token kann auf Organisation, Projekt, Ablaufdatum und IP-Netzbereiche eingeschränkt werden
@@ -53,6 +53,7 @@ Jeder Application Use Case erhält `Actor`, `OrganizationId`, optional `ProjectI
 - Antwort `201 Created`, `Location` und vollständige Ressource.
 - Wiederholung mit demselben Key und identischem Body liefert dieselbe semantische Antwort.
 - Wiederholung mit abweichendem Body liefert `409 idempotency_key_reused`.
+- Für API-Token-Create bedeutet dieselbe Antwort denselben Status, dieselben relevanten Header und denselben Tokenwert. Diese Replay-Payload MUSS authentifiziert verschlüsselt, an Actor/Methode/Pfad/Request-Hash gebunden und nach 24 Stunden verworfen werden; normale Token-Reads bleiben vollständig redigiert.
 
 ### Lesen und Ändern
 

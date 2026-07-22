@@ -96,3 +96,38 @@ test("PRD-IAM-001 token value is one-time while safe schemas remain redacted", (
     "PasswordRecoveryComplete",
   ]);
 });
+
+test("PRD-API-003 API token create replay is bounded and encrypted", () => {
+  const create = operation("/api/v1/api-tokens", "post");
+  assert.deepEqual(create["x-takt-idempotency"], {
+    retention_hours: 24,
+    scope: ["actor", "method", "path"],
+    request_hash: "required",
+    identical_replay: "same_status_headers_body",
+    secret_storage: "authenticated_encryption",
+    secret_exposure: "create_or_identical_replay_only",
+    conflict_code: "idempotency_key_reused",
+  });
+  assert.equal(
+    create.responses["409"].$ref,
+    "#/components/responses/IdempotencyKeyReusedProblem",
+  );
+  assert.match(create.description, /same 201.*same token.*24 hours/i);
+
+  const conflict = contract.components.responses.IdempotencyKeyReusedProblem;
+  assert.match(conflict.description, /same actor.*method.*path.*different request hash/i);
+  assert.equal(
+    conflict.content["application/problem+json"].schema.$ref,
+    "#/components/schemas/IdempotencyKeyReusedProblem",
+  );
+  assert.equal(
+    contract.components.schemas.IdempotencyKeyReusedProblem.allOf[1]
+      .properties.status.const,
+    409,
+  );
+  assert.equal(
+    contract.components.schemas.IdempotencyKeyReusedProblem.allOf[1]
+      .properties.code.const,
+    "idempotency_key_reused",
+  );
+});

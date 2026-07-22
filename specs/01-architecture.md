@@ -152,6 +152,8 @@ Liest ausschließlich freigegebene Projektionen. Die öffentlichen Endpunkte gre
 - Zustandsänderungen verwenden optimistische Versionierung.
 - Scheduler-Leases werden in der Datenbank atomar erworben und erneuert.
 - API-Idempotency Keys gelten pro Actor, Methode und Pfad für 24 Stunden.
+- Ein identischer Request-Hash MUSS in diesem Fenster denselben gespeicherten Status, dieselben relevanten Header und denselben Body liefern. Ein abweichender Hash unter demselben Schlüssel MUSS `409 idempotency_key_reused` liefern und DARF keine Fach- oder Auditwirkung erzeugen.
+- Enthält die gespeicherte Antwort ein einmalig ausgebbares Secret, MUSS die Replay-Payload authentifiziert verschlüsselt und nach dem 24-Stunden-Fenster verworfen werden. Das Secret DARF nicht in Logs, Audit, Problems, Telemetrie oder normalen Leseantworten erscheinen.
 - Notification Worker verwenden `event_id + channel_id` als Deduplizierungsschlüssel.
 
 ## 7. Fehlerklassen

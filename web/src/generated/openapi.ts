@@ -156,7 +156,7 @@ export interface paths {
         put?: never;
         /**
          * Create an API token and reveal its value once
-         * @description The opaque token value is returned only by this operation and cannot be retrieved later.
+         * @description An identical idempotency replay returns the same 201 response with the same token for 24 hours; the opaque value is otherwise returned only by this operation and cannot be retrieved later.
          */
         post: operations["createApiToken"];
         delete?: never;
@@ -905,6 +905,12 @@ export interface components {
             /** @constant */
             code?: "invalid_request";
         };
+        IdempotencyKeyReusedProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 409;
+            /** @constant */
+            code?: "idempotency_key_reused";
+        };
         AuthenticationProblem: components["schemas"]["Problem"] & {
             /** @constant */
             status?: 401;
@@ -943,6 +949,16 @@ export interface components {
             };
             content: {
                 "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The same actor reused an Idempotency-Key for the same method and path with a different request hash */
+        IdempotencyKeyReusedProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["IdempotencyKeyReusedProblem"];
             };
         };
         /** @description The request body is malformed or contains unknown fields */
@@ -1295,7 +1311,7 @@ export interface operations {
             400: components["responses"]["InvalidRequestProblem"];
             401: components["responses"]["AuthenticationProblem"];
             403: components["responses"]["Problem"];
-            409: components["responses"]["Problem"];
+            409: components["responses"]["IdempotencyKeyReusedProblem"];
             422: components["responses"]["ValidationProblem"];
         };
     };

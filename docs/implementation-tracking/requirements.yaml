@@ -1,6 +1,6 @@
 schema_version: 1
 as_of: "2026-07-21"
-baseline_commit: 6dd79d11bc14b5b209c3b67c20c92faa1bf4e746
+baseline_commit: 51349e3dd5391f4c9a0a5375a92754a1743264b9
 
 # coverage measures product behavior: none, partial, full.
 # verification measures evidence strength independently from coverage.
@@ -118,17 +118,23 @@ requirements:
       - docs/implementation-evidence/iam-010-auth-domain-contract.md
       - tools/openapi-token-contract.test.mjs
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: OpenAPI lint, generated-type drift, browser-auth/API-token contracts, complete cross-contract CheckSpec mapping, the codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
+      - specs/01-architecture.md
+      - specs/03-api-and-automation.md
+      - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
+    note: OpenAPI lint, generated-type drift, browser-auth/API-token contracts including bounded encrypted token-bearing Create replay, complete cross-contract CheckSpec mapping, the codegen supply-chain guard and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
   - id: PRD-API-003
     release: "0.1"
     coverage: partial
-    verification: evidence_only
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/contracts/openapi.yaml
       - tools/openapi-token-contract.test.mjs
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: API-token writes contractually expose idempotency and ETag/If-Match boundaries; no runtime write implements them yet.
+      - specs/01-architecture.md
+      - specs/03-api-and-automation.md
+      - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
+    note: API-token Create contractually binds a 24-hour identical replay to actor, method, path and request hash, returns the same token-bearing result from authenticated-encrypted retention and rejects hash reuse with 409 idempotency_key_reused; persistence and HTTP runtime remain absent.
   - id: PRD-API-004
     release: "0.1"
     coverage: partial
@@ -347,7 +353,9 @@ requirements:
       - crates/persistence/src/api_token_repository.rs
       - docs/implementation-evidence/iam-023-api-token-storage.md
       - docs/implementation-evidence/iam-022-api-token-lifecycle.md
-    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope and full persistence lifecycle exist, but HTTP CRUD/Bearer authentication remain absent.
+      - specs/03-api-and-automation.md
+      - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
+    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope, full persistence lifecycle and secure Create-replay contract exist, but idempotency persistence, HTTP CRUD and Bearer authentication remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -405,7 +413,9 @@ requirements:
       - crates/persistence/tests/common/mod.rs
       - docs/implementation-evidence/iam-023-api-token-storage.md
       - docs/implementation-evidence/iam-022-api-token-lifecycle.md
-    note: Existing auth and all API-token create/patch/revoke writes are atomically audited with redacted metadata; full non-token action coverage, export and tamper evidence remain absent.
+      - specs/01-architecture.md
+      - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
+    note: Existing auth and all API-token create/patch/revoke writes are atomically audited with redacted metadata; the Create-replay contract additionally prohibits its encrypted token payload from audit, Problems, logs and telemetry. Runtime replay storage, full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"
