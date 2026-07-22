@@ -6,10 +6,13 @@ use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteR
 use takt_application::api_token::{
     API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
     ApiTokenCreateIdempotencyError, ApiTokenCreateIdempotencyRepository,
-    ApiTokenCreateIdempotencyResult, ApiTokenHash, ApiTokenLifecycleRepository, ApiTokenListQuery,
-    ApiTokenPatch, ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan,
-    CreateApiTokenPlan, EncryptedApiTokenReplay, NewApiToken, RevokeApiTokenPlan, StoredApiToken,
-    StoredApiTokenCreateReplay, UpdateApiTokenPlan, validate_new_api_token,
+    ApiTokenCreateIdempotencyResult, ApiTokenHash, ApiTokenIdempotencyContext,
+    ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenMutationIdempotencyError,
+    ApiTokenMutationIdempotencyRepository, ApiTokenMutationIdempotencyResult, ApiTokenPatch,
+    ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan, CreateApiTokenPlan,
+    EncryptedApiTokenReplay, NewApiToken, RevokeApiTokenPlan, StoredApiToken,
+    StoredApiTokenCreateReplay, StoredApiTokenMutationResult, UpdateApiTokenIdempotencyPlan,
+    UpdateApiTokenPlan, validate_new_api_token,
 };
 use takt_application::{NewAuditEvent, RepositoryError};
 use takt_domain::{
@@ -215,8 +218,8 @@ impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
         match &self.database.pool {
             DatabasePool::PostgreSql(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
-                delete_expired_postgres(&mut transaction, &plan).await?;
-                let reserved = reserve_postgres(&mut transaction, &plan).await?;
+                delete_expired_postgres(&mut transaction, &plan.context).await?;
+                let reserved = reserve_postgres(&mut transaction, &plan.context).await?;
                 if !reserved {
                     let replay = replay_postgres(&mut transaction, &plan).await?;
                     transaction.commit().await.map_err(map_sqlx_error)?;
@@ -230,8 +233,8 @@ impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
             }
             DatabasePool::Sqlite(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
-                delete_expired_sqlite(&mut transaction, &plan).await?;
-                let reserved = reserve_sqlite(&mut transaction, &plan).await?;
+                delete_expired_sqlite(&mut transaction, &plan.context).await?;
+                let reserved = reserve_sqlite(&mut transaction, &plan.context).await?;
                 if !reserved {
                     let replay = replay_sqlite(&mut transaction, &plan).await?;
                     transaction.commit().await.map_err(map_sqlx_error)?;
@@ -360,15 +363,15 @@ async fn insert_token_sqlite(
 
 async fn delete_expired_postgres(
     connection: &mut PgConnection,
-    plan: &CreateApiTokenIdempotencyPlan,
+    context: &ApiTokenIdempotencyContext,
 ) -> Result<(), RepositoryError> {
     sqlx::query("DELETE FROM api_token_idempotency WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5 AND expires_at <= $6")
-        .bind(plan.context.actor_type().as_str())
-        .bind(plan.context.actor_id().as_uuid())
-        .bind(plan.context.method().as_str())
-        .bind(plan.context.path())
-        .bind(plan.context.key())
-        .bind(postgres_time(plan.context.created_at())?)
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().as_uuid())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .bind(postgres_time(context.created_at())?)
         .execute(connection)
         .await
         .map_err(map_sqlx_error)?;
@@ -377,15 +380,15 @@ async fn delete_expired_postgres(
 
 async fn delete_expired_sqlite(
     connection: &mut SqliteConnection,
-    plan: &CreateApiTokenIdempotencyPlan,
+    context: &ApiTokenIdempotencyContext,
 ) -> Result<(), RepositoryError> {
     sqlx::query("DELETE FROM api_token_idempotency WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5 AND expires_at <= ?6")
-        .bind(plan.context.actor_type().as_str())
-        .bind(plan.context.actor_id().to_string())
-        .bind(plan.context.method().as_str())
-        .bind(plan.context.path())
-        .bind(plan.context.key())
-        .bind(plan.context.created_at().unix_micros())
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().to_string())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .bind(context.created_at().unix_micros())
         .execute(connection)
         .await
         .map_err(map_sqlx_error)?;
@@ -394,17 +397,17 @@ async fn delete_expired_sqlite(
 
 async fn reserve_postgres(
     connection: &mut PgConnection,
-    plan: &CreateApiTokenIdempotencyPlan,
+    context: &ApiTokenIdempotencyContext,
 ) -> Result<bool, RepositoryError> {
     sqlx::query("INSERT INTO api_token_idempotency (actor_type, actor_id, method, path, idempotency_key, request_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
-        .bind(plan.context.actor_type().as_str())
-        .bind(plan.context.actor_id().as_uuid())
-        .bind(plan.context.method().as_str())
-        .bind(plan.context.path())
-        .bind(plan.context.key())
-        .bind(plan.context.request_hash().as_slice())
-        .bind(postgres_time(plan.context.created_at())?)
-        .bind(postgres_time(plan.context.expires_at())?)
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().as_uuid())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .bind(context.request_hash().as_slice())
+        .bind(postgres_time(context.created_at())?)
+        .bind(postgres_time(context.expires_at())?)
         .execute(connection)
         .await
         .map(|result| result.rows_affected() == 1)
@@ -413,17 +416,17 @@ async fn reserve_postgres(
 
 async fn reserve_sqlite(
     connection: &mut SqliteConnection,
-    plan: &CreateApiTokenIdempotencyPlan,
+    context: &ApiTokenIdempotencyContext,
 ) -> Result<bool, RepositoryError> {
     sqlx::query("INSERT INTO api_token_idempotency (actor_type, actor_id, method, path, idempotency_key, request_hash, created_at, expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT DO NOTHING")
-        .bind(plan.context.actor_type().as_str())
-        .bind(plan.context.actor_id().to_string())
-        .bind(plan.context.method().as_str())
-        .bind(plan.context.path())
-        .bind(plan.context.key())
-        .bind(plan.context.request_hash().as_slice())
-        .bind(plan.context.created_at().unix_micros())
-        .bind(plan.context.expires_at().unix_micros())
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().to_string())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .bind(context.request_hash().as_slice())
+        .bind(context.created_at().unix_micros())
+        .bind(context.expires_at().unix_micros())
         .execute(connection)
         .await
         .map(|result| result.rows_affected() == 1)
@@ -569,6 +572,289 @@ where
         api_token_id,
         result_version,
         encrypted_replay,
+    })
+}
+
+fn validate_idempotent_update(
+    plan: &UpdateApiTokenIdempotencyPlan,
+) -> Result<(), ApiTokenMutationIdempotencyError> {
+    validate_patch(&plan.update.patch, plan.update.now)?;
+    let event = &plan.update.audit_event.event;
+    if plan.context.method() != ApiTokenWriteMethod::Patch
+        || plan.context.path() != format!("/api/v1/api-tokens/{}", plan.update.id)
+        || plan.context.created_at() != plan.update.now
+        || plan.context.actor_type() != event.actor_type
+        || event.actor_id.map(|id| id.as_uuid()) != Some(plan.context.actor_id().as_uuid())
+    {
+        return Err(RepositoryError::ConstraintViolation.into());
+    }
+    Ok(())
+}
+
+#[async_trait]
+impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
+    async fn update_api_token_idempotent(
+        &self,
+        plan: UpdateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError> {
+        validate_idempotent_update(&plan)?;
+        let api_token = match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                delete_expired_postgres(&mut transaction, &plan.context).await?;
+                if !reserve_postgres(&mut transaction, &plan.context).await? {
+                    let replay = mutation_replay_postgres(&mut transaction, &plan.context).await?;
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(ApiTokenMutationIdempotencyResult::Replay(replay));
+                }
+                let current = token_by_id_postgres(&mut transaction, plan.update.id).await?;
+                validate_audit(
+                    &plan.update.audit_event,
+                    plan.update.id,
+                    current.organization_id,
+                    current.project_id,
+                    API_TOKEN_UPDATED_AUDIT_ACTION,
+                    plan.update.now,
+                )?;
+                let Some(api_token) = apply_update_postgres(&mut transaction, &plan.update).await?
+                else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict.into());
+                };
+                insert_audit_postgres(&mut transaction, &plan.update.audit_event).await?;
+                complete_mutation_postgres(&mut transaction, &plan.context, &api_token).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                api_token
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                delete_expired_sqlite(&mut transaction, &plan.context).await?;
+                if !reserve_sqlite(&mut transaction, &plan.context).await? {
+                    let replay = mutation_replay_sqlite(&mut transaction, &plan.context).await?;
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(ApiTokenMutationIdempotencyResult::Replay(replay));
+                }
+                let current = token_by_id_sqlite(&mut transaction, plan.update.id).await?;
+                validate_audit(
+                    &plan.update.audit_event,
+                    plan.update.id,
+                    current.organization_id,
+                    current.project_id,
+                    API_TOKEN_UPDATED_AUDIT_ACTION,
+                    plan.update.now,
+                )?;
+                let Some(api_token) = apply_update_sqlite(&mut transaction, &plan.update).await?
+                else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict.into());
+                };
+                insert_audit_sqlite(&mut transaction, &plan.update.audit_event).await?;
+                complete_mutation_sqlite(&mut transaction, &plan.context, &api_token).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                api_token
+            }
+        };
+        let result = StoredApiTokenMutationResult {
+            api_token_id: api_token.id,
+            result_version: api_token.version,
+        };
+        Ok(ApiTokenMutationIdempotencyResult::Mutated {
+            api_token: Box::new(api_token),
+            result,
+        })
+    }
+}
+
+async fn token_by_id_postgres(
+    connection: &mut PgConnection,
+    id: ApiTokenId,
+) -> Result<ApiToken, RepositoryError> {
+    token_from_postgres(
+        &sqlx::query(SELECT_ID_PG)
+            .bind(id.as_uuid())
+            .fetch_one(connection)
+            .await
+            .map_err(map_sqlx_error)?,
+    )
+}
+
+async fn token_by_id_sqlite(
+    connection: &mut SqliteConnection,
+    id: ApiTokenId,
+) -> Result<ApiToken, RepositoryError> {
+    token_from_sqlite(
+        &sqlx::query(SELECT_ID_SQLITE)
+            .bind(id.to_string())
+            .fetch_one(connection)
+            .await
+            .map_err(map_sqlx_error)?,
+    )
+}
+
+async fn apply_update_postgres(
+    connection: &mut PgConnection,
+    plan: &UpdateApiTokenPlan,
+) -> Result<Option<ApiToken>, RepositoryError> {
+    let networks = plan
+        .patch
+        .ip_networks
+        .as_ref()
+        .map(|values| networks_json(values));
+    let row = sqlx::query(UPDATE_PG)
+        .bind(plan.id.as_uuid())
+        .bind(plan.expected_version)
+        .bind(&plan.patch.name)
+        .bind(plan.patch.expires_at.is_some())
+        .bind(
+            plan.patch
+                .expires_at
+                .flatten()
+                .map(postgres_time)
+                .transpose()?,
+        )
+        .bind(networks.as_ref())
+        .bind(postgres_time(plan.now)?)
+        .fetch_optional(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    row.as_ref().map(token_from_postgres).transpose()
+}
+
+async fn apply_update_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &UpdateApiTokenPlan,
+) -> Result<Option<ApiToken>, RepositoryError> {
+    let networks = plan
+        .patch
+        .ip_networks
+        .as_ref()
+        .map(|values| networks_json(values).to_string());
+    let row = sqlx::query(UPDATE_SQLITE)
+        .bind(plan.id.to_string())
+        .bind(plan.expected_version)
+        .bind(&plan.patch.name)
+        .bind(plan.patch.expires_at.is_some())
+        .bind(
+            plan.patch
+                .expires_at
+                .flatten()
+                .map(UtcTimestamp::unix_micros),
+        )
+        .bind(networks)
+        .bind(plan.now.unix_micros())
+        .fetch_optional(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    row.as_ref().map(token_from_sqlite).transpose()
+}
+
+async fn complete_mutation_postgres(
+    connection: &mut PgConnection,
+    context: &ApiTokenIdempotencyContext,
+    result: &ApiToken,
+) -> Result<(), RepositoryError> {
+    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = $6, result_version = $7 WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5 AND api_token_id IS NULL")
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().as_uuid())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .bind(result.id.as_uuid())
+        .bind(result.version)
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected();
+    ensure_one_row(affected)
+}
+
+async fn complete_mutation_sqlite(
+    connection: &mut SqliteConnection,
+    context: &ApiTokenIdempotencyContext,
+    result: &ApiToken,
+) -> Result<(), RepositoryError> {
+    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = ?6, result_version = ?7 WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5 AND api_token_id IS NULL")
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().to_string())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .bind(result.id.to_string())
+        .bind(result.version)
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected();
+    ensure_one_row(affected)
+}
+
+async fn mutation_replay_postgres(
+    connection: &mut PgConnection,
+    context: &ApiTokenIdempotencyContext,
+) -> Result<StoredApiTokenMutationResult, ApiTokenMutationIdempotencyError> {
+    let row = sqlx::query("SELECT request_hash, api_token_id, result_version FROM api_token_idempotency WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5")
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().as_uuid())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .fetch_one(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    let id = row
+        .try_get::<Option<uuid::Uuid>, _>("api_token_id")
+        .map_err(map_sqlx_error)?
+        .map(ApiTokenId::from_uuid)
+        .transpose()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    mutation_replay_from_parts(&row, id, context)
+}
+
+async fn mutation_replay_sqlite(
+    connection: &mut SqliteConnection,
+    context: &ApiTokenIdempotencyContext,
+) -> Result<StoredApiTokenMutationResult, ApiTokenMutationIdempotencyError> {
+    let row = sqlx::query("SELECT request_hash, api_token_id, result_version FROM api_token_idempotency WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5")
+        .bind(context.actor_type().as_str())
+        .bind(context.actor_id().to_string())
+        .bind(context.method().as_str())
+        .bind(context.path())
+        .bind(context.key())
+        .fetch_one(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    let id = row
+        .try_get::<Option<String>, _>("api_token_id")
+        .map_err(map_sqlx_error)?
+        .map(|value| ApiTokenId::from_str(&value))
+        .transpose()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    mutation_replay_from_parts(&row, id, context)
+}
+
+fn mutation_replay_from_parts<R: Row>(
+    row: &R,
+    api_token_id: Option<ApiTokenId>,
+    context: &ApiTokenIdempotencyContext,
+) -> Result<StoredApiTokenMutationResult, ApiTokenMutationIdempotencyError>
+where
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    for<'a> Vec<u8>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+{
+    let request_hash: Vec<u8> = row.try_get("request_hash").map_err(map_sqlx_error)?;
+    if request_hash.as_slice() != context.request_hash() {
+        return Err(ApiTokenMutationIdempotencyError::KeyReused);
+    }
+    let result_version = row
+        .try_get::<Option<i64>, _>("result_version")
+        .map_err(map_sqlx_error)?;
+    let (Some(api_token_id), Some(result_version)) = (api_token_id, result_version) else {
+        return Err(RepositoryError::UnknownInfrastructure.into());
+    };
+    Ok(StoredApiTokenMutationResult {
+        api_token_id,
+        result_version,
     })
 }
 

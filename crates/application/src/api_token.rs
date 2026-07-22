@@ -428,6 +428,58 @@ pub trait ApiTokenCreateIdempotencyRepository: Send + Sync {
     ) -> Result<u64, RepositoryError>;
 }
 
+#[derive(Clone, Debug)]
+pub struct UpdateApiTokenIdempotencyPlan {
+    pub update: UpdateApiTokenPlan,
+    pub context: ApiTokenIdempotencyContext,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StoredApiTokenMutationResult {
+    pub api_token_id: ApiTokenId,
+    pub result_version: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApiTokenMutationIdempotencyResult {
+    Mutated {
+        api_token: Box<ApiToken>,
+        result: StoredApiTokenMutationResult,
+    },
+    Replay(StoredApiTokenMutationResult),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApiTokenMutationIdempotencyError {
+    KeyReused,
+    Repository(RepositoryError),
+}
+
+impl fmt::Display for ApiTokenMutationIdempotencyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::KeyReused => "API token idempotency key was reused",
+            Self::Repository(_) => "API token mutation idempotency operation failed",
+        })
+    }
+}
+
+impl Error for ApiTokenMutationIdempotencyError {}
+
+impl From<RepositoryError> for ApiTokenMutationIdempotencyError {
+    fn from(value: RepositoryError) -> Self {
+        Self::Repository(value)
+    }
+}
+
+#[async_trait]
+pub trait ApiTokenMutationIdempotencyRepository: Send + Sync {
+    async fn update_api_token_idempotent(
+        &self,
+        plan: UpdateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError>;
+}
+
 pub struct ApiTokenReplayCipher {
     key_version: i32,
     key: Zeroizing<[u8; 32]>,

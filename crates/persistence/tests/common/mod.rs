@@ -9,9 +9,11 @@ use takt_application::api_token::{
     API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
     ApiTokenCreateIdempotencyError, ApiTokenCreateIdempotencyRepository,
     ApiTokenCreateIdempotencyResult, ApiTokenHash, ApiTokenIdempotencyContext,
-    ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenPatch, ApiTokenReplayCipher,
-    ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan, CreateApiTokenPlan,
-    NewApiToken, RevokeApiTokenPlan, StoredApiToken, UpdateApiTokenPlan,
+    ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenMutationIdempotencyError,
+    ApiTokenMutationIdempotencyRepository, ApiTokenMutationIdempotencyResult, ApiTokenPatch,
+    ApiTokenReplayCipher, ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan,
+    CreateApiTokenPlan, NewApiToken, RevokeApiTokenPlan, StoredApiToken,
+    UpdateApiTokenIdempotencyPlan, UpdateApiTokenPlan,
 };
 use takt_application::{
     ApplicationError, Argon2idConfig, AuditRepository, AuthenticationError, BootstrapService,
@@ -1140,6 +1142,79 @@ fn idempotent_create_plan(
     })
 }
 
+fn mutation_context(
+    id: ApiTokenId,
+    method: ApiTokenWriteMethod,
+    key: &str,
+    request_hash: [u8; 32],
+    now: UtcTimestamp,
+) -> Result<ApiTokenIdempotencyContext, Box<dyn Error>> {
+    ApiTokenIdempotencyContext::new(
+        AuditActorType::System,
+        resource_id(3)?,
+        method,
+        format!("/api/v1/api-tokens/{id}"),
+        key.to_owned(),
+        request_hash,
+        now,
+    )
+    .map_err(Into::into)
+}
+
+fn idempotent_update_plan(
+    id: ApiTokenId,
+    expected_version: i64,
+    name: &str,
+    audit_suffix: u64,
+    key: &str,
+    request_hash: [u8; 32],
+    now: UtcTimestamp,
+) -> Result<UpdateApiTokenIdempotencyPlan, Box<dyn Error>> {
+    Ok(UpdateApiTokenIdempotencyPlan {
+        update: UpdateApiTokenPlan {
+            id,
+            expected_version,
+            patch: ApiTokenPatch {
+                name: Some(name.to_owned()),
+                expires_at: None,
+                ip_networks: None,
+            },
+            now,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(audit_suffix)?),
+                id,
+                API_TOKEN_UPDATED_AUDIT_ACTION,
+                now,
+            )?,
+        },
+        context: mutation_context(id, ApiTokenWriteMethod::Patch, key, request_hash, now)?,
+    })
+}
+
+async fn create_mutation_token(
+    repository: &SqlxRepository,
+    id_suffix: u64,
+    prefix: &str,
+    name: &str,
+    audit_suffix: u64,
+) -> Result<ApiTokenId, Box<dyn Error>> {
+    let mut token = new_api_token(id_suffix, prefix, name, TEST_NOW)?;
+    token.expires_at = None;
+    let id = token.id;
+    repository
+        .create_api_token(CreateApiTokenPlan {
+            token,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(audit_suffix)?),
+                id,
+                API_TOKEN_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+        })
+        .await?;
+    Ok(id)
+}
+
 // PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 /
 // PRD-DATA-004 / PRD-NFR-002 / PRD-NFR-005: both engines execute this contract.
 pub async fn run_api_token_repository_contract(
@@ -1427,6 +1502,206 @@ pub async fn run_api_token_create_idempotency_contract(
             .await,
         Err(RepositoryError::ConstraintViolation)
     );
+    Ok(())
+}
+
+// PRD-API-003 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 / PRD-DATA-004 /
+// PRD-NFR-002 / PRD-NFR-005: both engines execute this exact atomic Patch
+// idempotency, replay, conflict, rollback, expiry and concurrency contract.
+pub async fn run_api_token_patch_idempotency_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let primary_id = create_mutation_token(
+        repository,
+        62_000,
+        "takt_1011121314151617",
+        "patch-primary",
+        62_001,
+    )
+    .await?;
+    let audit_before = repository
+        .audit_events_for_organization(organization_id)
+        .await?
+        .len();
+    let patch_time = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 100);
+    let primary = idempotent_update_plan(
+        primary_id,
+        1,
+        "patch-applied",
+        62_002,
+        "patch-key-primary",
+        [0x11; 32],
+        patch_time,
+    )?;
+    let stored_result = match repository
+        .update_api_token_idempotent(primary.clone())
+        .await?
+    {
+        ApiTokenMutationIdempotencyResult::Mutated { api_token, result } => {
+            assert_eq!(
+                (api_token.name.as_str(), api_token.version),
+                ("patch-applied", 2)
+            );
+            result
+        }
+        ApiTokenMutationIdempotencyResult::Replay(_) => {
+            return Err("the first idempotent patch unexpectedly replayed".into());
+        }
+    };
+    assert_eq!(
+        repository.update_api_token_idempotent(primary).await?,
+        ApiTokenMutationIdempotencyResult::Replay(stored_result)
+    );
+    let conflicting = idempotent_update_plan(
+        primary_id,
+        1,
+        "must-not-apply",
+        62_003,
+        "patch-key-primary",
+        [0x22; 32],
+        patch_time,
+    )?;
+    assert_eq!(
+        repository.update_api_token_idempotent(conflicting).await,
+        Err(ApiTokenMutationIdempotencyError::KeyReused)
+    );
+    assert_eq!(
+        repository.api_token_by_id(primary_id).await?.name,
+        "patch-applied"
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_before + 1,
+        "patch replay and hash conflict must not append audit events"
+    );
+
+    let rollback_id = create_mutation_token(
+        repository,
+        62_010,
+        "takt_2021222324252627",
+        "patch-rollback",
+        62_011,
+    )
+    .await?;
+    let rollback_time = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 200);
+    let rollback = idempotent_update_plan(
+        rollback_id,
+        1,
+        "must-roll-back",
+        62_001,
+        "patch-key-rollback",
+        [0x33; 32],
+        rollback_time,
+    )?;
+    assert_eq!(
+        repository.update_api_token_idempotent(rollback).await,
+        Err(ApiTokenMutationIdempotencyError::Repository(
+            RepositoryError::AlreadyExists
+        ))
+    );
+    let rolled_back = repository.api_token_by_id(rollback_id).await?;
+    assert_eq!(
+        (rolled_back.name.as_str(), rolled_back.version),
+        ("patch-rollback", 1),
+        "patch and reservation must roll back with the failed audit"
+    );
+    assert!(matches!(
+        repository
+            .update_api_token_idempotent(idempotent_update_plan(
+                rollback_id,
+                1,
+                "patch-after-rollback",
+                62_012,
+                "patch-key-rollback",
+                [0x33; 32],
+                rollback_time,
+            )?)
+            .await?,
+        ApiTokenMutationIdempotencyResult::Mutated { .. }
+    ));
+
+    let concurrent_id = create_mutation_token(
+        repository,
+        62_020,
+        "takt_3031323334353637",
+        "patch-concurrent",
+        62_021,
+    )
+    .await?;
+    let concurrent = idempotent_update_plan(
+        concurrent_id,
+        1,
+        "patch-winner",
+        62_022,
+        "patch-key-concurrent",
+        [0x44; 32],
+        UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 300),
+    )?;
+    let (left, right) = tokio::join!(
+        repository.update_api_token_idempotent(concurrent.clone()),
+        repository.update_api_token_idempotent(concurrent)
+    );
+    assert!(
+        matches!(
+            (&left, &right),
+            (
+                Ok(ApiTokenMutationIdempotencyResult::Mutated { .. }),
+                Ok(ApiTokenMutationIdempotencyResult::Replay(_))
+            )
+        ) || matches!(
+            (&left, &right),
+            (
+                Ok(ApiTokenMutationIdempotencyResult::Replay(_)),
+                Ok(ApiTokenMutationIdempotencyResult::Mutated { .. })
+            )
+        ),
+        "exactly one concurrent patch must mutate and the other replay: {left:?} / {right:?}"
+    );
+    assert_eq!(repository.api_token_by_id(concurrent_id).await?.version, 2);
+
+    let expiring_id = create_mutation_token(
+        repository,
+        62_030,
+        "takt_4041424344454647",
+        "patch-expiring",
+        62_031,
+    )
+    .await?;
+    let expiring_time = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 400);
+    assert!(matches!(
+        repository
+            .update_api_token_idempotent(idempotent_update_plan(
+                expiring_id,
+                1,
+                "patch-before-expiry",
+                62_032,
+                "patch-key-expiring",
+                [0x55; 32],
+                expiring_time,
+            )?)
+            .await?,
+        ApiTokenMutationIdempotencyResult::Mutated { .. }
+    ));
+    let after_window = UtcTimestamp::from_unix_micros(expiring_time.unix_micros() + 86_400_000_000);
+    assert!(matches!(
+        repository
+            .update_api_token_idempotent(idempotent_update_plan(
+                expiring_id,
+                2,
+                "patch-after-expiry",
+                62_033,
+                "patch-key-expiring",
+                [0x66; 32],
+                after_window,
+            )?)
+            .await?,
+        ApiTokenMutationIdempotencyResult::Mutated { .. }
+    ));
+
     Ok(())
 }
 
