@@ -78,3 +78,12 @@
 ### Known milestone limits
 
 Sessions, API tokens, HTTP login, full RBAC enforcement and general audit CRUD remain explicitly out of scope. Backup verification is a later `PRD-NFR-007` deliverable. No compile-time `query!` macros are used, so no `.sqlx` offline cache is required. Clean-checkout and second independent post-remediation validation require a committed target and remain pending.
+
+### Current independent validation addendum
+
+The older pending statement above remains part of the historical working-tree
+evidence. Commit `4ef411a4718d21fc4f364494dc3810f716215e98` was validated from
+a clean detached checkout on `2026-07-22`; the shared PostgreSQL 16.9/SQLite
+repository suites and every current repository gate passed. The commit-bound
+verdict and exact commands are recorded in
+`docs/implementation-evidence/evid-001-independent-head-validation.md`.

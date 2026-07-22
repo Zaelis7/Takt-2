@@ -105,7 +105,7 @@ findings:
     resolution: SPEC-014 removed the AGENTS.template.md index row because repository history confirms the file never existed and chapter 09 requires the real root AGENTS.md instead. A CI-enforced index check now validates every literal and glob path listed in the document table and rejects missing or escaping paths.
 
   - id: EVID-001
-    status: open
+    status: resolved
     severity: high
     kind: evidence_gap
     decision: implementation
@@ -113,6 +113,7 @@ findings:
     locations:
       - docs/implementation-evidence/bootstrap.md
       - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     affects:
       - PRD-API-002
       - PRD-IAM-001
@@ -122,7 +123,7 @@ findings:
       - PRD-NFR-002
       - PRD-NFR-008
       - PRD-NFR-010
-    resolution: Validate the current committed target from a clean checkout, append a commit-bound independent verdict, and never overwrite the historical failed verdict.
+    resolution: Commit 4ef411a4718d21fc4f364494dc3810f716215e98 passed the complete current repository gate set in a clean detached checkout against real PostgreSQL 16.9 and SQLite. The commit-bound verdict is recorded in evid-001-independent-head-validation.md, while the historical failed bootstrap verdict and older pending persistence verdict remain intact.
 
   - id: EVID-002
     status: open

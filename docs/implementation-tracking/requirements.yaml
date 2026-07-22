@@ -89,7 +89,7 @@ requirements:
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: independent
     spec_health: clear
     evidence:
       - specs/contracts/openapi.yaml
@@ -122,6 +122,7 @@ requirements:
       - specs/03-api-and-automation.md
       - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: OpenAPI lint, generated-type drift, browser-auth/API-token contracts including bounded encrypted token-bearing Create replay, complete cross-contract CheckSpec mapping, the codegen supply-chain guards and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
   - id: PRD-API-003
     release: "0.1"
@@ -329,7 +330,7 @@ requirements:
   - id: PRD-IAM-001
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: independent
     spec_health: gap
     evidence:
       - docs/persistence.md
@@ -363,6 +364,7 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope, full persistence lifecycle and a typed encrypted Create-replay foundation exist, but atomic idempotency operations, HTTP CRUD and Bearer authentication remain absent.
   - id: PRD-IAM-002
     release: "0.3"
@@ -374,12 +376,13 @@ requirements:
   - id: PRD-IAM-003
     release: "0.3"
     coverage: partial
-    verification: focused_local
+    verification: independent
     spec_health: clear
     evidence:
       - docs/persistence.md
       - migrations/postgres/0001_persistent_identity.sql
       - migrations/sqlite/0001_persistent_identity.sql
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: Default organization/project, membership storage and role values exist; visible multi-organization management is absent.
   - id: PRD-IAM-004
     release: "0.3"
@@ -403,7 +406,7 @@ requirements:
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
-    verification: full_local
+    verification: independent
     spec_health: clear
     evidence:
       - migrations/postgres/0001_persistent_identity.sql
@@ -426,6 +429,7 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: Existing auth and all API-token create/patch/revoke writes are atomically audited with redacted metadata; the Create-replay schema and AEAD boundary keep token-bearing ciphertext separate from ordinary and audit reads. Runtime replay operations, full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
@@ -524,17 +528,18 @@ requirements:
   - id: PRD-NFR-001
     release: "0.1"
     coverage: full
-    verification: focused_local
+    verification: independent
     spec_health: clear
     evidence:
       - docs/development.md
       - crates/server/tests/admin_bootstrap_cli.rs
       - docs/implementation-evidence/persistence-admin-bootstrap.md
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: The local profile starts with SQLite and no external database; release-level installation evidence remains future release work.
   - id: PRD-NFR-002
     release: "0.1"
     coverage: partial
-    verification: full_local
+    verification: independent
     spec_health: clear
     evidence:
       - docs/persistence.md
@@ -547,6 +552,7 @@ requirements:
       - docs/implementation-evidence/iam-023-api-token-storage.md
       - docs/implementation-evidence/iam-022-api-token-lifecycle.md
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle and idempotency-schema evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
@@ -602,12 +608,13 @@ requirements:
   - id: PRD-NFR-008
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: independent
     spec_health: clear
     evidence:
       - crates/api/src/lib.rs
       - crates/api/tests/health_http.rs
       - crates/server/src/main.rs
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: Structured logging plus live/ready behavior and in-process failure counters exist; Prometheus exposure, required metrics and OpenTelemetry traces are absent.
   - id: PRD-NFR-009
     release: "0.1"
@@ -622,12 +629,13 @@ requirements:
   - id: PRD-NFR-010
     release: "0.1"
     coverage: partial
-    verification: focused_local
+    verification: independent
     spec_health: clear
     evidence:
       - crates/domain/tests/resource_id.rs
       - crates/application/src/lib.rs
       - crates/persistence/tests/common/mod.rs
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
     note: UUID, clock and ID sources are injectable in the implemented foundation; scheduler, evaluator and config diff do not yet exist.
 
 known_unknown_requirement_refs: []

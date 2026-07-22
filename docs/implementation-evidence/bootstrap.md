@@ -36,3 +36,13 @@
 | `pnpm build` | 0 | Vite production build completed; 60.20 kB gzip JavaScript |
 | `pnpm playwright test` | 0 | One Chromium E2E test passed |
 | `cargo build --workspace --all-features --release --locked` | 0 | Optimized workspace and embedded server build completed |
+
+### Current independent validation addendum
+
+The failed validator verdict above remains the historical result for commit
+`c90c7b9b0f809a6c31dcb626a0342db51bd073a3`. Commit
+`4ef411a4718d21fc4f364494dc3810f716215e98` was subsequently validated from a
+clean detached checkout on `2026-07-22`; all current repository gates passed
+against real PostgreSQL 16.9 and SQLite. The exact independent verdict, commands
+and remaining non-release limitations are recorded in
+`docs/implementation-evidence/evid-001-independent-head-validation.md`.

@@ -93,7 +93,7 @@ packages:
       - Contract-, Architektur- und Generated-Drift-Gates laufen reproduzierbar.
     evidence:
       - docs/implementation-evidence/bootstrap.md
-      - Aktueller unabhängiger Clean-Checkout-Verdict ist wegen EVID-001 nachzuliefern.
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
 
   - id: DATA-001
     release: "0.1"
@@ -107,7 +107,7 @@ packages:
       - Bootstrap ist atomar, idempotent, nebenläufig sicher und gibt keine Zugangsdaten aus.
     evidence:
       - docs/implementation-evidence/persistence-admin-bootstrap.md
-      - Aktueller unabhängiger Clean-Checkout-Verdict ist wegen EVID-001 nachzuliefern.
+      - docs/implementation-evidence/evid-001-independent-head-validation.md
 
   - id: SPEC-010
     release: "0.1"

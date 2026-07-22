@@ -1,6 +1,6 @@
 # Implementierungsstand am 22. Juli 2026
 
-Baseline: Commit `dc5b74b`. Der Worktree war zu Beginn von `IAM-027` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `4ef411a4718d21fc4f364494dc3810f716215e98`. Der unabhängige Validator-Checkout war zu Beginn von `EVID-001` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -11,7 +11,7 @@ Baseline: Commit `dc5b74b`. Der Worktree war zu Beginn von `IAM-027` sauber. Die
 | Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
 | Arbeitspakete | 95 | 25 implemented, 68 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
-| Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
+| Offene Findings | 4 | 3 Spec/Contract/Owner-Themen und 1 Evidence-Lücke; alle vier high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
 
@@ -19,7 +19,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
-| Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, abgesicherte `js-yaml`-/`fast-uri`-Auflösungen sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
+| Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, abgesicherte `js-yaml`-/`fast-uri`-Auflösungen sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Commit-gebundener unabhängiger Clean-Checkout-Verdict liegt für `4ef411a` vor; CI- und Release-Evidence sowie automatischer Soll-/Ist-Abgleich der Paketschätzungen fehlen |
 | Öffentliche Systemgrenze | Health und komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit; API-Token-CRUD ist mit One-time-Ausgabe, Scopes, Filtern, Idempotenz und ETag vertraglich definiert | API-Token- und Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
 | Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert; API-Token besitzen redigierte 256-Bit-Secret-/Argon2id-Grenzen, kanonische CIDRs, exakte Scope-Entscheidungen und eine an Actor/Methode/Pfad/Key/Hash gebundene AEAD-Replay-Grenze | Atomare Idempotenzoperationen und API-Token-HTTP fehlen; keine Recovery-HTTP-Orchestrierung, Monitore, Scheduler, Evaluator, Uptime, Outbox oder allgemeine Permission Engine |
@@ -31,13 +31,12 @@ Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0
 
 ## Wichtigste gefundene Probleme
 
-`SPEC-001` ist gelöst: Die Daten-IDs sind kanonisch nachverfolgt. `SPEC-013` vereinheitlicht die prüfungsspezifischen CheckSpec-Felder; `SPEC-019` ergänzt die gemeinsamen Proxy-, Resolver- und Adressfamilienoptionen mit denselben Namen, Grenzen und SecretRefs in allen drei Maschinenverträgen. Damit ist `SPEC-004` vollständig gelöst. `SPEC-005` ist durch Entfernen des historisch unbelegten Template-Eintrags und einen CI-geprüften Spec-Index gelöst. `SPEC-006` ist durch den eindeutigen, verschlüsselten und auf 24 Stunden begrenzten API-Token-Create-Replay-Vertrag gelöst. `SEC-001` und `SEC-002` sind durch gepinnte sichere `js-yaml`-/`fast-uri`-Auflösungen, Lockfile-Regressionsfälle und den grünen vollständigen Node-Audit gelöst.
+`SPEC-001` ist gelöst: Die Daten-IDs sind kanonisch nachverfolgt. `SPEC-013` vereinheitlicht die prüfungsspezifischen CheckSpec-Felder; `SPEC-019` ergänzt die gemeinsamen Proxy-, Resolver- und Adressfamilienoptionen mit denselben Namen, Grenzen und SecretRefs in allen drei Maschinenverträgen. Damit ist `SPEC-004` vollständig gelöst. `SPEC-005` ist durch Entfernen des historisch unbelegten Template-Eintrags und einen CI-geprüften Spec-Index gelöst. `SPEC-006` ist durch den eindeutigen, verschlüsselten und auf 24 Stunden begrenzten API-Token-Create-Replay-Vertrag gelöst. `SEC-001` und `SEC-002` sind durch gepinnte sichere `js-yaml`-/`fast-uri`-Auflösungen, Lockfile-Regressionsfälle und den grünen vollständigen Node-Audit gelöst. `EVID-001` ist durch den unabhängigen Clean-Checkout-Verdict für Commit `4ef411a` gelöst, ohne den historischen fehlgeschlagenen Bootstrap-Verdict zu überschreiben.
 
 | Finding | Wirkung |
 |---|---|
 | `SPEC-002` | Monitorabhängigkeiten haben Roadmap und Szenario, aber keine Requirement-ID und keinen Traceability-Eintrag. |
 | `SPEC-003` | Der höchstrangige OpenAPI-Vertrag lässt mehrere zwingende 0.1-Verwaltungsressourcen und Operationspfade aus. |
-| `EVID-001` | Historische Evidence enthält keinen aktuellen unabhängigen grünen Verdict für HEAD. |
 | `EVID-002` | Syntax und 37-entry Binding-Inventar sind geprüft, aber noch kein Produkt-Szenario ist runnable; „contracts/bindings valid“ darf nicht als Acceptance-Erfolg berichtet werden. |
 | `DEC-001` | Lizenz, Name/Paketlage und Security-/Signaturkanäle müssen vor öffentlichem 0.1 bestätigt werden. |
 
@@ -45,11 +44,10 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 
 ## Empfohlene nächste Reihenfolge
 
-1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `IAM-024`: atomare engine-paritäre API-Token-Create-Idempotenz auf der AEAD-/Schema-Grundlage aus `IAM-027` implementieren.
-3. `IAM-025`, danach `IAM-013`: frameworkfreie CRUD-/Bearer-Use-Cases und anschließend die OpenAPI-konforme HTTP-Runtime umsetzen.
-4. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
-5. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox; erst danach weitere 0.1-Features und Release-Hardening.
+1. `IAM-024`: atomare engine-paritäre API-Token-Create-Idempotenz auf der AEAD-/Schema-Grundlage aus `IAM-027` implementieren.
+2. `IAM-025`, danach `IAM-013`: frameworkfreie CRUD-/Bearer-Use-Cases und anschließend die OpenAPI-konforme HTTP-Runtime umsetzen.
+3. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
+4. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox; erst danach weitere 0.1-Features und Release-Hardening.
 
 Die vollständige Abhängigkeitsfolge bis 0.3 steht in `work-packages.yaml`. Die zwei Pakete `ALERT-030` und `OPS-030` sind bewusst blockiert, bis die referenzierte Spec- beziehungsweise Eigentümerentscheidung vorliegt.
 
@@ -65,7 +63,11 @@ Die vollständige Abhängigkeitsfolge bis 0.3 steht in `work-packages.yaml`. Die
 | `$env:TAKT_TEST_POSTGRES_URL='postgresql://postgres@127.0.0.1:55432/takt_test'; cargo test --workspace --all-features -- --test-threads=1` | Exit 0; vollständiger Workspace einschließlich echter PostgreSQL-16.9- und SQLite-Verträge grün |
 | `cargo build --workspace --all-features --release --locked` | Exit 0; vollständiger optimierter Workspace-Build grün |
 
-Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief gegen das gepinnte Image `postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7` auf Loopback und bestand ohne Skip. Das ist vollständige lokale Working-Tree-Validation, aber noch keine unabhängige, commit-gebundene oder CI-basierte Freigabe; `EVID-001` bleibt deshalb offen.
+Der unabhängige Validator wiederholte die vollständigen aktuellen Repository-Gates für Commit `4ef411a4718d21fc4f364494dc3810f716215e98` aus einem sauberen Detached-HEAD-Checkout. Die Suite lief gegen das gepinnte Image `postgres:16.9-alpine@sha256:7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7` auf Loopback und bestand ohne Skip. Details, exakte Befehle und verbleibende Release-Lücken stehen in `docs/implementation-evidence/evid-001-independent-head-validation.md`; CI-basierte Freigabe ist weiterhin nicht behauptet.
+
+## Abschluss von EVID-001
+
+`EVID-001` ist gelöst. Commit `4ef411a4718d21fc4f364494dc3810f716215e98` bestand aus einem separaten sauberen Checkout alle aktuellen Contract-, Tracking-, Generated-, Secret-, Tool-, Rust-, PostgreSQL-/SQLite-, Supply-Chain-, Web-, Browser- und Release-Build-Gates. Der absichtlich rote 0.1-Release-Runner bestätigt weiterhin ehrlich, dass alle 15 v0.1-Produktszenarien nur geplant sind. Coverage blieb unverändert; ausschließlich die Verification der acht vom Finding betroffenen Requirements wurde auf `independent` angehoben. Der historische fehlgeschlagene Bootstrap-Verdict wurde nicht überschrieben. Details stehen in `docs/implementation-evidence/evid-001-independent-head-validation.md`.
 
 ## Abschluss von SPEC-010
 
