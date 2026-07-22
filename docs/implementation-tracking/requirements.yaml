@@ -143,7 +143,8 @@ requirements:
       - crates/persistence/src/api_token_repository.rs
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
-    note: API-token Create and Patch now atomically persist their business write, one audit event and replay data or a safe result reference on both engines; identical requests replay and hash conflicts have no business or audit effect. Revoke idempotency and HTTP runtime remain absent.
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+    note: API-token Create, Patch and Revoke now atomically persist their business write, one audit event and replay data or a safe result reference on both engines; identical requests replay and hash conflicts have no business or audit effect. HTTP runtime remains absent.
   - id: PRD-API-004
     release: "0.1"
     coverage: partial
@@ -436,8 +437,9 @@ requirements:
       - crates/persistence/src/api_token_repository.rs
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Existing auth and API-token writes are atomically audited with redacted metadata; Create and idempotent Patch commit exactly one audit event, while hash conflicts and identical replays add none. Full non-token action coverage, export and tamper evidence remain absent.
+    note: Existing auth and API-token writes are atomically audited with redacted metadata; Create and idempotent Patch/Revoke commit exactly one audit event, while hash conflicts and identical replays add none. Full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"
@@ -462,7 +464,8 @@ requirements:
       - crates/persistence/src/api_token_repository.rs
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
-    note: Identity, bootstrap, session, recovery, API-token lifecycle and atomic Create/Patch-idempotency operations share engine contracts; Revoke idempotency, monitor, observation, outbox, retention and later repositories are still absent.
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+    note: Identity, bootstrap, session, recovery, API-token lifecycle and atomic Create/Patch/Revoke-idempotency operations share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
@@ -486,7 +489,8 @@ requirements:
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
-    note: Five forward/repeated migrations, newer-schema rejection and migration-time readiness exist; IAM-024/IAM-026 reuse immutable migration 0005 for engine-parity runtime behavior. Released-version upgrade fixtures and commit-bound validation remain future work.
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+    note: Five forward/repeated migrations, newer-schema rejection and migration-time readiness exist; IAM-024/IAM-026/IAM-028 reuse immutable migration 0005 for engine-parity runtime behavior. Released-version upgrade fixtures and commit-bound validation remain future work.
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
@@ -509,7 +513,8 @@ requirements:
       - crates/persistence/src/api_token_repository.rs
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
-    note: Persisted identity, session, recovery, API-token and atomic Create/Patch idempotency references use UUIDv7, UTC microseconds and typed monotonic result versions where mutable; remaining product entities are not implemented.
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+    note: Persisted identity, session, recovery, API-token and atomic Create/Patch/Revoke idempotency references use UUIDv7, UTC microseconds and typed monotonic result versions where mutable; remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -569,8 +574,9 @@ requirements:
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle and atomic Create/Patch-idempotency evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
+    note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle and atomic Create/Patch/Revoke-idempotency evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -606,7 +612,8 @@ requirements:
       - crates/persistence/tests/common/mod.rs
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
-    note: Identity, session, recovery, API-token and exactly 24-hour Create/Patch-idempotency retention and reuse use UTC microseconds on both engines; IANA timezone selection and UI display are absent.
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+    note: Identity, session, recovery, API-token and exactly 24-hour Create/Patch/Revoke-idempotency retention and reuse use UTC microseconds on both engines; IANA timezone selection and UI display are absent.
   - id: PRD-NFR-006
     release: "0.1"
     coverage: none

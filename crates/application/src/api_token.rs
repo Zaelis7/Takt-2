@@ -434,6 +434,12 @@ pub struct UpdateApiTokenIdempotencyPlan {
     pub context: ApiTokenIdempotencyContext,
 }
 
+#[derive(Clone, Debug)]
+pub struct RevokeApiTokenIdempotencyPlan {
+    pub revoke: RevokeApiTokenPlan,
+    pub context: ApiTokenIdempotencyContext,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StoredApiTokenMutationResult {
     pub api_token_id: ApiTokenId,
@@ -477,6 +483,11 @@ pub trait ApiTokenMutationIdempotencyRepository: Send + Sync {
     async fn update_api_token_idempotent(
         &self,
         plan: UpdateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError>;
+
+    async fn revoke_api_token_idempotent(
+        &self,
+        plan: RevokeApiTokenIdempotencyPlan,
     ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError>;
 }
 

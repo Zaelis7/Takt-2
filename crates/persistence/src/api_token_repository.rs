@@ -10,9 +10,9 @@ use takt_application::api_token::{
     ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenMutationIdempotencyError,
     ApiTokenMutationIdempotencyRepository, ApiTokenMutationIdempotencyResult, ApiTokenPatch,
     ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan, CreateApiTokenPlan,
-    EncryptedApiTokenReplay, NewApiToken, RevokeApiTokenPlan, StoredApiToken,
-    StoredApiTokenCreateReplay, StoredApiTokenMutationResult, UpdateApiTokenIdempotencyPlan,
-    UpdateApiTokenPlan, validate_new_api_token,
+    EncryptedApiTokenReplay, NewApiToken, RevokeApiTokenIdempotencyPlan, RevokeApiTokenPlan,
+    StoredApiToken, StoredApiTokenCreateReplay, StoredApiTokenMutationResult,
+    UpdateApiTokenIdempotencyPlan, UpdateApiTokenPlan, validate_new_api_token,
 };
 use takt_application::{NewAuditEvent, RepositoryError};
 use takt_domain::{
@@ -591,6 +591,21 @@ fn validate_idempotent_update(
     Ok(())
 }
 
+fn validate_idempotent_revoke(
+    plan: &RevokeApiTokenIdempotencyPlan,
+) -> Result<(), ApiTokenMutationIdempotencyError> {
+    let event = &plan.revoke.audit_event.event;
+    if plan.context.method() != ApiTokenWriteMethod::Delete
+        || plan.context.path() != format!("/api/v1/api-tokens/{}", plan.revoke.id)
+        || plan.context.created_at() != plan.revoke.now
+        || plan.context.actor_type() != event.actor_type
+        || event.actor_id.map(|id| id.as_uuid()) != Some(plan.context.actor_id().as_uuid())
+    {
+        return Err(RepositoryError::ConstraintViolation.into());
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
     async fn update_api_token_idempotent(
@@ -649,6 +664,77 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
                     return Err(RepositoryError::VersionConflict.into());
                 };
                 insert_audit_sqlite(&mut transaction, &plan.update.audit_event).await?;
+                complete_mutation_sqlite(&mut transaction, &plan.context, &api_token).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                api_token
+            }
+        };
+        let result = StoredApiTokenMutationResult {
+            api_token_id: api_token.id,
+            result_version: api_token.version,
+        };
+        Ok(ApiTokenMutationIdempotencyResult::Mutated {
+            api_token: Box::new(api_token),
+            result,
+        })
+    }
+
+    async fn revoke_api_token_idempotent(
+        &self,
+        plan: RevokeApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError> {
+        validate_idempotent_revoke(&plan)?;
+        let api_token = match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                delete_expired_postgres(&mut transaction, &plan.context).await?;
+                if !reserve_postgres(&mut transaction, &plan.context).await? {
+                    let replay = mutation_replay_postgres(&mut transaction, &plan.context).await?;
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(ApiTokenMutationIdempotencyResult::Replay(replay));
+                }
+                let current = token_by_id_postgres(&mut transaction, plan.revoke.id).await?;
+                validate_audit(
+                    &plan.revoke.audit_event,
+                    plan.revoke.id,
+                    current.organization_id,
+                    current.project_id,
+                    API_TOKEN_REVOKED_AUDIT_ACTION,
+                    plan.revoke.now,
+                )?;
+                let Some(api_token) = apply_revoke_postgres(&mut transaction, &plan.revoke).await?
+                else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict.into());
+                };
+                insert_audit_postgres(&mut transaction, &plan.revoke.audit_event).await?;
+                complete_mutation_postgres(&mut transaction, &plan.context, &api_token).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+                api_token
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                delete_expired_sqlite(&mut transaction, &plan.context).await?;
+                if !reserve_sqlite(&mut transaction, &plan.context).await? {
+                    let replay = mutation_replay_sqlite(&mut transaction, &plan.context).await?;
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(ApiTokenMutationIdempotencyResult::Replay(replay));
+                }
+                let current = token_by_id_sqlite(&mut transaction, plan.revoke.id).await?;
+                validate_audit(
+                    &plan.revoke.audit_event,
+                    plan.revoke.id,
+                    current.organization_id,
+                    current.project_id,
+                    API_TOKEN_REVOKED_AUDIT_ACTION,
+                    plan.revoke.now,
+                )?;
+                let Some(api_token) = apply_revoke_sqlite(&mut transaction, &plan.revoke).await?
+                else {
+                    transaction.rollback().await.map_err(map_sqlx_error)?;
+                    return Err(RepositoryError::VersionConflict.into());
+                };
+                insert_audit_sqlite(&mut transaction, &plan.revoke.audit_event).await?;
                 complete_mutation_sqlite(&mut transaction, &plan.context, &api_token).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
                 api_token
@@ -741,6 +827,34 @@ async fn apply_update_sqlite(
                 .map(UtcTimestamp::unix_micros),
         )
         .bind(networks)
+        .bind(plan.now.unix_micros())
+        .fetch_optional(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    row.as_ref().map(token_from_sqlite).transpose()
+}
+
+async fn apply_revoke_postgres(
+    connection: &mut PgConnection,
+    plan: &RevokeApiTokenPlan,
+) -> Result<Option<ApiToken>, RepositoryError> {
+    let row = sqlx::query(REVOKE_PG)
+        .bind(plan.id.as_uuid())
+        .bind(plan.expected_version)
+        .bind(postgres_time(plan.now)?)
+        .fetch_optional(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    row.as_ref().map(token_from_postgres).transpose()
+}
+
+async fn apply_revoke_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &RevokeApiTokenPlan,
+) -> Result<Option<ApiToken>, RepositoryError> {
+    let row = sqlx::query(REVOKE_SQLITE)
+        .bind(plan.id.to_string())
+        .bind(plan.expected_version)
         .bind(plan.now.unix_micros())
         .fetch_optional(connection)
         .await

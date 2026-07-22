@@ -12,8 +12,8 @@ use takt_application::api_token::{
     ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenMutationIdempotencyError,
     ApiTokenMutationIdempotencyRepository, ApiTokenMutationIdempotencyResult, ApiTokenPatch,
     ApiTokenReplayCipher, ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan,
-    CreateApiTokenPlan, NewApiToken, RevokeApiTokenPlan, StoredApiToken,
-    UpdateApiTokenIdempotencyPlan, UpdateApiTokenPlan,
+    CreateApiTokenPlan, NewApiToken, RevokeApiTokenIdempotencyPlan, RevokeApiTokenPlan,
+    StoredApiToken, UpdateApiTokenIdempotencyPlan, UpdateApiTokenPlan,
 };
 use takt_application::{
     ApplicationError, Argon2idConfig, AuditRepository, AuthenticationError, BootstrapService,
@@ -1191,6 +1191,30 @@ fn idempotent_update_plan(
     })
 }
 
+fn idempotent_revoke_plan(
+    id: ApiTokenId,
+    expected_version: i64,
+    audit_suffix: u64,
+    key: &str,
+    request_hash: [u8; 32],
+    now: UtcTimestamp,
+) -> Result<RevokeApiTokenIdempotencyPlan, Box<dyn Error>> {
+    Ok(RevokeApiTokenIdempotencyPlan {
+        revoke: RevokeApiTokenPlan {
+            id,
+            expected_version,
+            now,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(audit_suffix)?),
+                id,
+                API_TOKEN_REVOKED_AUDIT_ACTION,
+                now,
+            )?,
+        },
+        context: mutation_context(id, ApiTokenWriteMethod::Delete, key, request_hash, now)?,
+    })
+}
+
 async fn create_mutation_token(
     repository: &SqlxRepository,
     id_suffix: u64,
@@ -1701,6 +1725,183 @@ pub async fn run_api_token_patch_idempotency_contract(
             .await?,
         ApiTokenMutationIdempotencyResult::Mutated { .. }
     ));
+
+    Ok(())
+}
+
+// PRD-API-003 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 / PRD-DATA-004 /
+// PRD-NFR-002 / PRD-NFR-005: both engines execute this exact atomic Revoke
+// idempotency, replay, conflict, rollback and concurrency contract.
+pub async fn run_api_token_revoke_idempotency_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let primary_id = create_mutation_token(
+        repository,
+        63_000,
+        "takt_5051525354555657",
+        "revoke-primary",
+        63_001,
+    )
+    .await?;
+    let audit_before = repository
+        .audit_events_for_organization(organization_id)
+        .await?
+        .len();
+    let revoked_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 500);
+    let mut wrong_method = idempotent_revoke_plan(
+        primary_id,
+        1,
+        63_002,
+        "revoke-key-wrong-method",
+        [0x70; 32],
+        revoked_at,
+    )?;
+    wrong_method.context = mutation_context(
+        primary_id,
+        ApiTokenWriteMethod::Patch,
+        "revoke-key-wrong-method",
+        [0x70; 32],
+        revoked_at,
+    )?;
+    assert_eq!(
+        repository.revoke_api_token_idempotent(wrong_method).await,
+        Err(ApiTokenMutationIdempotencyError::Repository(
+            RepositoryError::ConstraintViolation
+        )),
+        "a Revoke request must not cross the method-bound idempotency context"
+    );
+    assert_eq!(repository.api_token_by_id(primary_id).await?.version, 1);
+    let primary = idempotent_revoke_plan(
+        primary_id,
+        1,
+        63_002,
+        "revoke-key-primary",
+        [0x71; 32],
+        revoked_at,
+    )?;
+    let stored_result = match repository
+        .revoke_api_token_idempotent(primary.clone())
+        .await?
+    {
+        ApiTokenMutationIdempotencyResult::Mutated { api_token, result } => {
+            assert_eq!(
+                (api_token.revoked_at, api_token.version),
+                (Some(revoked_at), 2)
+            );
+            result
+        }
+        ApiTokenMutationIdempotencyResult::Replay(_) => {
+            return Err("the first idempotent revoke unexpectedly replayed".into());
+        }
+    };
+    assert_eq!(
+        repository.revoke_api_token_idempotent(primary).await?,
+        ApiTokenMutationIdempotencyResult::Replay(stored_result)
+    );
+    assert_eq!(
+        repository
+            .revoke_api_token_idempotent(idempotent_revoke_plan(
+                primary_id,
+                1,
+                63_003,
+                "revoke-key-primary",
+                [0x72; 32],
+                revoked_at,
+            )?)
+            .await,
+        Err(ApiTokenMutationIdempotencyError::KeyReused)
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_before + 1,
+        "revoke replay and hash conflict must not append audit events"
+    );
+
+    let rollback_id = create_mutation_token(
+        repository,
+        63_010,
+        "takt_6061626364656667",
+        "revoke-rollback",
+        63_011,
+    )
+    .await?;
+    let rollback_at = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 600);
+    assert_eq!(
+        repository
+            .revoke_api_token_idempotent(idempotent_revoke_plan(
+                rollback_id,
+                1,
+                62_001,
+                "revoke-key-rollback",
+                [0x73; 32],
+                rollback_at,
+            )?)
+            .await,
+        Err(ApiTokenMutationIdempotencyError::Repository(
+            RepositoryError::AlreadyExists
+        ))
+    );
+    let rolled_back = repository.api_token_by_id(rollback_id).await?;
+    assert_eq!(
+        (rolled_back.revoked_at, rolled_back.version),
+        (None, 1),
+        "revoke and reservation must roll back with the failed audit"
+    );
+    assert!(matches!(
+        repository
+            .revoke_api_token_idempotent(idempotent_revoke_plan(
+                rollback_id,
+                1,
+                63_012,
+                "revoke-key-rollback",
+                [0x73; 32],
+                rollback_at,
+            )?)
+            .await?,
+        ApiTokenMutationIdempotencyResult::Mutated { .. }
+    ));
+
+    let concurrent_id = create_mutation_token(
+        repository,
+        63_020,
+        "takt_7071727374757677",
+        "revoke-concurrent",
+        63_021,
+    )
+    .await?;
+    let concurrent = idempotent_revoke_plan(
+        concurrent_id,
+        1,
+        63_022,
+        "revoke-key-concurrent",
+        [0x74; 32],
+        UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 700),
+    )?;
+    let (left, right) = tokio::join!(
+        repository.revoke_api_token_idempotent(concurrent.clone()),
+        repository.revoke_api_token_idempotent(concurrent)
+    );
+    assert!(
+        matches!(
+            (&left, &right),
+            (
+                Ok(ApiTokenMutationIdempotencyResult::Mutated { .. }),
+                Ok(ApiTokenMutationIdempotencyResult::Replay(_))
+            )
+        ) || matches!(
+            (&left, &right),
+            (
+                Ok(ApiTokenMutationIdempotencyResult::Replay(_)),
+                Ok(ApiTokenMutationIdempotencyResult::Mutated { .. })
+            )
+        ),
+        "exactly one concurrent revoke must mutate and the other replay: {left:?} / {right:?}"
+    );
+    assert_eq!(repository.api_token_by_id(concurrent_id).await?.version, 2);
 
     Ok(())
 }
