@@ -5,9 +5,11 @@ use serde_json::{Value, json};
 use sqlx::{PgConnection, Row, SqliteConnection, postgres::PgRow, sqlite::SqliteRow};
 use takt_application::api_token::{
     API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
-    ApiTokenHash, ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenPatch, ApiTokenStore,
-    CreateApiTokenPlan, NewApiToken, RevokeApiTokenPlan, StoredApiToken, UpdateApiTokenPlan,
-    validate_new_api_token,
+    ApiTokenCreateIdempotencyError, ApiTokenCreateIdempotencyRepository,
+    ApiTokenCreateIdempotencyResult, ApiTokenHash, ApiTokenLifecycleRepository, ApiTokenListQuery,
+    ApiTokenPatch, ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan,
+    CreateApiTokenPlan, EncryptedApiTokenReplay, NewApiToken, RevokeApiTokenPlan, StoredApiToken,
+    StoredApiTokenCreateReplay, UpdateApiTokenPlan, validate_new_api_token,
 };
 use takt_application::{NewAuditEvent, RepositoryError};
 use takt_domain::{
@@ -93,37 +95,13 @@ impl ApiTokenStore for SqlxRepository {
         match &self.database.pool {
             DatabasePool::PostgreSql(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
-                sqlx::query("INSERT INTO api_tokens (id, organization_id, project_id, name, kind, token_prefix, token_hash, scopes, ip_networks, expires_at, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 1)")
-                    .bind(plan.token.id.as_uuid())
-                    .bind(plan.token.organization_id.as_uuid())
-                    .bind(plan.token.project_id.map(ProjectId::as_uuid))
-                    .bind(&plan.token.name)
-                    .bind(plan.token.kind.as_str())
-                    .bind(plan.token.token_prefix.as_str())
-                    .bind(plan.token.token_hash.expose_for_persistence())
-                    .bind(&scopes)
-                    .bind(&networks)
-                    .bind(plan.token.expires_at.map(postgres_time).transpose()?)
-                    .bind(postgres_time(plan.token.now)?)
-                    .execute(&mut *transaction).await.map_err(map_sqlx_error)?;
+                insert_token_postgres(&mut transaction, &plan.token, &scopes, &networks).await?;
                 insert_audit_postgres(&mut transaction, &plan.audit_event).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
             }
             DatabasePool::Sqlite(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
-                sqlx::query("INSERT INTO api_tokens (id, organization_id, project_id, name, kind, token_prefix, token_hash, scopes, ip_networks, expires_at, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, 1)")
-                    .bind(plan.token.id.to_string())
-                    .bind(plan.token.organization_id.to_string())
-                    .bind(plan.token.project_id.map(|id| id.to_string()))
-                    .bind(&plan.token.name)
-                    .bind(plan.token.kind.as_str())
-                    .bind(plan.token.token_prefix.as_str())
-                    .bind(plan.token.token_hash.expose_for_persistence())
-                    .bind(scopes.to_string())
-                    .bind(networks.to_string())
-                    .bind(plan.token.expires_at.map(UtcTimestamp::unix_micros))
-                    .bind(plan.token.now.unix_micros())
-                    .execute(&mut *transaction).await.map_err(map_sqlx_error)?;
+                insert_token_sqlite(&mut transaction, &plan.token, &scopes, &networks).await?;
                 insert_audit_sqlite(&mut transaction, &plan.audit_event).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
             }
@@ -223,6 +201,375 @@ impl ApiTokenStore for SqlxRepository {
             }
         }
     }
+}
+
+#[async_trait]
+impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
+    async fn create_api_token_idempotent(
+        &self,
+        plan: CreateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenCreateIdempotencyResult, ApiTokenCreateIdempotencyError> {
+        validate_idempotent_create(&plan)?;
+        let scopes = scopes_json(&plan.create.token.scopes);
+        let networks = networks_json(&plan.create.token.ip_networks);
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                delete_expired_postgres(&mut transaction, &plan).await?;
+                let reserved = reserve_postgres(&mut transaction, &plan).await?;
+                if !reserved {
+                    let replay = replay_postgres(&mut transaction, &plan).await?;
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(ApiTokenCreateIdempotencyResult::Replay(replay));
+                }
+                insert_token_postgres(&mut transaction, &plan.create.token, &scopes, &networks)
+                    .await?;
+                insert_audit_postgres(&mut transaction, &plan.create.audit_event).await?;
+                complete_postgres(&mut transaction, &plan).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+            }
+            DatabasePool::Sqlite(pool) => {
+                let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
+                delete_expired_sqlite(&mut transaction, &plan).await?;
+                let reserved = reserve_sqlite(&mut transaction, &plan).await?;
+                if !reserved {
+                    let replay = replay_sqlite(&mut transaction, &plan).await?;
+                    transaction.commit().await.map_err(map_sqlx_error)?;
+                    return Ok(ApiTokenCreateIdempotencyResult::Replay(replay));
+                }
+                insert_token_sqlite(&mut transaction, &plan.create.token, &scopes, &networks)
+                    .await?;
+                insert_audit_sqlite(&mut transaction, &plan.create.audit_event).await?;
+                complete_sqlite(&mut transaction, &plan).await?;
+                transaction.commit().await.map_err(map_sqlx_error)?;
+            }
+        }
+        let api_token = new_token_projection(plan.create.token);
+        let replay = StoredApiTokenCreateReplay {
+            api_token_id: api_token.id,
+            result_version: api_token.version,
+            encrypted_replay: plan.encrypted_replay,
+        };
+        Ok(ApiTokenCreateIdempotencyResult::Created {
+            api_token: Box::new(api_token),
+            replay,
+        })
+    }
+
+    async fn purge_expired_api_token_idempotency(
+        &self,
+        now: UtcTimestamp,
+        limit: u16,
+    ) -> Result<u64, RepositoryError> {
+        if !(1..=200).contains(&limit) {
+            return Err(RepositoryError::ConstraintViolation);
+        }
+        match &self.database.pool {
+            DatabasePool::PostgreSql(pool) => {
+                sqlx::query("DELETE FROM api_token_idempotency WHERE ctid IN (SELECT ctid FROM api_token_idempotency WHERE expires_at <= $1 ORDER BY expires_at LIMIT $2)")
+                    .bind(postgres_time(now)?)
+                    .bind(i64::from(limit))
+                    .execute(pool)
+                    .await
+                    .map(|result| result.rows_affected())
+                    .map_err(map_sqlx_error)
+            }
+            DatabasePool::Sqlite(pool) => {
+                sqlx::query("DELETE FROM api_token_idempotency WHERE rowid IN (SELECT rowid FROM api_token_idempotency WHERE expires_at <= ?1 ORDER BY expires_at LIMIT ?2)")
+                    .bind(now.unix_micros())
+                    .bind(i64::from(limit))
+                    .execute(pool)
+                    .await
+                    .map(|result| result.rows_affected())
+                    .map_err(map_sqlx_error)
+            }
+        }
+    }
+}
+
+fn validate_idempotent_create(
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<(), ApiTokenCreateIdempotencyError> {
+    validate_new_api_token(&plan.create.token).map_err(|_| RepositoryError::ConstraintViolation)?;
+    validate_audit(
+        &plan.create.audit_event,
+        plan.create.token.id,
+        plan.create.token.organization_id,
+        plan.create.token.project_id,
+        API_TOKEN_CREATED_AUDIT_ACTION,
+        plan.create.token.now,
+    )?;
+    let event = &plan.create.audit_event.event;
+    if plan.context.method() != ApiTokenWriteMethod::Post
+        || plan.context.created_at() != plan.create.token.now
+        || plan.context.actor_type() != event.actor_type
+        || event.actor_id.map(|id| id.as_uuid()) != Some(plan.context.actor_id().as_uuid())
+    {
+        return Err(RepositoryError::ConstraintViolation.into());
+    }
+    Ok(())
+}
+
+async fn insert_token_postgres(
+    connection: &mut PgConnection,
+    token: &NewApiToken,
+    scopes: &Value,
+    networks: &Value,
+) -> Result<(), RepositoryError> {
+    sqlx::query("INSERT INTO api_tokens (id, organization_id, project_id, name, kind, token_prefix, token_hash, scopes, ip_networks, expires_at, created_at, updated_at, version) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, 1)")
+        .bind(token.id.as_uuid())
+        .bind(token.organization_id.as_uuid())
+        .bind(token.project_id.map(ProjectId::as_uuid))
+        .bind(&token.name)
+        .bind(token.kind.as_str())
+        .bind(token.token_prefix.as_str())
+        .bind(token.token_hash.expose_for_persistence())
+        .bind(scopes)
+        .bind(networks)
+        .bind(token.expires_at.map(postgres_time).transpose()?)
+        .bind(postgres_time(token.now)?)
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+async fn insert_token_sqlite(
+    connection: &mut SqliteConnection,
+    token: &NewApiToken,
+    scopes: &Value,
+    networks: &Value,
+) -> Result<(), RepositoryError> {
+    sqlx::query("INSERT INTO api_tokens (id, organization_id, project_id, name, kind, token_prefix, token_hash, scopes, ip_networks, expires_at, created_at, updated_at, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, 1)")
+        .bind(token.id.to_string())
+        .bind(token.organization_id.to_string())
+        .bind(token.project_id.map(|id| id.to_string()))
+        .bind(&token.name)
+        .bind(token.kind.as_str())
+        .bind(token.token_prefix.as_str())
+        .bind(token.token_hash.expose_for_persistence())
+        .bind(scopes.to_string())
+        .bind(networks.to_string())
+        .bind(token.expires_at.map(UtcTimestamp::unix_micros))
+        .bind(token.now.unix_micros())
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+async fn delete_expired_postgres(
+    connection: &mut PgConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<(), RepositoryError> {
+    sqlx::query("DELETE FROM api_token_idempotency WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5 AND expires_at <= $6")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().as_uuid())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .bind(postgres_time(plan.context.created_at())?)
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+async fn delete_expired_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<(), RepositoryError> {
+    sqlx::query("DELETE FROM api_token_idempotency WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5 AND expires_at <= ?6")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().to_string())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .bind(plan.context.created_at().unix_micros())
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    Ok(())
+}
+
+async fn reserve_postgres(
+    connection: &mut PgConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<bool, RepositoryError> {
+    sqlx::query("INSERT INTO api_token_idempotency (actor_type, actor_id, method, path, idempotency_key, request_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().as_uuid())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .bind(plan.context.request_hash().as_slice())
+        .bind(postgres_time(plan.context.created_at())?)
+        .bind(postgres_time(plan.context.expires_at())?)
+        .execute(connection)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(map_sqlx_error)
+}
+
+async fn reserve_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<bool, RepositoryError> {
+    sqlx::query("INSERT INTO api_token_idempotency (actor_type, actor_id, method, path, idempotency_key, request_hash, created_at, expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT DO NOTHING")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().to_string())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .bind(plan.context.request_hash().as_slice())
+        .bind(plan.context.created_at().unix_micros())
+        .bind(plan.context.expires_at().unix_micros())
+        .execute(connection)
+        .await
+        .map(|result| result.rows_affected() == 1)
+        .map_err(map_sqlx_error)
+}
+
+async fn complete_postgres(
+    connection: &mut PgConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<(), RepositoryError> {
+    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = $6, result_version = 1, replay_key_version = $7, replay_nonce = $8, replay_ciphertext = $9 WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5 AND api_token_id IS NULL")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().as_uuid())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .bind(plan.create.token.id.as_uuid())
+        .bind(plan.encrypted_replay.key_version())
+        .bind(plan.encrypted_replay.nonce().as_slice())
+        .bind(plan.encrypted_replay.ciphertext())
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected();
+    ensure_one_row(affected)
+}
+
+async fn complete_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<(), RepositoryError> {
+    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = ?6, result_version = 1, replay_key_version = ?7, replay_nonce = ?8, replay_ciphertext = ?9 WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5 AND api_token_id IS NULL")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().to_string())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .bind(plan.create.token.id.to_string())
+        .bind(plan.encrypted_replay.key_version())
+        .bind(plan.encrypted_replay.nonce().as_slice())
+        .bind(plan.encrypted_replay.ciphertext())
+        .execute(connection)
+        .await
+        .map_err(map_sqlx_error)?
+        .rows_affected();
+    ensure_one_row(affected)
+}
+
+fn ensure_one_row(affected: u64) -> Result<(), RepositoryError> {
+    if affected == 1 {
+        Ok(())
+    } else {
+        Err(RepositoryError::UnknownInfrastructure)
+    }
+}
+
+async fn replay_postgres(
+    connection: &mut PgConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<StoredApiTokenCreateReplay, ApiTokenCreateIdempotencyError> {
+    let row = sqlx::query("SELECT request_hash, api_token_id, result_version, replay_key_version, replay_nonce, replay_ciphertext FROM api_token_idempotency WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().as_uuid())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .fetch_one(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    let id = row
+        .try_get::<Option<uuid::Uuid>, _>("api_token_id")
+        .map_err(map_sqlx_error)?
+        .map(ApiTokenId::from_uuid)
+        .transpose()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    replay_from_parts(&row, id, &plan.context)
+}
+
+async fn replay_sqlite(
+    connection: &mut SqliteConnection,
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<StoredApiTokenCreateReplay, ApiTokenCreateIdempotencyError> {
+    let row = sqlx::query("SELECT request_hash, api_token_id, result_version, replay_key_version, replay_nonce, replay_ciphertext FROM api_token_idempotency WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5")
+        .bind(plan.context.actor_type().as_str())
+        .bind(plan.context.actor_id().to_string())
+        .bind(plan.context.method().as_str())
+        .bind(plan.context.path())
+        .bind(plan.context.key())
+        .fetch_one(connection)
+        .await
+        .map_err(map_sqlx_error)?;
+    let id = row
+        .try_get::<Option<String>, _>("api_token_id")
+        .map_err(map_sqlx_error)?
+        .map(|value| ApiTokenId::from_str(&value))
+        .transpose()
+        .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    replay_from_parts(&row, id, &plan.context)
+}
+
+fn replay_from_parts<R: Row>(
+    row: &R,
+    api_token_id: Option<ApiTokenId>,
+    context: &takt_application::api_token::ApiTokenIdempotencyContext,
+) -> Result<StoredApiTokenCreateReplay, ApiTokenCreateIdempotencyError>
+where
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    for<'a> Vec<u8>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<Vec<u8>>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<i32>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+{
+    let request_hash: Vec<u8> = row.try_get("request_hash").map_err(map_sqlx_error)?;
+    if request_hash.as_slice() != context.request_hash() {
+        return Err(ApiTokenCreateIdempotencyError::KeyReused);
+    }
+    let result_version = row
+        .try_get::<Option<i64>, _>("result_version")
+        .map_err(map_sqlx_error)?;
+    let key_version = row
+        .try_get::<Option<i32>, _>("replay_key_version")
+        .map_err(map_sqlx_error)?;
+    let nonce = row
+        .try_get::<Option<Vec<u8>>, _>("replay_nonce")
+        .map_err(map_sqlx_error)?;
+    let ciphertext = row
+        .try_get::<Option<Vec<u8>>, _>("replay_ciphertext")
+        .map_err(map_sqlx_error)?;
+    let (
+        Some(api_token_id),
+        Some(result_version),
+        Some(key_version),
+        Some(nonce),
+        Some(ciphertext),
+    ) = (api_token_id, result_version, key_version, nonce, ciphertext)
+    else {
+        return Err(RepositoryError::UnknownInfrastructure.into());
+    };
+    let encrypted_replay =
+        EncryptedApiTokenReplay::from_persistence(key_version, nonce, ciphertext)
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+    Ok(StoredApiTokenCreateReplay {
+        api_token_id,
+        result_version,
+        encrypted_replay,
+    })
 }
 
 #[async_trait]

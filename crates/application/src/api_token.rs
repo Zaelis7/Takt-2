@@ -368,6 +368,66 @@ impl fmt::Debug for EncryptedApiTokenReplay {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct CreateApiTokenIdempotencyPlan {
+    pub create: CreateApiTokenPlan,
+    pub context: ApiTokenIdempotencyContext,
+    pub encrypted_replay: EncryptedApiTokenReplay,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredApiTokenCreateReplay {
+    pub api_token_id: ApiTokenId,
+    pub result_version: i64,
+    pub encrypted_replay: EncryptedApiTokenReplay,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApiTokenCreateIdempotencyResult {
+    Created {
+        api_token: Box<ApiToken>,
+        replay: StoredApiTokenCreateReplay,
+    },
+    Replay(StoredApiTokenCreateReplay),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApiTokenCreateIdempotencyError {
+    KeyReused,
+    Repository(RepositoryError),
+}
+
+impl fmt::Display for ApiTokenCreateIdempotencyError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::KeyReused => "API token idempotency key was reused",
+            Self::Repository(_) => "API token idempotency repository operation failed",
+        })
+    }
+}
+
+impl Error for ApiTokenCreateIdempotencyError {}
+
+impl From<RepositoryError> for ApiTokenCreateIdempotencyError {
+    fn from(value: RepositoryError) -> Self {
+        Self::Repository(value)
+    }
+}
+
+#[async_trait]
+pub trait ApiTokenCreateIdempotencyRepository: Send + Sync {
+    async fn create_api_token_idempotent(
+        &self,
+        plan: CreateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenCreateIdempotencyResult, ApiTokenCreateIdempotencyError>;
+
+    async fn purge_expired_api_token_idempotency(
+        &self,
+        now: UtcTimestamp,
+        limit: u16,
+    ) -> Result<u64, RepositoryError>;
+}
+
 pub struct ApiTokenReplayCipher {
     key_version: i32,
     key: Zeroizing<[u8; 32]>,

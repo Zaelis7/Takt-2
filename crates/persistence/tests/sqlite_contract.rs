@@ -122,6 +122,7 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
     common::run_recovery_repository_contract(&repository).await?;
     common::run_api_token_repository_contract(&repository).await?;
     common::run_api_token_lifecycle_contract(&repository).await?;
+    common::run_api_token_create_idempotency_contract(&repository).await?;
     common::run_browser_authentication_contract(&repository).await?;
 
     let mut connection = raw_connection(&path).await?;

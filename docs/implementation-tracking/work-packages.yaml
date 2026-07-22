@@ -775,7 +775,7 @@ packages:
 
   - id: IAM-024
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-003, PRD-IAM-001, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
     findings: [SPEC-006]
     depends_on: [IAM-022, SPEC-020, IAM-027]

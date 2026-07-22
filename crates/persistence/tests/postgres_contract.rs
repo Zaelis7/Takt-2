@@ -89,6 +89,8 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     common::run_recovery_repository_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_api_token_repository_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_api_token_lifecycle_contract(&SqlxRepository::new(database.clone())).await?;
+    common::run_api_token_create_idempotency_contract(&SqlxRepository::new(database.clone()))
+        .await?;
     common::run_browser_authentication_contract(&SqlxRepository::new(database.clone())).await?;
     let row = sqlx::query(
         "SELECT string_agg(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",

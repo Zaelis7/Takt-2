@@ -7,8 +7,11 @@ use std::{
 
 use takt_application::api_token::{
     API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
-    ApiTokenHash, ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenPatch, ApiTokenStore,
-    CreateApiTokenPlan, NewApiToken, RevokeApiTokenPlan, StoredApiToken, UpdateApiTokenPlan,
+    ApiTokenCreateIdempotencyError, ApiTokenCreateIdempotencyRepository,
+    ApiTokenCreateIdempotencyResult, ApiTokenHash, ApiTokenIdempotencyContext,
+    ApiTokenLifecycleRepository, ApiTokenListQuery, ApiTokenPatch, ApiTokenReplayCipher,
+    ApiTokenStore, ApiTokenWriteMethod, CreateApiTokenIdempotencyPlan, CreateApiTokenPlan,
+    NewApiToken, RevokeApiTokenPlan, StoredApiToken, UpdateApiTokenPlan,
 };
 use takt_application::{
     ApplicationError, Argon2idConfig, AuditRepository, AuthenticationError, BootstrapService,
@@ -35,6 +38,7 @@ pub const TEST_RAW_SESSION_TOKEN: &str = "raw-session-token-must-never-be-stored
 pub const TEST_RAW_CSRF_TOKEN: &str = "raw-csrf-token-must-never-be-stored";
 pub const TEST_RAW_RECOVERY_TOKEN: &str = "raw-recovery-token-must-never-be-stored";
 pub const TEST_REPLACEMENT_PASSWORD: &str = "replacement horse battery";
+pub const TEST_API_TOKEN_REPLAY_BODY: &[u8] = b"encrypted-create-response-marker";
 pub const TEST_SESSION_TOKEN_SHA256: &str =
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 pub const TEST_CSRF_TOKEN_SHA256: &str =
@@ -1097,6 +1101,45 @@ fn new_api_token(
     })
 }
 
+fn idempotent_create_plan(
+    id_suffix: u64,
+    prefix: &str,
+    name: &str,
+    audit_suffix: u64,
+    key: &str,
+    request_hash: [u8; 32],
+    now: UtcTimestamp,
+) -> Result<CreateApiTokenIdempotencyPlan, Box<dyn Error>> {
+    let mut token = new_api_token(id_suffix, prefix, name, now)?;
+    token.expires_at = Some(UtcTimestamp::from_unix_micros(
+        now.unix_micros() + 3_600_000_000,
+    ));
+    let context = ApiTokenIdempotencyContext::new(
+        AuditActorType::System,
+        resource_id(3)?,
+        ApiTokenWriteMethod::Post,
+        "/api/v1/api-tokens".to_owned(),
+        key.to_owned(),
+        request_hash,
+        now,
+    )?;
+    let encrypted_replay =
+        ApiTokenReplayCipher::new(1, [0x42; 32])?.encrypt(&context, TEST_API_TOKEN_REPLAY_BODY)?;
+    Ok(CreateApiTokenIdempotencyPlan {
+        create: CreateApiTokenPlan {
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(audit_suffix)?),
+                token.id,
+                API_TOKEN_CREATED_AUDIT_ACTION,
+                now,
+            )?,
+            token,
+        },
+        context,
+        encrypted_replay,
+    })
+}
+
 // PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 /
 // PRD-DATA-004 / PRD-NFR-002 / PRD-NFR-005: both engines execute this contract.
 pub async fn run_api_token_repository_contract(
@@ -1191,6 +1234,198 @@ pub async fn run_api_token_repository_contract(
         repository.api_token_by_id(rollback_id).await,
         Err(RepositoryError::NotFound),
         "token insert must roll back with duplicate audit ID"
+    );
+    Ok(())
+}
+
+// PRD-API-003 / PRD-IAM-001 / PRD-IAM-005 / PRD-DATA-001 / PRD-DATA-002 /
+// PRD-DATA-004 / PRD-NFR-002 / PRD-NFR-005: both engines execute this exact
+// atomic Create/idempotency/replay contract.
+pub async fn run_api_token_create_idempotency_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let audit_before = repository
+        .audit_events_for_organization(organization_id)
+        .await?
+        .len();
+    let plan = idempotent_create_plan(
+        61_000,
+        "takt_1111222233334444",
+        "idempotent",
+        61_001,
+        "create-key-primary",
+        [0x11; 32],
+        TEST_NOW,
+    )?;
+    let first = repository.create_api_token_idempotent(plan.clone()).await?;
+    let first_replay = match first {
+        ApiTokenCreateIdempotencyResult::Created { api_token, replay } => {
+            assert_eq!((api_token.id, api_token.version), (plan.create.token.id, 1));
+            replay
+        }
+        ApiTokenCreateIdempotencyResult::Replay(_) => {
+            return Err("the first idempotent create unexpectedly replayed".into());
+        }
+    };
+    let repeated = repository.create_api_token_idempotent(plan.clone()).await?;
+    let repeated_replay = match repeated {
+        ApiTokenCreateIdempotencyResult::Replay(replay) => replay,
+        ApiTokenCreateIdempotencyResult::Created { .. } => {
+            return Err("an identical request created the token twice".into());
+        }
+    };
+    assert_eq!(first_replay, repeated_replay);
+    assert_eq!(
+        ApiTokenReplayCipher::new(1, [0x42; 32])?
+            .decrypt(&plan.context, &repeated_replay.encrypted_replay)?
+            .as_slice(),
+        TEST_API_TOKEN_REPLAY_BODY
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_before + 1,
+        "an identical replay must not append a second audit event"
+    );
+
+    let conflicting = idempotent_create_plan(
+        61_010,
+        "takt_5555666677778888",
+        "must-not-exist",
+        61_011,
+        "create-key-primary",
+        [0x22; 32],
+        TEST_NOW,
+    )?;
+    assert_eq!(
+        repository
+            .create_api_token_idempotent(conflicting.clone())
+            .await,
+        Err(ApiTokenCreateIdempotencyError::KeyReused)
+    );
+    assert_eq!(
+        repository
+            .api_token_by_id(conflicting.create.token.id)
+            .await,
+        Err(RepositoryError::NotFound)
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_before + 1,
+        "a request-hash conflict must have no audit effect"
+    );
+
+    let rollback = idempotent_create_plan(
+        61_020,
+        "takt_9999aaaabbbbcccc",
+        "rollback",
+        60_001,
+        "create-key-rollback",
+        [0x33; 32],
+        TEST_NOW,
+    )?;
+    assert_eq!(
+        repository
+            .create_api_token_idempotent(rollback.clone())
+            .await,
+        Err(ApiTokenCreateIdempotencyError::Repository(
+            RepositoryError::AlreadyExists
+        ))
+    );
+    assert_eq!(
+        repository.api_token_by_id(rollback.create.token.id).await,
+        Err(RepositoryError::NotFound),
+        "token and idempotency reservation must roll back with the audit failure"
+    );
+    let retry = idempotent_create_plan(
+        61_020,
+        "takt_9999aaaabbbbcccc",
+        "rollback",
+        61_021,
+        "create-key-rollback",
+        [0x33; 32],
+        TEST_NOW,
+    )?;
+    assert!(matches!(
+        repository.create_api_token_idempotent(retry).await?,
+        ApiTokenCreateIdempotencyResult::Created { .. }
+    ));
+
+    let concurrent = idempotent_create_plan(
+        61_030,
+        "takt_ddddeeeeffff0000",
+        "concurrent",
+        61_031,
+        "create-key-concurrent",
+        [0x44; 32],
+        TEST_NOW,
+    )?;
+    let (left, right) = tokio::join!(
+        repository.create_api_token_idempotent(concurrent.clone()),
+        repository.create_api_token_idempotent(concurrent)
+    );
+    assert!(
+        matches!(
+            (&left, &right),
+            (
+                Ok(ApiTokenCreateIdempotencyResult::Created { .. }),
+                Ok(ApiTokenCreateIdempotencyResult::Replay(_))
+            )
+        ) || matches!(
+            (&left, &right),
+            (
+                Ok(ApiTokenCreateIdempotencyResult::Replay(_)),
+                Ok(ApiTokenCreateIdempotencyResult::Created { .. })
+            )
+        ),
+        "exactly one concurrent request must create and the other must replay: {left:?} / {right:?}"
+    );
+
+    let expiring = idempotent_create_plan(
+        61_040,
+        "takt_0102030405060708",
+        "expiring",
+        61_041,
+        "create-key-expiring",
+        [0x55; 32],
+        TEST_NOW,
+    )?;
+    assert!(matches!(
+        repository.create_api_token_idempotent(expiring).await?,
+        ApiTokenCreateIdempotencyResult::Created { .. }
+    ));
+    let after_window = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 86_400_000_000);
+    let replacement = idempotent_create_plan(
+        61_050,
+        "takt_1112131415161718",
+        "after-window",
+        61_051,
+        "create-key-expiring",
+        [0x55; 32],
+        after_window,
+    )?;
+    assert!(matches!(
+        repository.create_api_token_idempotent(replacement).await?,
+        ApiTokenCreateIdempotencyResult::Created { .. }
+    ));
+    assert!(
+        repository
+            .purge_expired_api_token_idempotency(after_window, 200)
+            .await?
+            >= 3,
+        "bounded cleanup must remove expired replay rows"
+    );
+    assert_eq!(
+        repository
+            .purge_expired_api_token_idempotency(after_window, 0)
+            .await,
+        Err(RepositoryError::ConstraintViolation)
     );
     Ok(())
 }

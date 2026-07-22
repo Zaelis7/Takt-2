@@ -140,7 +140,9 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
-    note: API-token Create contractually binds a 24-hour identical replay to actor, method, path and request hash; the typed AEAD boundary and engine-parity schema now enforce that foundation, while atomic replay persistence and HTTP runtime remain absent.
+      - crates/persistence/src/api_token_repository.rs
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+    note: API-token Create now atomically persists token, one audit event and the encrypted 24-hour replay on both engines; identical requests replay and hash conflicts have no business or audit effect. Patch/Revoke idempotency and HTTP runtime remain absent.
   - id: PRD-API-004
     release: "0.1"
     coverage: partial
@@ -364,8 +366,9 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope, full persistence lifecycle and a typed encrypted Create-replay foundation exist, but atomic idempotency operations, HTTP CRUD and Bearer authentication remain absent.
+    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope, lifecycle and atomic encrypted Create replay persistence exist, while Patch/Revoke idempotency, HTTP CRUD and Bearer authentication remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -429,8 +432,10 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - crates/persistence/src/api_token_repository.rs
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Existing auth and all API-token create/patch/revoke writes are atomically audited with redacted metadata; the Create-replay schema and AEAD boundary keep token-bearing ciphertext separate from ordinary and audit reads. Runtime replay operations, full non-token action coverage, export and tamper evidence remain absent.
+    note: Existing auth and API-token writes are atomically audited with redacted metadata; Create replay now commits its token, single audit event and ciphertext together, while hash conflicts and identical replays add no audit event. Full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"
@@ -452,7 +457,9 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
-    note: Identity, bootstrap, session, recovery, API-token lifecycle and the idempotency schema share engine contracts; idempotency repository operations, monitor, observation, outbox, retention and later repositories are still absent.
+      - crates/persistence/src/api_token_repository.rs
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+    note: Identity, bootstrap, session, recovery, API-token lifecycle and atomic Create-idempotency operations share engine contracts; Patch/Revoke idempotency, monitor, observation, outbox, retention and later repositories are still absent.
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
@@ -474,7 +481,8 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
-    note: Five forward/repeated migrations, newer-schema rejection and migration-time readiness exist; released-version upgrade fixtures and commit-bound validation remain future work.
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+    note: Five forward/repeated migrations, newer-schema rejection and migration-time readiness exist; IAM-024 reuses immutable migration 0005 for engine-parity runtime behavior. Released-version upgrade fixtures and commit-bound validation remain future work.
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
@@ -494,7 +502,9 @@ requirements:
       - migrations/postgres/0005_api_token_idempotency.sql
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
-    note: Persisted identity, session, recovery, API-token and idempotency references use UUIDv7, UTC microseconds and typed monotonic versions where mutable; remaining product entities are not implemented.
+      - crates/persistence/src/api_token_repository.rs
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+    note: Persisted identity, session, recovery, API-token and atomic idempotency references use UUIDv7, UTC microseconds and typed monotonic result versions where mutable; remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -552,8 +562,9 @@ requirements:
       - docs/implementation-evidence/iam-023-api-token-storage.md
       - docs/implementation-evidence/iam-022-api-token-lifecycle.md
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle and idempotency-schema evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
+    note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle and atomic Create-idempotency evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -586,7 +597,9 @@ requirements:
       - docs/implementation-evidence/iam-023-api-token-storage.md
       - docs/implementation-evidence/iam-022-api-token-lifecycle.md
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
-    note: Identity, session, recovery, API-token and exactly 24-hour idempotency retention use UTC microseconds; IANA timezone selection and UI display are absent.
+      - crates/persistence/tests/common/mod.rs
+      - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+    note: Identity, session, recovery, API-token and exactly 24-hour Create-idempotency retention and cleanup use UTC microseconds on both engines; IANA timezone selection and UI display are absent.
   - id: PRD-NFR-006
     release: "0.1"
     coverage: none
