@@ -174,3 +174,18 @@ findings:
     affects:
       - PRD-API-002
     resolution: Resolved by a pnpm 11 workspace override to js-yaml 4.3.0, a lockfile regression test that rejects every older js-yaml package, and green contract, generated-drift, license and full Node audit gates without an audit exception.
+
+  - id: SEC-002
+    status: resolved
+    severity: high
+    kind: gap
+    decision: implementation
+    summary: The existing Ajv dependency graph resolved fast-uri 3.1.3, which is affected by GHSA-v2hh-gcrm-f6hx and caused the mandatory full Node audit gate to fail during IAM-027 validation.
+    locations:
+      - pnpm-workspace.yaml
+      - pnpm-lock.yaml
+      - tools/node-supply-chain.test.mjs
+      - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+    affects:
+      - PRD-API-002
+    resolution: Resolved without an audit exception by pinning the workspace to fast-uri 3.1.4, adding a lockfile regression test that rejects every older fast-uri package and rerunning the high-severity Node audit successfully.

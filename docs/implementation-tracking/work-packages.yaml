@@ -734,24 +734,60 @@ packages:
       - API-Token-Idempotency-OpenAPI-Contract-Test
       - pnpm contracts:openapi und pnpm test:tools
 
-  - id: IAM-024
+  - id: IAM-027
     release: "0.1"
-    status: planned
-    requirements: [PRD-API-003, PRD-IAM-001, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
-    findings: [SPEC-006]
+    status: implemented
+    requirements: [PRD-API-002, PRD-API-003, PRD-IAM-001, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: [SPEC-006, SEC-002]
     depends_on: [IAM-022, SPEC-020]
-    outcome: Engine-paritäre, verschlüsselte und atomare Idempotenzpersistenz für API-Token-Create/Patch/Revoke.
+    outcome: Typisierte AEAD-Grenze und engine-paritäres Schema für zeitlich begrenzte API-Token-Create-Replays.
     preflight:
       in_scope:
-        - Forward-only Migration und gemeinsamer PostgreSQL-/SQLite-Vertrag für Actor-/Method-/Path-/Key-/Request-Hash-Bindung und 24-Stunden-Ablauf.
-        - Verschlüsselte Create-Replay-Payload sowie sichere Patch-/Revoke-Ergebnisreferenzen ohne Klartext-Token in Datenbank, Audit oder Debug-Ausgaben.
-        - Atomarer Write-plus-Idempotency-Commit, identischer Replay, Hash-Konflikt, Ablauf, Konkurrenz und Rollback auf beiden Engines.
+        - Typisierte Actor-/Method-/Path-/Key-/Request-Hash-Bindung mit exakt 24 Stunden Ablauf.
+        - ChaCha20-Poly1305-Adapter mit zufälligem Nonce, vollständigem Associated Data und redigierten Debug-Grenzen.
+        - Forward-only Migration mit identischen PostgreSQL-/SQLite-Constraints für verschlüsselte Create-Replays und sichere Mutationsreferenzen.
+        - Behebung des während der Pflichtvalidierung gefundenen High-Severity-`fast-uri`-Befunds ohne Audit-Ausnahme.
       out_of_scope:
+        - Atomare Create-/Patch-/Revoke-Repository-Operationen und Replay-Lookup; diese folgen in IAM-024 und IAM-026.
         - HTTP-Serialisierung, CSRF, Bearer-Middleware und Cursor.
         - Allgemeiner ressourcenübergreifender Idempotenzdienst außerhalb der drei API-Token-Schreiboperationen.
       affected_artifacts:
         - migrations/postgres/0005_api_token_idempotency.sql
         - migrations/sqlite/0005_api_token_idempotency.sql
+        - crates/application/src/api_token.rs
+        - crates/application/tests/api_tokens.rs
+        - crates/persistence/src/database.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - pnpm-workspace.yaml
+        - pnpm-lock.yaml
+        - tools/node-supply-chain.test.mjs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
+      estimated_handwritten_lines: 480
+      estimated_validation_minutes: 20
+    acceptance:
+      - Replay-Payloads lassen sich nur mit passendem Key-Version-/Actor-/Method-/Path-/Key-/Request-Hash-Kontext entschlüsseln; Manipulation schlägt geschlossen fehl.
+      - Beide Engines erzwingen dieselbe Bindung, Ergebnisform und exakt 24 Stunden Ablauf, ohne Klartext-Payloadspalte.
+    evidence:
+      - AEAD-Tamper-/AAD-Tests und gemeinsame Migration-/Constraint-Suite beider Engines
+
+  - id: IAM-024
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-003, PRD-IAM-001, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: [SPEC-006]
+    depends_on: [IAM-022, SPEC-020, IAM-027]
+    outcome: Engine-paritäre, verschlüsselte und atomare Idempotenzpersistenz für API-Token-Create.
+    preflight:
+      in_scope:
+        - Atomarer Create-plus-Idempotency-Commit auf dem Schema und der AEAD-Grenze aus IAM-027.
+        - Identischer Replay, Hash-Konflikt ohne Geschäfts-/Auditwirkung, Ablauf, Konkurrenz und Rollback auf beiden Engines.
+      out_of_scope:
+        - Idempotente Patch-/Revoke-Ergebnisreferenzen; diese folgen im abgetrennten Paket IAM-026.
+        - HTTP-Serialisierung, CSRF, Bearer-Middleware, Cursor und allgemeine ressourcenübergreifende Idempotenz.
+      affected_artifacts:
         - crates/application/src/api_token.rs
         - crates/persistence/src/api_token_repository.rs
         - crates/persistence/tests/common/mod.rs
@@ -759,13 +795,43 @@ packages:
         - crates/persistence/tests/sqlite_contract.rs
         - docs/implementation-tracking/
         - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
-      estimated_handwritten_lines: 580
+      estimated_handwritten_lines: 520
       estimated_validation_minutes: 25
     acceptance:
-      - Identische Requests liefern auf beiden Engines dasselbe Ergebnis; derselbe Key mit anderem Hash ändert weder Token noch Audit.
-      - Tokenhaltige Replay-Daten liegen ausschließlich authentifiziert verschlüsselt und höchstens 24 Stunden vor.
+      - Identische Create-Requests liefern auf beiden Engines dasselbe Ergebnis; derselbe Key mit anderem Hash ändert weder Token noch Audit.
+      - Tokenhaltige Replay-Daten werden atomar geschrieben, nach Ablauf nicht zurückgegeben und bei einem fehlgeschlagenen Create nicht als verbrauchter Key hinterlassen.
     evidence:
-      - Gemeinsame Idempotenz-/Migration-/Rollback-Suite beider Engines
+      - Gemeinsame Create-Idempotenz-/Ablauf-/Konkurrenz-/Rollback-Suite beider Engines
+
+  - id: IAM-026
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-003, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: []
+    depends_on: [IAM-022, IAM-024]
+    outcome: Engine-paritäre atomare Idempotenzpersistenz für API-Token-Patch und -Revoke.
+    preflight:
+      in_scope:
+        - Sichere Patch-/Revoke-Ergebnisreferenzen in der von IAM-024 eingeführten Idempotenzablage.
+        - Atomarer Patch-/Revoke-plus-Idempotency-Commit, identischer Replay, Hash-Konflikt, Ablauf, Konkurrenz und Rollback auf beiden Engines.
+      out_of_scope:
+        - Create-Replay-Verschlüsselung, HTTP-Serialisierung, CSRF, Bearer-Middleware und Cursor.
+        - Allgemeiner ressourcenübergreifender Idempotenzdienst.
+      affected_artifacts:
+        - crates/application/src/api_token.rs
+        - crates/persistence/src/api_token_repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-026-api-token-mutation-idempotency.md
+      estimated_handwritten_lines: 360
+      estimated_validation_minutes: 20
+    acceptance:
+      - Identische Patch-/Revoke-Requests liefern dieselbe gespeicherte Ergebnisreferenz, ohne die Mutation oder das Audit zu wiederholen.
+      - Derselbe Key mit anderem Request-Hash hat keine Geschäfts- oder Auditwirkung; abgelaufene Einträge blockieren eine neue Mutation nicht.
+    evidence:
+      - Gemeinsame Patch-/Revoke-Idempotenz- und Rollback-Suite beider Engines
 
   - id: IAM-025
     release: "0.1"
@@ -800,7 +866,7 @@ packages:
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-024, IAM-025]
+    depends_on: [IAM-024, IAM-025, IAM-026]
     outcome: OpenAPI-konforme API-Token-CRUD-HTTP-Runtime mit sicherer Browser-/Bearer-Grenze und signierten Cursorn.
     preflight:
       in_scope:

@@ -47,6 +47,21 @@ async fn connect(url: &str) -> Result<Database, Box<dyn Error>> {
     Ok(Database::connect(&config).await?)
 }
 
+async fn assert_idempotency_schema(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let actor = common::resource_id(3)?.as_uuid();
+    sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,created_at,expires_at) VALUES ('system',$1,'POST','/api/v1/api-tokens','schema-key-valid',decode(repeat('11',32),'hex'),TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+        .bind(actor).execute(pool).await?;
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,replay_key_version,replay_nonce,replay_ciphertext,created_at,expires_at) VALUES ('system',$1,'POST','/api/v1/api-tokens','schema-key-partial',decode(repeat('11',32),'hex'),1,decode(repeat('22',12),'hex'),decode(repeat('33',17),'hex'),TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+        .bind(actor).execute(pool).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,created_at,expires_at) VALUES ('system',$1,'POST','/api/v1/api-tokens','schema-key-expiry',decode(repeat('11',32),'hex'),TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00.000001Z')")
+        .bind(actor).execute(pool).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,replay_key_version,replay_nonce,replay_ciphertext,created_at,expires_at) VALUES ('system',$1,'PATCH','/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000001','schema-key-patch',decode(repeat('11',32),'hex'),1,decode(repeat('22',12),'hex'),decode(repeat('33',17),'hex'),TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+        .bind(actor).execute(pool).await.is_err());
+    assert_eq!(sqlx::query("SELECT COUNT(*) AS count FROM information_schema.columns WHERE table_name='api_token_idempotency' AND column_name LIKE '%plaintext%'")
+        .fetch_one(pool).await?.try_get::<i64, _>("count")?, 0);
+    Ok(())
+}
+
 // PRD-DATA-001 / PRD-DATA-002 / PRD-DATA-004 / PRD-NFR-002 / PRD-IAM-001:
 // this test requires a real PostgreSQL 16+ service; it is intentionally not
 // skipped when the service configuration is absent.
@@ -62,6 +77,7 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     database.migrate().await?;
     database.migrate().await?;
     let raw = PgPool::connect(&url).await?;
+    assert_idempotency_schema(&raw).await?;
     let server_version: i64 = sqlx::query("SHOW server_version_num")
         .fetch_one(&raw)
         .await?
@@ -253,14 +269,14 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .try_get::<i64, _>("count")?,
         1
     );
-    sqlx::query("UPDATE _sqlx_migrations SET version = 5 WHERE version = 4")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 6 WHERE version = 5")
         .execute(&raw)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 5,
-            supported: 4
+            found: 6,
+            supported: 5
         }
     );
     assert!(database.migrate().await.is_err());

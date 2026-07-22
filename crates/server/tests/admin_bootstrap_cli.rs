@@ -215,8 +215,8 @@ async fn migrate_only_and_no_auto_migrate_have_explicit_behavior() -> Result<(),
         .fetch_one(&mut connection)
         .await?
         .try_get("count")?;
-    assert_eq!(migration_count, 4);
-    sqlx::query("UPDATE _sqlx_migrations SET version = 5 WHERE version = 4")
+    assert_eq!(migration_count, 5);
+    sqlx::query("UPDATE _sqlx_migrations SET version = 6 WHERE version = 5")
         .execute(&mut connection)
         .await?;
     connection.close().await?;

@@ -32,6 +32,23 @@ async fn raw_connection(path: &std::path::Path) -> Result<SqliteConnection, Box<
     .await?)
 }
 
+async fn assert_idempotency_schema(
+    connection: &mut SqliteConnection,
+) -> Result<(), Box<dyn Error>> {
+    let actor = common::resource_id(3)?.to_string();
+    sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,created_at,expires_at) VALUES ('system',?1,'POST','/api/v1/api-tokens','schema-key-valid',zeroblob(32),1,86400000001)")
+        .bind(&actor).execute(&mut *connection).await?;
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,replay_key_version,replay_nonce,replay_ciphertext,created_at,expires_at) VALUES ('system',?1,'POST','/api/v1/api-tokens','schema-key-partial',zeroblob(32),1,zeroblob(12),zeroblob(17),1,86400000001)")
+        .bind(&actor).execute(&mut *connection).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,created_at,expires_at) VALUES ('system',?1,'POST','/api/v1/api-tokens','schema-key-expiry',zeroblob(32),1,86400000002)")
+        .bind(&actor).execute(&mut *connection).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,replay_key_version,replay_nonce,replay_ciphertext,created_at,expires_at) VALUES ('system',?1,'PATCH','/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000001','schema-key-patch',zeroblob(32),1,zeroblob(12),zeroblob(17),1,86400000001)")
+        .bind(&actor).execute(&mut *connection).await.is_err());
+    assert_eq!(sqlx::query("SELECT COUNT(*) AS count FROM pragma_table_info('api_token_idempotency') WHERE name LIKE '%plaintext%'")
+        .fetch_one(&mut *connection).await?.try_get::<i64, _>("count")?, 0);
+    Ok(())
+}
+
 // PRD-DATA-002 / PRD-NFR-001: a fresh SQLite file migrates, repeats without
 // drift, and is never created in the repository working directory.
 #[tokio::test]
@@ -53,6 +70,7 @@ async fn sqlite_migrations_are_forward_only_and_repeatable() -> Result<(), Box<d
     database.migrate().await?;
 
     let mut connection = raw_connection(&path).await?;
+    assert_idempotency_schema(&mut connection).await?;
     let foreign_keys: i64 = sqlx::query("PRAGMA foreign_keys")
         .fetch_one(&mut connection)
         .await?
@@ -74,14 +92,14 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
     database.migrate().await?;
     let mut connection = raw_connection(&path).await?;
-    sqlx::query("UPDATE _sqlx_migrations SET version = 5 WHERE version = 4")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 6 WHERE version = 5")
         .execute(&mut connection)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 5,
-            supported: 4
+            found: 6,
+            supported: 5
         }
     );
     assert_eq!(

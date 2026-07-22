@@ -1,6 +1,6 @@
-# Implementierungsstand am 21. Juli 2026
+# Implementierungsstand am 22. Juli 2026
 
-Baseline: Commit `51349e3`. Der Worktree war zu Beginn von `SPEC-020` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
+Baseline: Commit `dc5b74b`. Der Worktree war zu Beginn von `IAM-027` sauber. Diese Momentaufnahme bewertet Source, Tests, Contracts, 37 Gherkin-Szenarien und vorhandene Evidence; sie ist kein Release-Verdict.
 
 ## Zusammenfassung
 
@@ -10,7 +10,7 @@ Baseline: Commit `51349e3`. Der Worktree war zu Beginn von `SPEC-020` sauber. Di
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 93 | 24 implemented, 67 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 95 | 25 implemented, 68 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 5 | 3 Spec/Contract/Owner-Themen und 2 Evidence-Lücken; alle fünf high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -19,11 +19,11 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
-| Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, sicherer `js-yaml`-Codegen-Pfad sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
+| Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, abgesicherte `js-yaml`-/`fast-uri`-Auflösungen sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Aktueller unabhängiger Clean-Checkout-Verdict fehlt (`EVID-001`); Schätzwerte werden noch nicht mit tatsächlichem Diff und Laufzeit abgeglichen |
 | Öffentliche Systemgrenze | Health und komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit; API-Token-CRUD ist mit One-time-Ausgabe, Scopes, Filtern, Idempotenz und ETag vertraglich definiert | API-Token- und Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
-| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert; API-Token besitzen redigierte 256-Bit-Secret-/Argon2id-Grenzen, kanonische CIDRs und exakte Scope-Entscheidungen | API-Token-HTTP fehlt; keine Recovery-HTTP-Orchestrierung, Monitore, Scheduler, Evaluator, Uptime, Outbox oder allgemeine Permission Engine |
-| Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0004`, Identitäts-, Session-, Recovery- und API-Token-Tabellen, gemeinsame Repository-Suiten sowie atomare redigierte Create-/Patch-/Revoke-Auditwirkung; Token-Lifecycle ist optimistisch versioniert und Last-used monoton | API-Token-HTTP-Idempotenz, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite und Retention fehlen |
+| Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert; API-Token besitzen redigierte 256-Bit-Secret-/Argon2id-Grenzen, kanonische CIDRs, exakte Scope-Entscheidungen und eine an Actor/Methode/Pfad/Key/Hash gebundene AEAD-Replay-Grenze | Atomare Idempotenzoperationen und API-Token-HTTP fehlen; keine Recovery-HTTP-Orchestrierung, Monitore, Scheduler, Evaluator, Uptime, Outbox oder allgemeine Permission Engine |
+| Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0005`, Identitäts-, Session-, Recovery-, API-Token- und verschlüsselte Idempotenz-Tabellen, gemeinsame Repository-Suiten sowie atomare redigierte Create-/Patch-/Revoke-Auditwirkung; Token-Lifecycle ist optimistisch versioniert und Last-used monoton | Idempotenz-Repositoryoperationen und Ablaufbereinigung, Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite und Retention fehlen |
 | Probe-Vertrag | Proto und generierte Rust-Typen; prüfungsspezifische sowie gemeinsame Proxy-/Resolver-/Adressfamilienoptionen, Defaults, Einheiten und Secret-Grenzen sind mit OpenAPI/Config abgeglichen | Kein `takt-probe`, Enrollment, mTLS, Gateway, Offline-Queue, Ingest oder Quorum |
 | Akzeptanz | Alle drei Gherkin-Dateien sind syntaktisch valide; alle 37 Szenarien besitzen ein maschinengeprüftes Manifest-Binding zu Requirements und Umsetzungspaketen | Alle 37 Bindings sind noch `planned` und besitzen kein Verhaltens-Testkommando; der Release-Runner schlägt deshalb ehrlich fehl (`EVID-002`) |
 
@@ -31,7 +31,7 @@ Damit ist der zweite Bootstrap-Meilenstein weitgehend implementiert, aber Takt 0
 
 ## Wichtigste gefundene Probleme
 
-`SPEC-001` ist gelöst: Die Daten-IDs sind kanonisch nachverfolgt. `SPEC-013` vereinheitlicht die prüfungsspezifischen CheckSpec-Felder; `SPEC-019` ergänzt die gemeinsamen Proxy-, Resolver- und Adressfamilienoptionen mit denselben Namen, Grenzen und SecretRefs in allen drei Maschinenverträgen. Damit ist `SPEC-004` vollständig gelöst. `SPEC-005` ist durch Entfernen des historisch unbelegten Template-Eintrags und einen CI-geprüften Spec-Index gelöst. `SPEC-006` ist durch den eindeutigen, verschlüsselten und auf 24 Stunden begrenzten API-Token-Create-Replay-Vertrag gelöst. `SEC-001` ist durch die gepinnte `js-yaml@4.3.0`-Auflösung, einen Lockfile-Regressionsfall und den grünen vollständigen Node-Audit gelöst.
+`SPEC-001` ist gelöst: Die Daten-IDs sind kanonisch nachverfolgt. `SPEC-013` vereinheitlicht die prüfungsspezifischen CheckSpec-Felder; `SPEC-019` ergänzt die gemeinsamen Proxy-, Resolver- und Adressfamilienoptionen mit denselben Namen, Grenzen und SecretRefs in allen drei Maschinenverträgen. Damit ist `SPEC-004` vollständig gelöst. `SPEC-005` ist durch Entfernen des historisch unbelegten Template-Eintrags und einen CI-geprüften Spec-Index gelöst. `SPEC-006` ist durch den eindeutigen, verschlüsselten und auf 24 Stunden begrenzten API-Token-Create-Replay-Vertrag gelöst. `SEC-001` und `SEC-002` sind durch gepinnte sichere `js-yaml`-/`fast-uri`-Auflösungen, Lockfile-Regressionsfälle und den grünen vollständigen Node-Audit gelöst.
 
 | Finding | Wirkung |
 |---|---|
@@ -46,7 +46,7 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 ## Empfohlene nächste Reihenfolge
 
 1. `EVID-001` schließen: aktuellen committed Stand unabhängig aus sauberem Checkout validieren.
-2. `IAM-024`: verschlüsselte, engine-paritäre API-Token-Idempotenzpersistenz implementieren.
+2. `IAM-024`: atomare engine-paritäre API-Token-Create-Idempotenz auf der AEAD-/Schema-Grundlage aus `IAM-027` implementieren.
 3. `IAM-025`, danach `IAM-013`: frameworkfreie CRUD-/Bearer-Use-Cases und anschließend die OpenAPI-konforme HTTP-Runtime umsetzen.
 4. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 5. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox; erst danach weitere 0.1-Features und Release-Hardening.
@@ -130,3 +130,7 @@ Docker Desktop wurde für die Validierung gestartet. Die Repository-Suite lief g
 ## Abschluss von SPEC-020
 
 `SPEC-020` ist `implemented`, nicht `verified`. Die Preflight-Nachprüfung ergab, dass das ursprünglich nächste, bereits am 800-Zeilen-Limit liegende Paket `IAM-013` wegen der zusätzlich erforderlichen, bislang ungeplanten Migration den zulässigen Umfang überschreiten würde. Es wurde deshalb vor der Umsetzung in `SPEC-020`, `IAM-024`, `IAM-025` und den verbleibenden HTTP-Slice `IAM-013` geteilt. Der Vertrag legt jetzt fest, dass ein identischer API-Token-Create-Replay 24 Stunden lang dieselbe `201`-Antwort einschließlich desselben Tokenwerts liefert, während derselbe Key mit abweichendem Request-Hash ohne Geschäfts- oder Auditwirkung als `409 idempotency_key_reused` scheitert. Die tokenhaltige Replay-Payload muss authentifiziert verschlüsselt, an Actor/Methode/Pfad/Request-Hash gebunden und von normalen Reads, Audit, Problems, Logs und Telemetrie ausgeschlossen sein. Alle lokalen Gates einschließlich echtem PostgreSQL 16.9, SQLite, Frontend, Playwright und Release-Build sind grün. Persistenz, Application/Bearer und HTTP-Runtime folgen in `IAM-024`, `IAM-025` und `IAM-013`; unabhängige commit-gebundene Review-/CI-Evidence fehlt. Details stehen in `docs/implementation-evidence/spec-020-api-token-idempotency-contract.md`.
+
+## Abschluss von IAM-027
+
+`IAM-027` ist `implemented`, nicht `verified`. Das ursprünglich ausgewählte `IAM-024` überschritt nach testweiser Vertikalimplementierung mit 888 handgeschriebenen Einfügungen das 800-Zeilen-Limit und wurde deshalb vor Abschluss in die AEAD-/Schema-Grundlage `IAM-027`, atomare Create-Persistenz `IAM-024` und Patch-/Revoke-Idempotenz `IAM-026` geteilt. `IAM-027` bindet Replay-Verschlüsselung typisiert an Key-Version, Actor, Methode, Pfad, Idempotency-Key und Request-Hash, verwendet zufällige Nonces und redigierte Debug-Grenzen und ergänzt engine-paritäre Migration `0005` mit exakt 24 Stunden Ablauf ohne Klartext-Payloadspalte. PostgreSQL 16.9, SQLite und alle lokalen Gates sind grün. Der während der Pflichtvalidierung gefundene High-Severity-`fast-uri`-Befund wurde test-first ohne Audit-Ausnahme behoben (`SEC-002`). Atomare Lookup-/Write-Operationen und Ablaufbereinigung folgen in `IAM-024`; unabhängige commit-gebundene Review-/CI-Evidence fehlt. Details stehen in `docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md`.

@@ -4,10 +4,11 @@ use std::{error::Error, net::IpAddr, str::FromStr};
 
 use takt_application::Argon2idConfig;
 use takt_application::api_token::{
-    ApiTokenHasher, ApiTokenSecret, ApiTokenSecretGenerator, TokenSecretGenerator,
+    ApiTokenHasher, ApiTokenIdempotencyContext, ApiTokenReplayCipher, ApiTokenSecret,
+    ApiTokenSecretGenerator, ApiTokenWriteMethod, EncryptedApiTokenReplay, TokenSecretGenerator,
 };
 use takt_domain::{
-    ApiTokenId, OrganizationId, ResourceId, UtcTimestamp,
+    ApiTokenId, AuditActorType, OrganizationId, ResourceId, UtcTimestamp,
     api_token::{ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, IpNetwork, TokenActor},
 };
 use uuid::Uuid;
@@ -99,5 +100,147 @@ fn generated_tokens_and_slow_hashes_are_redacted() -> Result<(), Box<dyn Error>>
     assert!(hasher.verify(&first, &hash)?);
     let wrong = ApiTokenSecret::from_client_input(second.expose_once().to_owned())?;
     assert!(!hasher.verify(&wrong, &hash)?);
+    Ok(())
+}
+
+#[test]
+fn replay_encryption_binds_all_idempotency_dimensions_and_detects_tampering()
+-> Result<(), Box<dyn Error>> {
+    let actor = resource_id("019b3cf0-0000-7000-8000-000000000021")?;
+    let now = UtcTimestamp::from_unix_micros(1_784_445_600_123_456);
+    let context = ApiTokenIdempotencyContext::new(
+        AuditActorType::System,
+        actor,
+        ApiTokenWriteMethod::Post,
+        "/api/v1/api-tokens".to_owned(),
+        "create-key-0001".to_owned(),
+        [0x11; 32],
+        now,
+    )?;
+    assert_eq!(
+        context.expires_at().unix_micros() - now.unix_micros(),
+        86_400_000_000
+    );
+
+    let cipher = ApiTokenReplayCipher::new(7, [0xa5; 32])?;
+    let plaintext = br#"{"token":"fixture-replay-marker"}"#;
+    let encrypted = cipher.encrypt(&context, plaintext)?;
+    let encrypted_again = cipher.encrypt(&context, plaintext)?;
+    assert_ne!(encrypted.ciphertext(), plaintext);
+    assert_ne!(encrypted.nonce(), encrypted_again.nonce());
+    assert_eq!(cipher.decrypt(&context, &encrypted)?.as_slice(), plaintext);
+    let debug_output = format!("{context:?}{encrypted:?}{cipher:?}");
+    assert!(!debug_output.contains("create-key-0001"));
+    assert!(!debug_output.contains("fixture-replay-marker"));
+
+    let mut tampered_bytes = encrypted.ciphertext().to_vec();
+    tampered_bytes[0] ^= 1;
+    let tampered = EncryptedApiTokenReplay::from_persistence(
+        encrypted.key_version(),
+        encrypted.nonce().to_vec(),
+        tampered_bytes,
+    )?;
+    assert!(cipher.decrypt(&context, &tampered).is_err());
+
+    for changed in [
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            resource_id("019b3cf0-0000-7000-8000-000000000022")?,
+            ApiTokenWriteMethod::Post,
+            "/api/v1/api-tokens".to_owned(),
+            "create-key-0001".to_owned(),
+            [0x11; 32],
+            now,
+        )?,
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::LocalCli,
+            actor,
+            ApiTokenWriteMethod::Post,
+            "/api/v1/api-tokens".to_owned(),
+            "create-key-0001".to_owned(),
+            [0x11; 32],
+            now,
+        )?,
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            actor,
+            ApiTokenWriteMethod::Patch,
+            "/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000099".to_owned(),
+            "create-key-0001".to_owned(),
+            [0x11; 32],
+            now,
+        )?,
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            actor,
+            ApiTokenWriteMethod::Post,
+            "/api/v1/api-tokens".to_owned(),
+            "create-key-0002".to_owned(),
+            [0x11; 32],
+            now,
+        )?,
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            actor,
+            ApiTokenWriteMethod::Post,
+            "/api/v1/api-tokens".to_owned(),
+            "create-key-0001".to_owned(),
+            [0x22; 32],
+            now,
+        )?,
+    ] {
+        assert!(cipher.decrypt(&changed, &encrypted).is_err());
+    }
+
+    let mutation_context = ApiTokenIdempotencyContext::new(
+        AuditActorType::System,
+        actor,
+        ApiTokenWriteMethod::Patch,
+        "/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000099".to_owned(),
+        "mutation-key-0001".to_owned(),
+        [0x33; 32],
+        now,
+    )?;
+    let mutation_encrypted = cipher.encrypt(&mutation_context, plaintext)?;
+    for changed in [
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            actor,
+            ApiTokenWriteMethod::Delete,
+            mutation_context.path().to_owned(),
+            "mutation-key-0001".to_owned(),
+            [0x33; 32],
+            now,
+        )?,
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            actor,
+            ApiTokenWriteMethod::Patch,
+            "/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000098".to_owned(),
+            "mutation-key-0001".to_owned(),
+            [0x33; 32],
+            now,
+        )?,
+    ] {
+        assert!(cipher.decrypt(&changed, &mutation_encrypted).is_err());
+    }
+    let wrong_key_version = EncryptedApiTokenReplay::from_persistence(
+        encrypted.key_version() + 1,
+        encrypted.nonce().to_vec(),
+        encrypted.ciphertext().to_vec(),
+    )?;
+    assert!(cipher.decrypt(&context, &wrong_key_version).is_err());
+    assert!(
+        ApiTokenIdempotencyContext::new(
+            AuditActorType::System,
+            actor,
+            ApiTokenWriteMethod::Post,
+            "/api/v1/api-tokens".to_owned(),
+            "short".to_owned(),
+            [0; 32],
+            now,
+        )
+        .is_err()
+    );
     Ok(())
 }
