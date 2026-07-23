@@ -1,10 +1,15 @@
 #![forbid(unsafe_code)]
 
 mod api_token_cursor;
+mod api_tokens;
 mod auth;
 
 pub use api_token_cursor::{
     ApiTokenCursorBoundary, ApiTokenCursorError, ApiTokenCursorFilter, ApiTokenCursorKey,
+};
+pub use api_tokens::{
+    ApiTokenHttpCredential, ApiTokenHttpCredentialKind, ApiTokenHttpKind, ApiTokenHttpResource,
+    ApiTokenHttpStatus, ApiTokenReadHttpError, ApiTokenReadHttpPort,
 };
 pub use auth::{
     AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HttpAuthentication, HttpLogin,
@@ -46,6 +51,7 @@ pub(crate) struct ApiState {
     readiness: Arc<dyn ReadinessCheck>,
     health_metrics: Arc<HealthMetrics>,
     authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
+    api_token_reads: Option<Arc<dyn ApiTokenReadHttpPort>>,
     auth_config: AuthHttpConfig,
     login_guard: Arc<auth::LoginGuard>,
 }
@@ -126,7 +132,13 @@ pub fn router_with_readiness(
     readiness: Arc<dyn ReadinessCheck>,
     health_metrics: Arc<HealthMetrics>,
 ) -> Router {
-    build_router(readiness, health_metrics, None, AuthHttpConfig::localhost())
+    build_router(
+        readiness,
+        health_metrics,
+        None,
+        None,
+        AuthHttpConfig::localhost(),
+    )
 }
 
 pub fn router_with_auth(
@@ -137,7 +149,18 @@ pub fn router_with_auth(
         Arc::new(AlwaysReady),
         Arc::new(HealthMetrics::default()),
         Some(authentication),
+        None,
         config,
+    )
+}
+
+pub fn router_with_api_token_reads(api_token_reads: Arc<dyn ApiTokenReadHttpPort>) -> Router {
+    build_router(
+        Arc::new(AlwaysReady),
+        Arc::new(HealthMetrics::default()),
+        None,
+        Some(api_token_reads),
+        AuthHttpConfig::localhost(),
     )
 }
 
@@ -147,13 +170,20 @@ pub fn router_with_dependencies(
     authentication: Arc<dyn BrowserAuthenticationHttpPort>,
     config: AuthHttpConfig,
 ) -> Router {
-    build_router(readiness, health_metrics, Some(authentication), config)
+    build_router(
+        readiness,
+        health_metrics,
+        Some(authentication),
+        None,
+        config,
+    )
 }
 
 fn build_router(
     readiness: Arc<dyn ReadinessCheck>,
     health_metrics: Arc<HealthMetrics>,
     authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
+    api_token_reads: Option<Arc<dyn ApiTokenReadHttpPort>>,
     auth_config: AuthHttpConfig,
 ) -> Router {
     let login_guard = Arc::new(auth::LoginGuard::new(auth_config));
@@ -161,11 +191,13 @@ fn build_router(
         .route("/health/live", get(liveness))
         .route("/health/ready", get(readiness_handler))
         .merge(auth::routes())
+        .merge(api_tokens::routes())
         .fallback(serve_web_asset)
         .with_state(ApiState {
             readiness,
             health_metrics,
             authentication,
+            api_token_reads,
             auth_config,
             login_guard,
         })

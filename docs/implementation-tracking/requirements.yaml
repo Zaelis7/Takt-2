@@ -85,7 +85,10 @@ requirements:
       - crates/api/tests/auth_http.rs
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: Browser login, session and logout run through `/api/v1`, and API-token CRUD is contracted; token/recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
+      - crates/api/src/api_tokens.rs
+      - crates/api/tests/api_tokens_http.rs
+      - docs/implementation-evidence/iam-037-api-token-get-boundary.md
+    note: Browser login, session and logout run through `/api/v1`, and the API-token Get boundary now provides contract-shaped redacted metadata through an injected port. Production token-read composition, List/Writes, recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
@@ -185,7 +188,10 @@ requirements:
       - crates/api/tests/api_token_cursor.rs
       - docs/implementation-evidence/iam-036-api-token-cursor.md
       - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
-    note: Readiness/browser auth emit bounded redacted Problems, API-token CRUD has explicit problem responses including stable invalid_cursor semantics, framework-free management/Bearer use cases return generic authentication or typed infrastructure failures, and invalid API-token cursor material has one non-disclosing typed failure; HTTP serialization and the general resource runtime error boundary remain absent.
+      - crates/api/src/api_tokens.rs
+      - crates/api/tests/api_tokens_http.rs
+      - docs/implementation-evidence/iam-037-api-token-get-boundary.md
+    note: Readiness/browser auth and API-token Get emit bounded redacted Problems; token Get preserves generic authentication and typed permission, absence and infrastructure failures over real HTTP. List/cursor HTTP serialization, production read composition, Writes and the general resource runtime error boundary remain absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -348,7 +354,7 @@ requirements:
   - id: PRD-IAM-001
     release: "0.1"
     coverage: partial
-    verification: independent
+    verification: full_local
     spec_health: gap
     evidence:
       - docs/persistence.md
@@ -388,7 +394,10 @@ requirements:
       - docs/implementation-evidence/iam-025-api-token-application.md
       - docs/implementation-evidence/iam-029-api-token-bearer.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency and framework-free management/Bearer use cases exist; API-token HTTP CRUD and production composition remain absent.
+      - crates/api/src/api_tokens.rs
+      - crates/api/tests/api_tokens_http.rs
+      - docs/implementation-evidence/iam-037-api-token-get-boundary.md
+    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and an injected Get HTTP boundary exist. List/Writes and production read composition remain absent; the current HTTP delta has full local but no independent commit-bound validation.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -427,7 +436,10 @@ requirements:
       - docs/implementation-evidence/iam-023-api-token-storage.md
       - docs/implementation-evidence/iam-025-api-token-application.md
       - docs/implementation-evidence/iam-029-api-token-bearer.md
-    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. Public HTTP composition and the general role/permission engine remain absent.
+      - crates/api/src/api_tokens.rs
+      - crates/api/tests/api_tokens_http.rs
+      - docs/implementation-evidence/iam-037-api-token-get-boundary.md
+    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. The injected Get HTTP boundary preserves typed permission failures, but its Application/production composition and the general role/permission engine remain absent.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial

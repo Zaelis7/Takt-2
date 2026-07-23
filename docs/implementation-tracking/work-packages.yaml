@@ -569,6 +569,7 @@ packages:
         - Recovery-Auslieferung/-HTTP-Orchestrierung und lokaler Recovery-CLI-Vertrag.
         - API-Token-Vertrag/-Runtime, Permission Engine, OIDC und UI.
       affected_artifacts:
+        - Cargo.lock
         - crates/api/Cargo.toml
         - crates/api/src/auth.rs
         - crates/api/src/lib.rs
@@ -989,25 +990,64 @@ packages:
       - PRD-API-004/005 OpenAPI-Contract-Test
       - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
 
-  - id: IAM-035
+  - id: IAM-037
     release: "0.1"
-    status: planned
-    requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
+    status: implemented
+    requirements: [PRD-API-001, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
     findings: [SPEC-003]
-    depends_on: [IAM-025, IAM-029, IAM-036, SPEC-021]
-    outcome: OpenAPI-konforme Axum-Read-Grenze für sichere API-Token-Metadaten mit Credential-Extraktion, Problems und signierten Cursorn.
+    depends_on: [IAM-025, IAM-029]
+    outcome: OpenAPI-konforme Axum-Get-Grenze für sichere API-Token-Metadaten mit fail-closed Credential-Extraktion, ETag und Problems.
     preflight:
       in_scope:
-        - OpenAPI-konforme List-/Get-Handler mit sicheren Metadatenprojektionen und ETag auf der IAM-036-Cursorgrundlage.
+        - OpenAPI-konformer Get-Handler mit sicherer Metadatenprojektion und ETag.
         - Fail-closed Extraktion genau einer Browser-Session oder eines Bearer-Werts in einen geheimnisredigierenden, injizierten HTTP-Port.
-        - Echte Axum-HTTP-, Contract-, Cursor-Integrations-, Problem- und Secret-Negativfälle gegen einen beobachtbaren Port.
+        - Echte Axum-HTTP-, Auth-, Permission-, Not-found-, Problem- und Secret-Negativfälle gegen einen beobachtbaren Port.
       out_of_scope:
-        - Cursor-Kryptographie und Filterkanonisierung; diese liefert IAM-036.
+        - List-Query, Filter, Pagination und Cursorintegration; diese verbleiben in IAM-035.
         - Application-/Persistence-Adapter und Produktionskomposition; diese folgen im abhängigen Paket IAM-034.
         - Create, Patch, Revoke, Browser-CSRF und HTTP-Idempotenz; diese verbleiben im abhängigen Paket IAM-013.
         - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
         - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
         - Neue öffentliche Vertragsfelder oder von SPEC-015 abweichende Response-/Fehlersemantik.
+      affected_artifacts:
+        - crates/api/Cargo.toml
+        - crates/api/src/api_tokens.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/api_tokens_http.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-037-api-token-get-boundary.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 15
+    acceptance:
+      - Genau eine Browser-Session oder ein Bearer-Wert erreicht den Port; fehlende, mehrdeutige oder syntaktisch ungültige Credentials scheitern generisch vor Application.
+      - Tokenwert und Hash erscheinen in keiner Get-, Problem- oder Log-Ausgabe.
+      - Get liefert sichere API-Token-Metadaten und das quotierte aktuelle ETag; Permission, Not-found und Infrastrukturfehler bleiben typisiert.
+    evidence:
+      - API-Token-Get-HTTP-Contract-Test mit beobachtbarem Port
+      - Credential-, Permission-, Problem- und Secret-Negativtests
+      - docs/implementation-evidence/iam-037-api-token-get-boundary.md
+
+  - id: IAM-035
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
+    findings: [SPEC-003]
+    depends_on: [IAM-025, IAM-029, IAM-036, IAM-037, SPEC-021]
+    outcome: OpenAPI-konforme Axum-Listengrenze für sichere API-Token-Metadaten mit Filtern und signierten Cursorn.
+    preflight:
+      in_scope:
+        - OpenAPI-konformer Listenhandler mit sicheren Metadatenprojektionen auf der IAM-037-Credential-/Problemgrenze.
+        - Strikte Query-/Filtervalidierung und stabile Seitengrenzen auf der IAM-036-Cursorgrundlage.
+        - Echte Axum-HTTP-, Contract-, Cursorintegrations- und Filter-Negativfälle gegen einen beobachtbaren Port.
+      out_of_scope:
+        - Credential-Parsing, Get, ETag und grundlegende Problem-/Metadatenprojektion; diese liefert IAM-037.
+        - Cursor-Kryptographie und Filterkanonisierung; diese liefert IAM-036.
+        - Application-/Persistence-Adapter und Produktionskomposition; diese folgen im abhängigen Paket IAM-034.
+        - Create, Patch, Revoke, Browser-CSRF und HTTP-Idempotenz; diese verbleiben im abhängigen Paket IAM-013.
+        - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
+        - Neue öffentliche Vertragsfelder oder von SPEC-015/SPEC-021 abweichende Response-/Fehlersemantik.
       affected_artifacts:
         - crates/api/src/api_tokens.rs
         - crates/api/src/lib.rs
@@ -1016,15 +1056,15 @@ packages:
         - docs/implementation-tracking/work-packages.yaml
         - docs/implementation-tracking/current-status.md
         - docs/implementation-evidence/iam-035-api-token-read-boundary.md
-      estimated_handwritten_lines: 650
+      estimated_handwritten_lines: 550
       estimated_validation_minutes: 20
     acceptance:
-      - Genau eine Browser-Session oder ein Bearer-Wert erreicht den Port; fehlende, mehrdeutige oder syntaktisch ungültige Credentials scheitern generisch vor Application.
-      - Tokenwert und Hash erscheinen in keiner List-/Get-, Problem-, Log- oder Audit-Ausgabe.
+      - Filter und Limit erreichen typisiert den Port; syntaktisch ungültige oder doppelte Querywerte scheitern vor Application.
+      - Tokenwert und Hash erscheinen in keiner Listen-, Problem- oder Log-Ausgabe.
       - Cursor sind signiert, an Filter und Sortierung gebunden und liefern bei Manipulation oder Filterwechsel invalid_cursor.
     evidence:
-      - API-Token-Read-HTTP-Contract-Test mit beobachtbarem Port
-      - Credential-, Cursor-, Problem- und Secret-Negativtests
+      - API-Token-List-HTTP-Contract-Test mit beobachtbarem Port
+      - Query-, Cursor-, Filter- und Seitengrenzen-Negativtests
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
 
   - id: IAM-034
@@ -1036,11 +1076,11 @@ packages:
     outcome: Produktionsfähige Read-HTTP-Komposition für API-Token-Metadaten über Application und SQLite/PostgreSQL.
     preflight:
       in_scope:
-        - Read-only Browser-Session- und Bearer-Actor-Anbindung der IAM-035-Grenze an die vorhandenen Application-Ports.
+        - Read-only Browser-Session- und Bearer-Actor-Anbindung der IAM-037-/IAM-035-Grenzen an die vorhandenen Application-Ports.
         - Rollen-/Scope- und Organisations-/Projektkontextprüfung vor List/Get-Fachwirkung.
         - Produktionskomposition sowie echte SQLite-HTTP-, Permission- und Secret-Negativfälle für List/Get; bestehende gemeinsame Repository-Suites sichern PostgreSQL-Parität.
       out_of_scope:
-        - HTTP-DTOs, Credential-Parsing, Problems und signierte Cursor; diese liefert IAM-035.
+        - HTTP-DTOs, Credential-Parsing, Get-Problems und ETag liefert IAM-037; List-Query, Filter und signierte Cursor liefert IAM-035.
         - Create, Patch, Revoke, Browser-CSRF und HTTP-Idempotenz; diese verbleiben im abhängigen Paket IAM-013.
         - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
       affected_artifacts:

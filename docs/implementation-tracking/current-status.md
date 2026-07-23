@@ -10,7 +10,7 @@ Baseline: Commit `4ef411a4718d21fc4f364494dc3810f716215e98`. Der unabhängige Va
 | Coverage `full` | 1 | Nur lokaler Ein-Befehl-Start ohne externe Datenbank (`PRD-NFR-001`), noch ohne Release-Evidence |
 | Coverage `partial` | 22 | Contract-/Runtime-Grundlagen, Identität, Persistenz und Querschnitts-NFRs |
 | Coverage `none` | 34 | Kein entsprechendes Produktverhalten im aktuellen Code |
-| Arbeitspakete | 101 | 32 implemented, 67 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
+| Arbeitspakete | 102 | 33 implemented, 67 planned, 0 in progress, 2 durch dokumentierte Entscheidungen blockiert |
 | Offene Findings | 4 | 3 Spec/Contract/Owner-Themen und 1 Evidence-Lücke; alle vier high |
 
 Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Multi-Arch Releases“ und ein einzelnes Feature hätten sonst dasselbe Gewicht; außerdem sind zusammengesetzte Requirements unterschiedlich groß.
@@ -20,7 +20,7 @@ Die Zahlen sind bewusst keine Prozent-Fertigstellung. Eine NFR wie „Linux Mult
 | Slice | Vorhanden | Noch nicht freigegeben/fehlend |
 |---|---|---|
 | Repository-Bootstrap | Gepinnte Rust-/Node-/pnpm-Toolchains, Lockfiles, CI, Architektur-/Contract-/Generated-/Security-Gates, abgesicherte `js-yaml`-/`fast-uri`-Auflösungen sowie verpflichtender Größen-/Validierungs-Preflight für aktive Arbeitspakete | Commit-gebundener unabhängiger Clean-Checkout-Verdict liegt für `4ef411a` vor; CI- und Release-Evidence sowie automatischer Soll-/Ist-Abgleich der Paketschätzungen fehlen |
-| Öffentliche Systemgrenze | Health und komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit; API-Token-CRUD ist mit One-time-Ausgabe, Scopes, Filtern, Idempotenz und ETag vertraglich definiert, die Listencursor-Grundlage ist signiert sowie sortier- und filtergebunden und ungültige Cursor besitzen den stabilen `invalid_cursor`-Problemvertrag | API-Token-HTTP-/Bearer- und Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
+| Öffentliche Systemgrenze | Health und komponierte Login-/Session-/Logout-Routen mit sicheren Cookies, CSRF und festem 10/Minute-IP-/Kontolimit; API-Token-CRUD ist vertraglich definiert, die injizierbare Get-Grenze liefert redigierte Metadaten mit ETag, generischen Credentials und typisierten Problems, und die Listencursor-Grundlage ist signiert sowie sortier- und filtergebunden | Produktionskomposition für API-Token-Reads, List-Query-/Cursor-HTTP-Integration, Token-Writes, Recovery-Runtime, weitere `/api/v1`-Ressourcen, allgemeine AuthZ, Metrics und Traces fehlen |
 | Web | Strikter React/TypeScript-Build, eingebetteter statischer Shell, semantische Überschrift | Keine Produktnavigation, Async-Zustände, i18n, Monitor-/Status-/Admin-Flows oder vollständige Accessibility |
 | Domain/Application | Browser-Login, Session-Aktivität/CSRF-Rotation und Logout orchestrieren Credential-Prüfung, 256-Bit-Werte, Digestgrenzen, Kontext und Audit frameworkfrei und sind mit HTTP/Persistenz komponiert; API-Token besitzen redigierte Secret-/Argon2id-Grenzen, kanonische CIDRs, exakte Scopes, Actor/Methode/Pfad/Key/Hash-gebundene Idempotenz, permission- und kontextgeprüfte Verwaltung sowie fail-closed Bearer-Authentifizierung mit monotonem Last-used | API-Token-HTTP-Komposition fehlt; keine Recovery-HTTP-Orchestrierung, Monitore, Scheduler, Evaluator, Uptime, Outbox oder allgemeine Permission Engine |
 | Persistenz | PostgreSQL-/SQLite-Migrationen `0001` bis `0005`, Identitäts-, Session-, Recovery- und API-Token-Repositories sowie atomare Create-/Patch-/Revoke-Idempotenz mit Konkurrenz-, Konflikt- und Rollbackparität; Token-Lifecycle ist optimistisch versioniert und Last-used monoton | Secret Store, Monitor/Revision, Job/Observation/Evaluation, Outbox, Statusseite und Retention fehlen |
@@ -44,7 +44,7 @@ Details, betroffene Pfade und Resolution stehen in `findings.yaml`.
 
 ## Empfohlene nächste Reihenfolge
 
-1. `IAM-035`, `IAM-034`, `IAM-013`: die API-Token-Read-Grenze, deren Produktionskomposition und anschließend die Write-Runtime auf den vorhandenen Verwaltungs-, Bearer-, Idempotenz- und Cursorgrundlagen umsetzen.
+1. `IAM-035`, `IAM-034`, `IAM-013`: die verbleibende API-Token-Listengrenze, die Produktionskomposition der Read-Grenzen und anschließend die Write-Runtime auf den vorhandenen Verwaltungs-, Bearer-, Idempotenz- und Cursorgrundlagen umsetzen.
 2. `MON-010`, `MON-011`, `DATA-010`, `API-010`, `WEB-010`: Monitor-CRUD als erster vollständiger öffentlicher Vertikalschnitt.
 3. `CHECK-010` bis `CHECK-012`, `ALERT-010`, `DATA-011`, `WEB-011`: erster echter HTTP-Pfad einschließlich ehrlicher Fehlerklassifikation und atomarer Outbox; erst danach weitere 0.1-Features und Release-Hardening.
 
@@ -163,3 +163,7 @@ Der unabhängige Validator wiederholte die vollständigen aktuellen Repository-G
 ## Abschluss von SPEC-021
 
 `SPEC-021` ist `implemented`, nicht `verified`. Der Preflight für `IAM-035` fand einen höherrangigen Widerspruch: Kapitel 03 verlangt für ungültige oder abgelaufene Listencursor `400 invalid_cursor`, während die API-Token-Liste ausschließlich das auf `invalid_request` fixierte Schema referenzierte. OpenAPI besitzt nun eine wiederverwendbare `InvalidCursorProblem`-Response mit Status 400 und stabilem Code, die Tokenliste referenziert sie, und die generierten TypeScript-Typen sind aktuell. 39 handgeschriebene Contract-/Test-Einfügungen bleiben unter der 100-Zeilen-Schätzung. Alle lokalen Repository-Gates sind grün; unabhängige commit-gebundene Review-/CI-Evidence fehlt. `IAM-035` ist dadurch wieder ausführbar. Details stehen in `docs/implementation-evidence/spec-021-invalid-cursor-contract.md`.
+
+## Abschluss von IAM-037
+
+`IAM-037` ist nach der verpflichtenden Größenaufteilung `implemented`, nicht `verified`. Der erste kombinierte List-/Get-Entwurf maß 1.122 handgeschriebene Source-/Test-Einfügungen und wurde deshalb vor Abschluss in diese Get-/Credential-Grenze und das verbleibende Listenpaket `IAM-035` geteilt. Der echte Axum-HTTP-Test belegt genau eine redigierte Bearer- oder Session-Credential, sichere API-Token-Metadaten, ETag, direkte Quell-IP, typisierte Problems sowie Negativfälle für Mehrdeutigkeit, Secrets und nicht kanonische CIDR-Projektionen. 765 Source-/Test-Einfügungen bleiben unter dem 800-Zeilen-Limit. Sämtliche lokalen Repository-Gates einschließlich PostgreSQL 16.9, SQLite, Supply Chain, Frontend, Playwright und Release-Build sind grün; die 37 Produkt-Acceptance-Bindings bleiben geplant. Produktionskomposition folgt in `IAM-034`, nachdem `IAM-035` die Listengrenze ergänzt hat. Unabhängige commit-gebundene Review-/CI-Evidence fehlt. Details stehen in `docs/implementation-evidence/iam-037-api-token-get-boundary.md`.
