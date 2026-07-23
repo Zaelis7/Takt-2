@@ -148,13 +148,16 @@ requirements:
   - id: PRD-API-004
     release: "0.1"
     coverage: partial
-    verification: evidence_only
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/contracts/openapi.yaml
       - tools/openapi-token-contract.test.mjs
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: API-token listing contractually exposes cursor pagination and bounded filters; no production list endpoint implements them yet.
+      - crates/api/src/api_token_cursor.rs
+      - crates/api/tests/api_token_cursor.rs
+      - docs/implementation-evidence/iam-036-api-token-cursor.md
+    note: API-token listing contractually exposes cursor pagination and bounded filters, and its HMAC-signed UUIDv7 cursor foundation is bound to the stable sort plus every filter; HTTP/Application composition remains in IAM-035/IAM-034 and other resource lists are absent.
   - id: PRD-API-005
     release: "0.1"
     coverage: partial
@@ -171,7 +174,14 @@ requirements:
       - docs/implementation-evidence/iam-018-auth-runtime.md
       - docs/implementation-evidence/iam-012-login-rate-limit.md
       - docs/implementation-evidence/spec-015-api-token-contract.md
-    note: Readiness/browser auth emit bounded redacted Problems and API-token CRUD has explicit problem responses; the general resource runtime error boundary is absent.
+      - crates/application/src/api_token.rs
+      - crates/application/tests/api_tokens.rs
+      - docs/implementation-evidence/iam-025-api-token-application.md
+      - docs/implementation-evidence/iam-029-api-token-bearer.md
+      - crates/api/src/api_token_cursor.rs
+      - crates/api/tests/api_token_cursor.rs
+      - docs/implementation-evidence/iam-036-api-token-cursor.md
+    note: Readiness/browser auth emit bounded redacted Problems, API-token CRUD has explicit problem responses, framework-free management/Bearer use cases return generic authentication or typed infrastructure failures, and invalid API-token cursor material now has one non-disclosing typed failure; HTTP serialization and the general resource runtime error boundary remain absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -369,8 +379,12 @@ requirements:
       - migrations/sqlite/0005_api_token_idempotency.sql
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
+      - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
+      - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+      - docs/implementation-evidence/iam-025-api-token-application.md
+      - docs/implementation-evidence/iam-029-api-token-bearer.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Local owner and browser-auth runtime exist; API-token secret/hash, CIDR, exact-scope, lifecycle and atomic encrypted Create replay persistence exist, while Patch/Revoke idempotency, HTTP CRUD and Bearer authentication remain absent.
+    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency and framework-free management/Bearer use cases exist; API-token HTTP CRUD and production composition remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -407,7 +421,9 @@ requirements:
       - crates/application/tests/api_tokens.rs
       - docs/implementation-evidence/iam-021-api-token-domain.md
       - docs/implementation-evidence/iam-023-api-token-storage.md
-    note: Browser-auth enforces session/CSRF and API-token actors grant only exact scopes, but no public resource runtime applies the token decision yet and the general role/permission engine remains absent.
+      - docs/implementation-evidence/iam-025-api-token-application.md
+      - docs/implementation-evidence/iam-029-api-token-bearer.md
+    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. Public HTTP composition and the general role/permission engine remain absent.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -438,8 +454,9 @@ requirements:
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
+      - docs/implementation-evidence/iam-025-api-token-application.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Existing auth and API-token writes are atomically audited with redacted metadata; Create and idempotent Patch/Revoke commit exactly one audit event, while hash conflicts and identical replays add none. Full non-token action coverage, export and tamper evidence remain absent.
+    note: Existing auth and API-token writes are atomically audited with redacted metadata; management use cases construct context-bound Create/Patch/Revoke audit plans, and idempotent persistence commits exactly one event while conflicts/replays add none. Full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"

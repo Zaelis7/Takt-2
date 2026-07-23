@@ -1,7 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod api_token_cursor;
 mod auth;
 
+pub use api_token_cursor::{
+    ApiTokenCursorBoundary, ApiTokenCursorError, ApiTokenCursorFilter, ApiTokenCursorKey,
+};
 pub use auth::{
     AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HttpAuthentication, HttpLogin,
     HttpSecret,

@@ -9,8 +9,10 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
+hmac.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
+sha2_11.workspace = true
 time.workspace = true
 tokio.workspace = true
 tracing.workspace = true

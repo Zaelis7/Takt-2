@@ -712,7 +712,7 @@ packages:
         - Negativer OpenAPI-Contract-Test für abweichenden Request-Hash und Secret-Ausgabe außerhalb von Create beziehungsweise dessen identischem Replay.
       out_of_scope:
         - SQL-Migration, Verschlüsselungsadapter und engine-paritäre Idempotenzpersistenz; diese folgen in IAM-024.
-        - Application-Use-Cases und Bearer-Authentifizierung; diese folgen in IAM-025.
+        - Application-Use-Cases und Bearer-Authentifizierung; diese folgen in IAM-025 und IAM-029.
         - HTTP-Handler, Cursor, Produktionskomposition und Monitor-Scope-Acceptance; diese verbleiben in IAM-013 und API-010.
       affected_artifacts:
         - specs/01-architecture.md
@@ -866,45 +866,182 @@ packages:
 
   - id: IAM-025
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: []
     depends_on: [IAM-022]
-    outcome: Frameworkfreie API-Token-Verwaltungs-Use-Cases und Bearer-Authentifizierung mit exakter Scope-Entscheidung.
+    outcome: Frameworkfreie API-Token-Verwaltungs-Use-Cases mit Actor-, Organisations-, Projekt-, Permission- und Auditgrenzen.
     preflight:
       in_scope:
         - Create/List/Get/Patch/Revoke-Orchestrierung mit Actor-/Organisations-/Projektkontext und typisierten Fehlern.
-        - Bearer-Präfixsuche, langsame Hashprüfung, Ablauf-/IP-Bindung, monotones Last-used und exakte Scope-Entscheidung.
-        - Positive und negative Application-Tests für Authentifizierung, Permission, Kontexttrennung und Secret-Redaktion.
+        - Positive und negative Application-Tests für Permission, Kontexttrennung, Auditwirkung und Secret-Redaktion.
       out_of_scope:
         - Idempotenzpersistenz, HTTP/Problem-Serialisierung, CSRF, Cursor und Produktionsrouter.
+        - Bearer-Präfixsuche, Hashprüfung, Ablauf-/IP-Bindung, Last-used und Scope-Entscheidung; diese folgen in IAM-029.
         - Monitor-CRUD und allgemeine Rollen-/Permission-Engine.
+      affected_artifacts:
+        - crates/application/src/api_token.rs
+        - crates/application/Cargo.toml
+        - crates/application/tests/api_tokens.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-025-api-token-application.md
+      estimated_handwritten_lines: 700
+      estimated_validation_minutes: 20
+    acceptance:
+      - Create/List/Get/Patch/Revoke prüfen Permission und Organisations-/Projektkontext vor jeder Fachwirkung.
+      - Create/Patch/Revoke erzeugen genau den redigierten Auditplan; nur Create gibt den generierten Tokenwert aus.
+    evidence:
+      - Frameworkfreie Application-Tests für CRUD, Permission, Kontexttrennung, Audit und Secret-Redaktion
+
+  - id: IAM-029
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-005, PRD-IAM-001, PRD-IAM-004]
+    findings: []
+    depends_on: [IAM-025]
+    outcome: Frameworkfreie Bearer-Authentifizierung mit Präfixsuche, langsamer Hashprüfung und exakter Scope-Entscheidung.
+    preflight:
+      in_scope:
+        - Bearer-Präfixsuche, langsame Hashprüfung, Ablauf-/IP-Bindung, monotones Last-used und exakte Scope-Entscheidung.
+        - Positive und negative Application-Tests für Authentifizierung, Kontexttrennung und Secret-Redaktion.
+      out_of_scope:
+        - HTTP/Problem-Serialisierung, Produktionsrouter und Monitor-CRUD.
+        - Allgemeine Rollen-/Permission-Engine.
       affected_artifacts:
         - crates/application/src/api_token.rs
         - crates/application/tests/api_tokens.rs
         - docs/implementation-tracking/
-        - docs/implementation-evidence/iam-025-api-token-application.md
-      estimated_handwritten_lines: 560
-      estimated_validation_minutes: 20
+        - docs/implementation-evidence/iam-029-api-token-bearer.md
+      estimated_handwritten_lines: 300
+      estimated_validation_minutes: 15
     acceptance:
       - Ungültige, abgelaufene, widerrufene, IP-fremde oder falsch gehashte Bearer-Werte authentifizieren keinen Actor.
       - Ein monitors:read-Actor leitet weder monitors:write noch checks:execute oder fremden Projektzugriff ab.
     evidence:
-      - Frameworkfreie Application-Tests für CRUD, Bearer und Scopes
+      - Frameworkfreie Application-Tests für Bearer, Scopes, Kontext und Last-used
+      - docs/implementation-evidence/iam-029-api-token-bearer.md
+
+  - id: IAM-036
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-004, PRD-API-005]
+    findings: []
+    depends_on: [SPEC-015]
+    outcome: Manipulationssichere, opake API-Token-Listencursor sind an die stabile Sortierung und alle aktiven Filter gebunden.
+    preflight:
+      in_scope:
+        - HMAC-SHA-256-signierte Cursorgrenze für created_at desc und id desc ohne Klartext-Schlüssel oder unsignierte Felder.
+        - Kanonische Bindung an project_id, kind, status und scope mit hartem 2048-Zeichen-Limit.
+        - Positive Roundtrip- sowie negative Key-, Filter-, Manipulations- und Redaction-Tests.
+      out_of_scope:
+        - HTTP-Query-/Problem-Serialisierung und Credential-Parsing; diese folgen in IAM-035.
+        - Application-/Persistence-Adapter und Produktionskomposition; diese folgen in IAM-034.
+        - Cursor anderer Ressourcen oder frei konfigurierbare Sortierfelder.
+      affected_artifacts:
+        - crates/api/Cargo.toml
+        - crates/api/src/api_token_cursor.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/api_token_cursor.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-036-api-token-cursor.md
+      estimated_handwritten_lines: 300
+      estimated_validation_minutes: 15
+    acceptance:
+      - Derselbe Boundary-/Filterzustand dekodiert exakt; Filterwechsel, Bitmanipulation, Nullschlüssel, Überlänge oder Fehlformat scheitern geschlossen.
+      - Debug und Fehler geben weder Signierschlüssel noch Cursorinhalt aus.
+    evidence:
+      - API-Cursor Unit-/Negativtests mit PRD-IDs
+      - docs/implementation-evidence/iam-036-api-token-cursor.md
+
+  - id: IAM-035
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
+    findings: [SPEC-003]
+    depends_on: [IAM-025, IAM-029, IAM-036]
+    outcome: OpenAPI-konforme Axum-Read-Grenze für sichere API-Token-Metadaten mit Credential-Extraktion, Problems und signierten Cursorn.
+    preflight:
+      in_scope:
+        - OpenAPI-konforme List-/Get-Handler mit sicheren Metadatenprojektionen und ETag auf der IAM-036-Cursorgrundlage.
+        - Fail-closed Extraktion genau einer Browser-Session oder eines Bearer-Werts in einen geheimnisredigierenden, injizierten HTTP-Port.
+        - Echte Axum-HTTP-, Contract-, Cursor-Integrations-, Problem- und Secret-Negativfälle gegen einen beobachtbaren Port.
+      out_of_scope:
+        - Cursor-Kryptographie und Filterkanonisierung; diese liefert IAM-036.
+        - Application-/Persistence-Adapter und Produktionskomposition; diese folgen im abhängigen Paket IAM-034.
+        - Create, Patch, Revoke, Browser-CSRF und HTTP-Idempotenz; diese verbleiben im abhängigen Paket IAM-013.
+        - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
+        - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
+        - Neue öffentliche Vertragsfelder oder von SPEC-015 abweichende Response-/Fehlersemantik.
+      affected_artifacts:
+        - crates/api/src/api_tokens.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/api_tokens_http.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 20
+    acceptance:
+      - Genau eine Browser-Session oder ein Bearer-Wert erreicht den Port; fehlende, mehrdeutige oder syntaktisch ungültige Credentials scheitern generisch vor Application.
+      - Tokenwert und Hash erscheinen in keiner List-/Get-, Problem-, Log- oder Audit-Ausgabe.
+      - Cursor sind signiert, an Filter und Sortierung gebunden und liefern bei Manipulation oder Filterwechsel invalid_cursor.
+    evidence:
+      - API-Token-Read-HTTP-Contract-Test mit beobachtbarem Port
+      - Credential-, Cursor-, Problem- und Secret-Negativtests
+      - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+
+  - id: IAM-034
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
+    findings: [SPEC-003]
+    depends_on: [IAM-025, IAM-029, IAM-035]
+    outcome: Produktionsfähige Read-HTTP-Komposition für API-Token-Metadaten über Application und SQLite/PostgreSQL.
+    preflight:
+      in_scope:
+        - Read-only Browser-Session- und Bearer-Actor-Anbindung der IAM-035-Grenze an die vorhandenen Application-Ports.
+        - Rollen-/Scope- und Organisations-/Projektkontextprüfung vor List/Get-Fachwirkung.
+        - Produktionskomposition sowie echte SQLite-HTTP-, Permission- und Secret-Negativfälle für List/Get; bestehende gemeinsame Repository-Suites sichern PostgreSQL-Parität.
+      out_of_scope:
+        - HTTP-DTOs, Credential-Parsing, Problems und signierte Cursor; diese liefert IAM-035.
+        - Create, Patch, Revoke, Browser-CSRF und HTTP-Idempotenz; diese verbleiben im abhängigen Paket IAM-013.
+        - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
+      affected_artifacts:
+        - crates/application/src/api_token.rs
+        - crates/application/tests/api_tokens.rs
+        - crates/server/src/main.rs
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/iam-034-api-token-read-http.md
+      estimated_handwritten_lines: 520
+      estimated_validation_minutes: 25
+    acceptance:
+      - Berechtigte Browser-Sessions und api_tokens:read-Bearer können List/Get lesen; ungültige Credentials, fehlender Scope und fremder Organisations-/Projektkontext scheitern generisch oder mit 403.
+      - Tokenwert und Hash erscheinen in keiner List-/Get-, Problem-, Log- oder Audit-Ausgabe.
+      - SQLite-HTTP und die unveränderte PostgreSQL-/SQLite-Repository-Suite belegen dieselbe Filter-, Sortier- und Cursorgrenze.
+    evidence:
+      - API-Token-Read-Application- und echte SQLite-HTTP-Integrationstests
+      - Permission- und Secret-Negativtests
+      - docs/implementation-evidence/iam-034-api-token-read-http.md
 
   - id: IAM-013
     release: "0.1"
     status: planned
-    requirements: [PRD-API-001, PRD-API-003, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-024, IAM-025, IAM-026, IAM-028]
-    outcome: OpenAPI-konforme API-Token-CRUD-HTTP-Runtime mit sicherer Browser-/Bearer-Grenze und signierten Cursorn.
+    depends_on: [IAM-024, IAM-026, IAM-028, IAM-034]
+    outcome: OpenAPI-konforme API-Token-Write-HTTP-Runtime mit sicherer Browser-CSRF-Grenze und atomarer Idempotenz.
     preflight:
       in_scope:
-        - OpenAPI-konforme CRUD-Handler mit Create-/Replay-Ausgabe, sicheren Metadatenprojektionen, ETag/If-Match und stabil signierten Filter-Cursorn.
-        - Browser-Session/CSRF- und Bearer-Actor-Anbindung an die vorhandenen Application- und Idempotenzports.
-        - Produktionskomposition sowie echte SQLite-HTTP-, Contract-, Cursor-, Permission- und Secret-Negativfälle.
+        - OpenAPI-konforme Create-/Patch-/Revoke-Handler mit einmaliger Create-/Replay-Ausgabe, ETag/If-Match und stabilen Problems.
+        - Browser-CSRF- und Bearer-Actor-Anbindung an die vorhandenen Application- und Idempotenzports.
+        - Produktionskomposition sowie echte SQLite-HTTP-, Replay-, Concurrency-, Permission- und Secret-Negativfälle für Write.
       out_of_scope:
+        - API-Token List/Get, Bearer-/Session-Read und signierte Cursor; diese liefert IAM-034.
         - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
         - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
         - Neue öffentliche Vertragsfelder oder von SPEC-015 abweichende Response-/Fehlersemantik.
@@ -918,14 +1055,16 @@ packages:
         - docs/implementation-tracking/work-packages.yaml
         - docs/implementation-tracking/current-status.md
         - docs/implementation-evidence/iam-013-api-token-runtime.md
-      estimated_handwritten_lines: 720
-      estimated_validation_minutes: 30
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 25
     acceptance:
       - Ein monitors:read-Token authentifiziert einen Actor, der lesen, aber weder erstellen noch Rechte ableiten darf; API-010 bindet diese Entscheidung an Monitor-HTTP.
-      - Tokenwert erscheint nur bei Erzeugung und in keinem Log, Audit oder Listen-Response.
+      - Tokenwert erscheint nur bei Erzeugung oder identischem Create-Replay und in keinem Log, Audit oder normalen Lese-Response.
+      - Create, Patch und Revoke erfüllen Idempotenz, ETag, CSRF sowie Auth-, Permission-, Erfolgs- und Problem-Responses.
     evidence:
       - v0.1 Token-Scope-Acceptance
-      - Negative Permission- und Secret-Scan-Tests
+      - API-Token-Write-HTTP-, Replay-, CSRF- und Negative-Permission-Tests
+      - docs/implementation-evidence/iam-013-api-token-runtime.md
 
   - id: SPEC-015
     release: "0.1"

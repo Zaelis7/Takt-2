@@ -16,3 +16,6 @@ subtle.workspace = true
 takt-domain = { path = "../domain", version = "=0.0.0" }
 uuid.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

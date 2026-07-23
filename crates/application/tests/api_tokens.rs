@@ -1,20 +1,560 @@
 #![forbid(unsafe_code)]
 
-use std::{error::Error, net::IpAddr, str::FromStr};
+use std::{error::Error, net::IpAddr, str::FromStr, sync::Mutex};
 
-use takt_application::Argon2idConfig;
+use async_trait::async_trait;
 use takt_application::api_token::{
-    ApiTokenHasher, ApiTokenIdempotencyContext, ApiTokenReplayCipher, ApiTokenSecret,
-    ApiTokenSecretGenerator, ApiTokenWriteMethod, EncryptedApiTokenReplay, TokenSecretGenerator,
+    API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
+    ApiTokenApplicationError, ApiTokenBearerAuthenticationService, ApiTokenCreateCommand,
+    ApiTokenHasher, ApiTokenHashing, ApiTokenIdempotencyContext, ApiTokenListQuery,
+    ApiTokenManagementActor, ApiTokenManagementPermission, ApiTokenManagementService,
+    ApiTokenPatch, ApiTokenReplayCipher, ApiTokenRevokeCommand, ApiTokenSecret,
+    ApiTokenSecretGenerator, ApiTokenStore, ApiTokenTarget, ApiTokenUpdateCommand,
+    ApiTokenWriteMethod, CreateApiTokenPlan, EncryptedApiTokenReplay, RevokeApiTokenPlan,
+    StoredApiToken, TokenSecretGenerator, UpdateApiTokenPlan, authorize_token_actor,
 };
+use takt_application::{ApplicationError, Argon2idConfig, Clock, RepositoryError, UuidV7Generator};
 use takt_domain::{
-    ApiTokenId, AuditActorType, OrganizationId, ResourceId, UtcTimestamp,
-    api_token::{ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, IpNetwork, TokenActor},
+    ApiTokenId, AuditActorType, AuditEvent, MembershipId, OperationId, OrganizationId, ProjectId,
+    ResourceId, UserId, UtcTimestamp,
+    api_token::{
+        ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, ApiTokenStatus, IpNetwork,
+        TokenActor,
+    },
 };
 use uuid::Uuid;
 
 fn resource_id(value: &str) -> Result<ResourceId, Box<dyn Error>> {
     Ok(ResourceId::from_uuid(Uuid::parse_str(value)?)?)
+}
+
+const NOW: UtcTimestamp = UtcTimestamp::from_unix_micros(1_784_445_600_123_456);
+
+struct TestClock(UtcTimestamp);
+
+impl TestClock {
+    const fn new(now: UtcTimestamp) -> Self {
+        Self(now)
+    }
+}
+
+impl Clock for TestClock {
+    fn now(&self) -> Result<UtcTimestamp, ApplicationError> {
+        Ok(self.0)
+    }
+}
+
+struct TestHashing(ApiTokenHasher);
+
+impl TestHashing {
+    fn new() -> Self {
+        Self(ApiTokenHasher::new(Argon2idConfig::testing()))
+    }
+}
+
+#[async_trait]
+impl ApiTokenHashing for TestHashing {
+    async fn hash(
+        &self,
+        secret: &ApiTokenSecret,
+    ) -> Result<
+        takt_application::api_token::ApiTokenHash,
+        takt_application::api_token::ApiTokenApplicationError,
+    > {
+        self.0.hash(secret)
+    }
+
+    async fn verify(
+        &self,
+        secret: &ApiTokenSecret,
+        hash: &takt_application::api_token::ApiTokenHash,
+    ) -> Result<bool, takt_application::api_token::ApiTokenApplicationError> {
+        self.0.verify(secret, hash)
+    }
+}
+
+#[derive(Default)]
+struct TestRepositoryState {
+    stored: Option<StoredApiToken>,
+    audits: Vec<AuditEvent>,
+}
+
+#[derive(Default)]
+struct TestRepository(Mutex<TestRepositoryState>);
+
+impl TestRepository {
+    fn audit_actions(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .expect("test repository lock")
+            .audits
+            .iter()
+            .map(|event| event.action.clone())
+            .collect()
+    }
+
+    fn mutate_token(&self, change: impl FnOnce(&mut ApiToken)) {
+        if let Ok(mut state) = self.0.lock()
+            && let Some(stored) = state.stored.as_mut()
+        {
+            change(&mut stored.token);
+        }
+    }
+
+    fn last_used_at(&self) -> Option<UtcTimestamp> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|state| state.stored.as_ref()?.token.last_used_at)
+    }
+}
+
+fn projection(plan: &CreateApiTokenPlan) -> ApiToken {
+    ApiToken {
+        id: plan.token.id,
+        organization_id: plan.token.organization_id,
+        project_id: plan.token.project_id,
+        name: plan.token.name.clone(),
+        kind: plan.token.kind,
+        token_prefix: plan.token.token_prefix.clone(),
+        scopes: plan.token.scopes.clone(),
+        ip_networks: plan.token.ip_networks.clone(),
+        expires_at: plan.token.expires_at,
+        last_used_at: None,
+        revoked_at: None,
+        created_at: plan.token.now,
+        updated_at: plan.token.now,
+        version: 1,
+    }
+}
+
+#[async_trait]
+impl ApiTokenStore for TestRepository {
+    async fn create_api_token(
+        &self,
+        plan: CreateApiTokenPlan,
+    ) -> Result<ApiToken, RepositoryError> {
+        let token = projection(&plan);
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        if state.stored.is_some() {
+            return Err(RepositoryError::AlreadyExists);
+        }
+        state.audits.push(plan.audit_event.event);
+        state.stored = Some(StoredApiToken {
+            token: token.clone(),
+            token_hash: plan.token.token_hash,
+        });
+        Ok(token)
+    }
+
+    async fn api_token_by_id(&self, id: ApiTokenId) -> Result<ApiToken, RepositoryError> {
+        self.0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?
+            .stored
+            .as_ref()
+            .filter(|stored| stored.token.id == id)
+            .map(|stored| stored.token.clone())
+            .ok_or(RepositoryError::NotFound)
+    }
+
+    async fn api_token_by_prefix(
+        &self,
+        prefix: &ApiTokenPrefix,
+    ) -> Result<StoredApiToken, RepositoryError> {
+        self.0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?
+            .stored
+            .as_ref()
+            .filter(|stored| &stored.token.token_prefix == prefix)
+            .cloned()
+            .ok_or(RepositoryError::NotFound)
+    }
+
+    async fn list_api_tokens(
+        &self,
+        _query: ApiTokenListQuery,
+    ) -> Result<Vec<ApiToken>, RepositoryError> {
+        let state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        Ok(state
+            .stored
+            .iter()
+            .map(|stored| stored.token.clone())
+            .collect())
+    }
+}
+
+#[async_trait]
+impl takt_application::api_token::ApiTokenLifecycleRepository for TestRepository {
+    async fn update_api_token(
+        &self,
+        plan: UpdateApiTokenPlan,
+    ) -> Result<ApiToken, RepositoryError> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        let stored = state.stored.as_mut().ok_or(RepositoryError::NotFound)?;
+        if stored.token.id != plan.id || stored.token.version != plan.expected_version {
+            return Err(RepositoryError::VersionConflict);
+        }
+        if let Some(name) = plan.patch.name {
+            stored.token.name = name;
+        }
+        stored.token.updated_at = plan.now;
+        stored.token.version += 1;
+        let token = stored.token.clone();
+        state.audits.push(plan.audit_event.event);
+        Ok(token)
+    }
+
+    async fn revoke_api_token(
+        &self,
+        plan: RevokeApiTokenPlan,
+    ) -> Result<ApiToken, RepositoryError> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        let stored = state.stored.as_mut().ok_or(RepositoryError::NotFound)?;
+        if stored.token.id != plan.id || stored.token.version != plan.expected_version {
+            return Err(RepositoryError::VersionConflict);
+        }
+        stored.token.revoked_at = Some(plan.now);
+        stored.token.updated_at = plan.now;
+        stored.token.version += 1;
+        let token = stored.token.clone();
+        state.audits.push(plan.audit_event.event);
+        Ok(token)
+    }
+
+    async fn record_api_token_used(
+        &self,
+        id: ApiTokenId,
+        now: UtcTimestamp,
+    ) -> Result<(), RepositoryError> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        let token = &mut state
+            .stored
+            .as_mut()
+            .filter(|stored| stored.token.id == id)
+            .ok_or(RepositoryError::NotFound)?
+            .token;
+        if token.status(now) != ApiTokenStatus::Active
+            || token.updated_at > now
+            || token.last_used_at.is_some_and(|last_used| last_used >= now)
+        {
+            return Err(RepositoryError::VersionConflict);
+        }
+        token.last_used_at = Some(now);
+        token.updated_at = now;
+        token.version += 1;
+        Ok(())
+    }
+}
+
+fn operation_id(value: &str) -> Result<OperationId, Box<dyn Error>> {
+    Ok(OperationId::from_resource_id(resource_id(value)?))
+}
+
+fn management_actor(
+    organization_id: OrganizationId,
+    project_scope: Option<ProjectId>,
+    audit_project_id: ProjectId,
+    permissions: Vec<ApiTokenManagementPermission>,
+) -> Result<ApiTokenManagementActor, Box<dyn Error>> {
+    Ok(ApiTokenManagementActor::new(
+        organization_id,
+        project_scope,
+        audit_project_id,
+        UserId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000003")?),
+        MembershipId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000004")?),
+        permissions,
+    )?)
+}
+
+// PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005: API-token administration is an
+// application use case, not an HTTP- or repository-only authorization check.
+#[tokio::test]
+async fn prd_iam_001_api_token_crud_enforces_permission_context_and_audit()
+-> Result<(), Box<dyn Error>> {
+    let organization_id =
+        OrganizationId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000101")?);
+    let project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000102")?);
+    let foreign_project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000103")?);
+    let repository = TestRepository::default();
+    let hashing = TestHashing::new();
+    let clock = TestClock::new(NOW);
+    let ids = UuidV7Generator;
+    let secrets = ApiTokenSecretGenerator;
+    let service = ApiTokenManagementService::new(&repository, &hashing, &clock, &ids, &secrets);
+    let actor = management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![
+            ApiTokenManagementPermission::Read,
+            ApiTokenManagementPermission::Write,
+        ],
+    )?;
+    let create_request_id = operation_id("019b3cf0-0000-7000-8000-000000000104")?;
+    let create = ApiTokenCreateCommand {
+        organization_id,
+        project_id: Some(project_id),
+        name: "monitor reader".to_owned(),
+        kind: ApiTokenKind::Personal,
+        scopes: vec![ApiTokenScope::from_str("monitors:read")?],
+        ip_networks: vec![IpNetwork::from_str("192.0.2.0/24")?],
+        expires_at: Some(UtcTimestamp::from_unix_micros(
+            NOW.unix_micros() + 1_000_000,
+        )),
+        request_id: create_request_id,
+    };
+
+    let created = service.create(&actor, create.clone()).await?;
+    assert_eq!(created.api_token.version, 1);
+    assert_eq!(created.audit_event.action, API_TOKEN_CREATED_AUDIT_ACTION);
+    assert_eq!(created.audit_event.organization_id, organization_id);
+    assert_eq!(created.audit_event.project_id, Some(project_id));
+    assert_eq!(created.audit_event.request_id, create_request_id);
+    assert!(!format!("{created:?}").contains(created.token.expose_once()));
+    let target = ApiTokenTarget {
+        id: created.api_token.id,
+        organization_id,
+        project_id: Some(project_id),
+    };
+    assert_eq!(service.get(&actor, target).await?, created.api_token);
+    let list_query = ApiTokenListQuery {
+        organization_id,
+        project_id: Some(project_id),
+        kind: None,
+        status: Some(ApiTokenStatus::Active),
+        scope: Some(ApiTokenScope::from_str("monitors:read")?),
+        before: None,
+        limit: 50,
+        now: NOW,
+    };
+    assert_eq!(service.list(&actor, list_query.clone()).await?.len(), 1);
+
+    let foreign_actor = management_actor(
+        organization_id,
+        Some(foreign_project_id),
+        foreign_project_id,
+        vec![
+            ApiTokenManagementPermission::Read,
+            ApiTokenManagementPermission::Write,
+        ],
+    )?;
+    assert_eq!(
+        service.get(&foreign_actor, target).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert_eq!(
+        service.list(&foreign_actor, list_query).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert_eq!(
+        service
+            .get(
+                &actor,
+                ApiTokenTarget {
+                    organization_id: OrganizationId::from_resource_id(resource_id(
+                        "019b3cf0-0000-7000-8000-000000000107",
+                    )?),
+                    ..target
+                },
+            )
+            .await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    let read_only = management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Read],
+    )?;
+    assert!(matches!(
+        service.create(&read_only, create).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    ));
+
+    let update = ApiTokenUpdateCommand {
+        target,
+        expected_version: 1,
+        patch: ApiTokenPatch {
+            name: Some("renamed reader".to_owned()),
+            expires_at: None,
+            ip_networks: None,
+        },
+        request_id: operation_id("019b3cf0-0000-7000-8000-000000000105")?,
+    };
+    assert_eq!(
+        service.update(&foreign_actor, update.clone()).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    let updated = service.update(&actor, update).await?;
+    assert_eq!(
+        (updated.name.as_str(), updated.version),
+        ("renamed reader", 2)
+    );
+    let revoke = ApiTokenRevokeCommand {
+        target,
+        expected_version: 2,
+        request_id: operation_id("019b3cf0-0000-7000-8000-000000000106")?,
+    };
+    assert_eq!(
+        service.revoke(&read_only, revoke.clone()).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    let revoked = service.revoke(&actor, revoke).await?;
+    assert_eq!((revoked.revoked_at, revoked.version), (Some(NOW), 3));
+    assert_eq!(
+        repository.audit_actions(),
+        vec![
+            API_TOKEN_CREATED_AUDIT_ACTION,
+            API_TOKEN_UPDATED_AUDIT_ACTION,
+            API_TOKEN_REVOKED_AUDIT_ACTION,
+        ]
+    );
+    Ok(())
+}
+
+// PRD-IAM-001 / PRD-IAM-004: Bearer authentication verifies the slow hash and
+// applies token status, source-IP, organization, project and exact-scope limits.
+#[tokio::test]
+async fn prd_iam_001_bearer_authentication_fails_closed_and_records_use()
+-> Result<(), Box<dyn Error>> {
+    let organization_id =
+        OrganizationId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000201")?);
+    let project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000202")?);
+    let foreign_project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000203")?);
+    let foreign_organization_id =
+        OrganizationId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000205")?);
+    let repository = TestRepository::default();
+    let hashing = TestHashing::new();
+    let clock = TestClock::new(NOW);
+    let ids = UuidV7Generator;
+    let secrets = ApiTokenSecretGenerator;
+    let management = ApiTokenManagementService::new(&repository, &hashing, &clock, &ids, &secrets);
+    let manager = management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Write],
+    )?;
+    let created = management
+        .create(
+            &manager,
+            ApiTokenCreateCommand {
+                organization_id,
+                project_id: Some(project_id),
+                name: "monitor reader".to_owned(),
+                kind: ApiTokenKind::Personal,
+                scopes: vec![ApiTokenScope::from_str("monitors:read")?],
+                ip_networks: vec![IpNetwork::from_str("192.0.2.0/24")?],
+                expires_at: Some(UtcTimestamp::from_unix_micros(
+                    NOW.unix_micros() + 1_000_000,
+                )),
+                request_id: operation_id("019b3cf0-0000-7000-8000-000000000204")?,
+            },
+        )
+        .await?;
+    let authentication = ApiTokenBearerAuthenticationService::new(&repository, &hashing, &clock);
+    let allowed_source = IpAddr::from_str("192.0.2.10")?;
+    let denied_source = IpAddr::from_str("198.51.100.10")?;
+
+    assert_eq!(
+        authentication
+            .authenticate("not-a-token", allowed_source)
+            .await,
+        Err(ApiTokenApplicationError::AuthenticationFailed)
+    );
+    let unknown = secrets.generate()?;
+    assert_eq!(
+        authentication
+            .authenticate(unknown.expose_once(), allowed_source)
+            .await,
+        Err(ApiTokenApplicationError::AuthenticationFailed)
+    );
+    let mut wrong_secret = created.token.expose_once().to_owned();
+    let replacement = if wrong_secret.ends_with('0') {
+        '1'
+    } else {
+        '0'
+    };
+    wrong_secret.pop();
+    wrong_secret.push(replacement);
+    assert_eq!(
+        authentication
+            .authenticate(&wrong_secret, allowed_source)
+            .await,
+        Err(ApiTokenApplicationError::AuthenticationFailed)
+    );
+    assert_eq!(
+        authentication
+            .authenticate(created.token.expose_once(), denied_source)
+            .await,
+        Err(ApiTokenApplicationError::AuthenticationFailed)
+    );
+    repository.mutate_token(|token| token.expires_at = Some(NOW));
+    assert_eq!(
+        authentication
+            .authenticate(created.token.expose_once(), allowed_source)
+            .await,
+        Err(ApiTokenApplicationError::AuthenticationFailed)
+    );
+    repository.mutate_token(|token| {
+        token.expires_at = None;
+        token.revoked_at = Some(NOW);
+    });
+    assert_eq!(
+        authentication
+            .authenticate(created.token.expose_once(), allowed_source)
+            .await,
+        Err(ApiTokenApplicationError::AuthenticationFailed)
+    );
+    repository.mutate_token(|token| token.revoked_at = None);
+
+    let actor = authentication
+        .authenticate(created.token.expose_once(), allowed_source)
+        .await?;
+    let read = ApiTokenScope::from_str("monitors:read")?;
+    assert_eq!(actor.token_id(), created.api_token.id);
+    assert_eq!(repository.last_used_at(), Some(NOW));
+    assert_eq!(
+        authorize_token_actor(&actor, organization_id, Some(project_id), &read),
+        Ok(())
+    );
+    for (target_project, required) in [
+        (Some(project_id), ApiTokenScope::from_str("monitors:write")?),
+        (Some(project_id), ApiTokenScope::from_str("checks:execute")?),
+        (Some(foreign_project_id), read.clone()),
+    ] {
+        assert_eq!(
+            authorize_token_actor(&actor, organization_id, target_project, &required),
+            Err(ApiTokenApplicationError::PermissionDenied)
+        );
+    }
+    assert_eq!(
+        authorize_token_actor(&actor, foreign_organization_id, Some(project_id), &read,),
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert!(!format!("{actor:?}").contains(created.token.expose_once()));
+    Ok(())
 }
 
 #[test]

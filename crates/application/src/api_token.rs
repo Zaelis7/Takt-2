@@ -6,7 +6,8 @@ use chacha20poly1305::{
     aead::{Aead, Payload},
 };
 use takt_domain::{
-    ApiTokenId, AuditActorType, AuditEvent, OrganizationId, ProjectId, ResourceId, UtcTimestamp,
+    ApiTokenId, AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId,
+    OperationId, OrganizationId, ProjectId, ResourceId, UserId, UtcTimestamp,
     api_token::{
         ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, ApiTokenStatus, IpNetwork,
         TokenActor,
@@ -14,7 +15,10 @@ use takt_domain::{
 };
 use zeroize::Zeroizing;
 
-use crate::{Argon2idConfig, NewAuditEvent, PasswordHash, PasswordHasher, RepositoryError};
+use crate::{
+    ApplicationError, Argon2idConfig, Clock, IdGenerator, NewAuditEvent, PasswordHash,
+    PasswordHasher, RepositoryError,
+};
 
 const PREFIX_HEX_BYTES: usize = 8;
 const SECRET_BYTES: usize = 32;
@@ -613,6 +617,427 @@ pub trait ApiTokenRepository: ApiTokenStore + ApiTokenLifecycleRepository {}
 
 impl<T> ApiTokenRepository for T where T: ApiTokenStore + ApiTokenLifecycleRepository {}
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ApiTokenManagementPermission {
+    Read,
+    Write,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApiTokenManagementActor {
+    organization_id: OrganizationId,
+    project_scope: Option<ProjectId>,
+    audit_project_id: ProjectId,
+    user_id: UserId,
+    membership_id: MembershipId,
+    permissions: Vec<ApiTokenManagementPermission>,
+}
+
+impl ApiTokenManagementActor {
+    pub fn new(
+        organization_id: OrganizationId,
+        project_scope: Option<ProjectId>,
+        audit_project_id: ProjectId,
+        user_id: UserId,
+        membership_id: MembershipId,
+        mut permissions: Vec<ApiTokenManagementPermission>,
+    ) -> Result<Self, ApiTokenApplicationError> {
+        permissions.sort_unstable();
+        permissions.dedup();
+        if permissions.is_empty() || project_scope.is_some_and(|scope| scope != audit_project_id) {
+            return Err(ApiTokenApplicationError::InvalidMetadata);
+        }
+        Ok(Self {
+            organization_id,
+            project_scope,
+            audit_project_id,
+            user_id,
+            membership_id,
+            permissions,
+        })
+    }
+
+    fn authorize(
+        &self,
+        permission: ApiTokenManagementPermission,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+    ) -> Result<(), ApiTokenApplicationError> {
+        if self.organization_id != organization_id
+            || self
+                .project_scope
+                .is_some_and(|scope| Some(scope) != project_id)
+            || self.permissions.binary_search(&permission).is_err()
+        {
+            return Err(ApiTokenApplicationError::PermissionDenied);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ApiTokenCreateCommand {
+    pub organization_id: OrganizationId,
+    pub project_id: Option<ProjectId>,
+    pub name: String,
+    pub kind: ApiTokenKind,
+    pub scopes: Vec<ApiTokenScope>,
+    pub ip_networks: Vec<IpNetwork>,
+    pub expires_at: Option<UtcTimestamp>,
+    pub request_id: OperationId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApiTokenTarget {
+    pub id: ApiTokenId,
+    pub organization_id: OrganizationId,
+    pub project_id: Option<ProjectId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApiTokenUpdateCommand {
+    pub target: ApiTokenTarget,
+    pub expected_version: i64,
+    pub patch: ApiTokenPatch,
+    pub request_id: OperationId,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApiTokenRevokeCommand {
+    pub target: ApiTokenTarget,
+    pub expected_version: i64,
+    pub request_id: OperationId,
+}
+
+pub struct ApiTokenManagementService<'a, R, H, C, I, G> {
+    repository: &'a R,
+    hashing: &'a H,
+    clock: &'a C,
+    ids: &'a I,
+    secrets: &'a G,
+}
+
+impl<'a, R, H, C, I, G> ApiTokenManagementService<'a, R, H, C, I, G>
+where
+    R: ApiTokenRepository,
+    H: ApiTokenHashing,
+    C: Clock,
+    I: IdGenerator,
+    G: TokenSecretGenerator,
+{
+    #[must_use]
+    pub const fn new(
+        repository: &'a R,
+        hashing: &'a H,
+        clock: &'a C,
+        ids: &'a I,
+        secrets: &'a G,
+    ) -> Self {
+        Self {
+            repository,
+            hashing,
+            clock,
+            ids,
+            secrets,
+        }
+    }
+
+    pub async fn create(
+        &self,
+        actor: &ApiTokenManagementActor,
+        command: ApiTokenCreateCommand,
+    ) -> Result<CreatedApiToken, ApiTokenApplicationError> {
+        actor.authorize(
+            ApiTokenManagementPermission::Write,
+            command.organization_id,
+            command.project_id,
+        )?;
+        let now = self.now()?;
+        let secret = self.secrets.generate()?;
+        let token = NewApiToken {
+            id: ApiTokenId::from_resource_id(self.next_id()?),
+            organization_id: command.organization_id,
+            project_id: command.project_id,
+            name: command.name,
+            kind: command.kind,
+            token_prefix: prefix_from_secret(&secret)?,
+            token_hash: self.hashing.hash(&secret).await?,
+            scopes: command.scopes,
+            ip_networks: command.ip_networks,
+            expires_at: command.expires_at,
+            now,
+        };
+        validate_new_api_token(&token)?;
+        let audit_event = self.audit(
+            actor,
+            token.id,
+            token.organization_id,
+            token.project_id,
+            command.request_id,
+            API_TOKEN_CREATED_AUDIT_ACTION,
+            now,
+        )?;
+        let api_token = self
+            .repository
+            .create_api_token(CreateApiTokenPlan {
+                token,
+                audit_event: NewAuditEvent {
+                    event: audit_event.clone(),
+                },
+            })
+            .await?;
+        Ok(CreatedApiToken {
+            token: secret,
+            api_token,
+            audit_event,
+        })
+    }
+
+    pub async fn list(
+        &self,
+        actor: &ApiTokenManagementActor,
+        mut query: ApiTokenListQuery,
+    ) -> Result<Vec<ApiToken>, ApiTokenApplicationError> {
+        actor.authorize(
+            ApiTokenManagementPermission::Read,
+            query.organization_id,
+            query.project_id,
+        )?;
+        query.now = self.now()?;
+        let tokens = self.repository.list_api_tokens(query.clone()).await?;
+        if tokens.iter().any(|token| {
+            token.organization_id != query.organization_id
+                || query.project_id.is_some() && token.project_id != query.project_id
+        }) {
+            return Err(ApiTokenApplicationError::PermissionDenied);
+        }
+        Ok(tokens)
+    }
+
+    pub async fn get(
+        &self,
+        actor: &ApiTokenManagementActor,
+        target: ApiTokenTarget,
+    ) -> Result<ApiToken, ApiTokenApplicationError> {
+        actor.authorize(
+            ApiTokenManagementPermission::Read,
+            target.organization_id,
+            target.project_id,
+        )?;
+        let token = self.repository.api_token_by_id(target.id).await?;
+        ensure_target(&token, target)?;
+        Ok(token)
+    }
+
+    pub async fn update(
+        &self,
+        actor: &ApiTokenManagementActor,
+        command: ApiTokenUpdateCommand,
+    ) -> Result<ApiToken, ApiTokenApplicationError> {
+        self.prepare_mutation(actor, command.target).await?;
+        let now = self.now()?;
+        let audit_event = self.audit(
+            actor,
+            command.target.id,
+            command.target.organization_id,
+            command.target.project_id,
+            command.request_id,
+            API_TOKEN_UPDATED_AUDIT_ACTION,
+            now,
+        )?;
+        self.repository
+            .update_api_token(UpdateApiTokenPlan {
+                id: command.target.id,
+                expected_version: command.expected_version,
+                patch: command.patch,
+                now,
+                audit_event: NewAuditEvent { event: audit_event },
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn revoke(
+        &self,
+        actor: &ApiTokenManagementActor,
+        command: ApiTokenRevokeCommand,
+    ) -> Result<ApiToken, ApiTokenApplicationError> {
+        self.prepare_mutation(actor, command.target).await?;
+        let now = self.now()?;
+        let audit_event = self.audit(
+            actor,
+            command.target.id,
+            command.target.organization_id,
+            command.target.project_id,
+            command.request_id,
+            API_TOKEN_REVOKED_AUDIT_ACTION,
+            now,
+        )?;
+        self.repository
+            .revoke_api_token(RevokeApiTokenPlan {
+                id: command.target.id,
+                expected_version: command.expected_version,
+                now,
+                audit_event: NewAuditEvent { event: audit_event },
+            })
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn prepare_mutation(
+        &self,
+        actor: &ApiTokenManagementActor,
+        target: ApiTokenTarget,
+    ) -> Result<(), ApiTokenApplicationError> {
+        actor.authorize(
+            ApiTokenManagementPermission::Write,
+            target.organization_id,
+            target.project_id,
+        )?;
+        let token = self.repository.api_token_by_id(target.id).await?;
+        ensure_target(&token, target)
+    }
+
+    fn now(&self) -> Result<UtcTimestamp, ApiTokenApplicationError> {
+        self.clock.now().map_err(map_application_error)
+    }
+
+    fn next_id(&self) -> Result<ResourceId, ApiTokenApplicationError> {
+        self.ids.next_resource_id().map_err(map_application_error)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn audit(
+        &self,
+        actor: &ApiTokenManagementActor,
+        token_id: ApiTokenId,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+        request_id: OperationId,
+        action: &str,
+        now: UtcTimestamp,
+    ) -> Result<AuditEvent, ApiTokenApplicationError> {
+        Ok(AuditEvent {
+            id: AuditEventId::from_resource_id(self.next_id()?),
+            organization_id,
+            project_id,
+            actor_type: AuditActorType::System,
+            actor_id: Some(actor.user_id),
+            action: action.to_owned(),
+            resource_type: "api_token".to_owned(),
+            resource_id: ResourceId::from_uuid(token_id.as_uuid())
+                .map_err(|_| ApiTokenApplicationError::IdGeneration)?,
+            request_id,
+            metadata: BootstrapAuditMetadata {
+                organization_id,
+                project_id: actor.audit_project_id,
+                user_id: actor.user_id,
+                membership_id: actor.membership_id,
+            },
+            occurred_at: now,
+        })
+    }
+}
+
+fn ensure_target(token: &ApiToken, target: ApiTokenTarget) -> Result<(), ApiTokenApplicationError> {
+    if token.id == target.id
+        && token.organization_id == target.organization_id
+        && token.project_id == target.project_id
+    {
+        Ok(())
+    } else {
+        Err(ApiTokenApplicationError::PermissionDenied)
+    }
+}
+
+fn map_application_error(error: ApplicationError) -> ApiTokenApplicationError {
+    match error {
+        ApplicationError::Clock => ApiTokenApplicationError::Clock,
+        ApplicationError::IdGeneration => ApiTokenApplicationError::IdGeneration,
+        ApplicationError::Repository(error) => ApiTokenApplicationError::Repository(error),
+        ApplicationError::Validation(_) | ApplicationError::Conflict => {
+            ApiTokenApplicationError::InvalidMetadata
+        }
+    }
+}
+
+pub struct ApiTokenBearerAuthenticationService<'a, R, H, C> {
+    repository: &'a R,
+    hashing: &'a H,
+    clock: &'a C,
+}
+
+impl<'a, R, H, C> ApiTokenBearerAuthenticationService<'a, R, H, C>
+where
+    R: ApiTokenRepository,
+    H: ApiTokenHashing,
+    C: Clock,
+{
+    #[must_use]
+    pub const fn new(repository: &'a R, hashing: &'a H, clock: &'a C) -> Self {
+        Self {
+            repository,
+            hashing,
+            clock,
+        }
+    }
+
+    pub async fn authenticate(
+        &self,
+        bearer_token: &str,
+        source: IpAddr,
+    ) -> Result<TokenActor, ApiTokenApplicationError> {
+        let secret = ApiTokenSecret::from_client_input(bearer_token.to_owned())
+            .map_err(|_| ApiTokenApplicationError::AuthenticationFailed)?;
+        let prefix = prefix_from_secret(&secret)
+            .map_err(|_| ApiTokenApplicationError::AuthenticationFailed)?;
+        let stored = self
+            .repository
+            .api_token_by_prefix(&prefix)
+            .await
+            .map_err(map_bearer_repository_error)?;
+        if stored.token.token_prefix != prefix
+            || !self.hashing.verify(&secret, &stored.token_hash).await?
+        {
+            return Err(ApiTokenApplicationError::AuthenticationFailed);
+        }
+        let now = self.clock.now().map_err(map_application_error)?;
+        let actor = authenticated_token_actor(&stored.token, now, source)?;
+        self.repository
+            .record_api_token_used(stored.token.id, now)
+            .await
+            .map_err(map_bearer_repository_error)?;
+        Ok(actor)
+    }
+}
+
+pub fn authorize_token_actor(
+    actor: &TokenActor,
+    organization_id: OrganizationId,
+    project_id: Option<ProjectId>,
+    required_scope: &ApiTokenScope,
+) -> Result<(), ApiTokenApplicationError> {
+    let project_allowed = match actor.project_id() {
+        Some(scope) => project_id == Some(scope),
+        None => true,
+    };
+    if actor.organization_id() == organization_id && project_allowed && actor.allows(required_scope)
+    {
+        Ok(())
+    } else {
+        Err(ApiTokenApplicationError::PermissionDenied)
+    }
+}
+
+fn map_bearer_repository_error(error: RepositoryError) -> ApiTokenApplicationError {
+    match error {
+        RepositoryError::NotFound | RepositoryError::VersionConflict => {
+            ApiTokenApplicationError::AuthenticationFailed
+        }
+        other => ApiTokenApplicationError::Repository(other),
+    }
+}
+
 pub fn authenticated_token_actor(
     stored: &ApiToken,
     now: UtcTimestamp,
@@ -670,6 +1095,8 @@ pub enum ApiTokenApplicationError {
     AuthenticationFailed,
     PermissionDenied,
     ReplayEncryption,
+    Clock,
+    IdGeneration,
     Repository(RepositoryError),
 }
 
@@ -682,6 +1109,7 @@ impl fmt::Display for ApiTokenApplicationError {
             }
             Self::InvalidMetadata => "API token metadata is invalid",
             Self::PermissionDenied => "API token permission denied",
+            Self::Clock | Self::IdGeneration => "API token application operation failed",
             Self::Repository(_) => "API token repository operation failed",
         })
     }
