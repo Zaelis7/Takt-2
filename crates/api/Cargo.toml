@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
+form_urlencoded.workspace = true
 hmac.workspace = true
 rust-embed.workspace = true
 serde.workspace = true

@@ -23,6 +23,7 @@ chacha20poly1305 = { version = "=0.11.0", features = ["alloc", "zeroize"] }
 axum = { version = "=0.8.9", default-features = false, features = ["http1", "json", "original-uri", "tokio"] }
 clap = { version = "=4.6.2", features = ["derive"] }
 getrandom = "=0.4.3"
+form_urlencoded = "=1.2.2"
 hmac = "=0.13.0"
 prost = "=0.14.4"
 prost-build = "=0.14.4"

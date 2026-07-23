@@ -19,9 +19,11 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::{Uuid, Version};
 use zeroize::Zeroizing;
 
-use super::{ApiState, RequestId};
+use super::{ApiState, ApiTokenCursorBoundary, ApiTokenCursorFilter, ApiTokenCursorKey, RequestId};
 
 const SESSION_COOKIE: &str = "takt_session";
+const DEFAULT_LIMIT: u16 = 50;
+const MAX_QUERY_LENGTH: usize = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApiTokenHttpCredentialKind {
@@ -69,6 +71,14 @@ impl ApiTokenHttpKind {
             Self::Service => "service",
         }
     }
+
+    fn parse(value: &str) -> Result<Self, ()> {
+        match value {
+            "personal" => Ok(Self::Personal),
+            "service" => Ok(Self::Service),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -84,6 +94,15 @@ impl ApiTokenHttpStatus {
             Self::Active => "active",
             Self::Revoked => "revoked",
             Self::Expired => "expired",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, ()> {
+        match value {
+            "active" => Ok(Self::Active),
+            "revoked" => Ok(Self::Revoked),
+            "expired" => Ok(Self::Expired),
+            _ => Err(()),
         }
     }
 }
@@ -107,6 +126,22 @@ pub struct ApiTokenHttpResource {
     pub version: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenHttpListQuery {
+    pub project_id: Option<Uuid>,
+    pub kind: Option<ApiTokenHttpKind>,
+    pub status: Option<ApiTokenHttpStatus>,
+    pub scope: Option<String>,
+    pub before: Option<ApiTokenCursorBoundary>,
+    pub limit: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenHttpListPage {
+    pub items: Vec<ApiTokenHttpResource>,
+    pub has_more: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ApiTokenReadHttpError {
     AuthenticationFailed,
@@ -125,6 +160,14 @@ impl Error for ApiTokenReadHttpError {}
 
 #[async_trait]
 pub trait ApiTokenReadHttpPort: Send + Sync {
+    async fn list(
+        &self,
+        credential: ApiTokenHttpCredential,
+        source: IpAddr,
+        query: ApiTokenHttpListQuery,
+        request_id: &str,
+    ) -> Result<ApiTokenHttpListPage, ApiTokenReadHttpError>;
+
     async fn get(
         &self,
         credential: ApiTokenHttpCredential,
@@ -135,7 +178,42 @@ pub trait ApiTokenReadHttpPort: Send + Sync {
 }
 
 pub(crate) fn routes() -> Router<ApiState> {
-    Router::new().route("/api/v1/api-tokens/{api_token_id}", get(get_api_token))
+    Router::new()
+        .route("/api/v1/api-tokens", get(list_api_tokens))
+        .route("/api/v1/api-tokens/{api_token_id}", get(get_api_token))
+}
+
+async fn list_api_tokens(
+    State(state): State<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::Extension(request_id): axum::Extension<RequestId>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Response {
+    let credential = match credential(&headers) {
+        Ok(value) => value,
+        Err(()) => return authentication_problem(uri.path(), &request_id),
+    };
+    let (Some(port), Some(cursor_key)) = (&state.api_token_reads, &state.api_token_cursor_key)
+    else {
+        return problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service_unavailable",
+            uri.path(),
+            &request_id,
+        );
+    };
+    let (query, filter) = match parse_list_query(uri.query(), cursor_key) {
+        Ok(value) => value,
+        Err(()) => return invalid_cursor_problem(uri.path(), &request_id),
+    };
+    match port
+        .list(credential, peer.ip(), query.clone(), &request_id.0)
+        .await
+    {
+        Ok(page) => list_response(page, &query, &filter, cursor_key, uri.path(), &request_id),
+        Err(error) => list_port_problem(error, uri.path(), &request_id),
+    }
 }
 
 async fn get_api_token(
@@ -169,6 +247,68 @@ async fn get_api_token(
         Ok(_) => internal_problem(uri.path(), &request_id),
         Err(error) => port_problem(error, uri.path(), &request_id),
     }
+}
+
+fn parse_list_query(
+    raw_query: Option<&str>,
+    cursor_key: &ApiTokenCursorKey,
+) -> Result<(ApiTokenHttpListQuery, ApiTokenCursorFilter), ()> {
+    let raw_query = raw_query.unwrap_or_default();
+    if raw_query.len() > MAX_QUERY_LENGTH {
+        return Err(());
+    }
+    let mut limit = None;
+    let mut cursor = None;
+    let mut project_id = None;
+    let mut kind = None;
+    let mut status = None;
+    let mut scope = None;
+    for (name, value) in form_urlencoded::parse(raw_query.as_bytes()) {
+        match name.as_ref() {
+            "limit" if limit.is_none() => {
+                let value = value.parse::<u16>().map_err(|_| ())?;
+                if !(1..=200).contains(&value) {
+                    return Err(());
+                }
+                limit = Some(value);
+            }
+            "cursor" if cursor.is_none() => cursor = Some(value.into_owned()),
+            "project_id" if project_id.is_none() => {
+                let value = Uuid::parse_str(&value).map_err(|_| ())?;
+                if value.get_version() != Some(Version::SortRand) {
+                    return Err(());
+                }
+                project_id = Some(value);
+            }
+            "kind" if kind.is_none() => kind = Some(ApiTokenHttpKind::parse(&value)?),
+            "status" if status.is_none() => status = Some(ApiTokenHttpStatus::parse(&value)?),
+            "scope" if scope.is_none() && valid_scope(&value) => {
+                scope = Some(value.into_owned());
+            }
+            _ => return Err(()),
+        }
+    }
+    let filter = ApiTokenCursorFilter {
+        project_id: project_id.map(|value| value.to_string()),
+        kind: kind.map(|value| value.as_str().to_owned()),
+        status: status.map(|value| value.as_str().to_owned()),
+        scope: scope.clone(),
+    };
+    let before = cursor
+        .map(|value| cursor_key.decode(&value, &filter))
+        .transpose()
+        .map_err(|_| ())?;
+    Ok((
+        ApiTokenHttpListQuery {
+            project_id,
+            kind,
+            status,
+            scope,
+            before,
+            limit: limit.unwrap_or(DEFAULT_LIMIT),
+        },
+        filter,
+    ))
 }
 
 fn credential(headers: &HeaderMap) -> Result<ApiTokenHttpCredential, ()> {
@@ -262,6 +402,12 @@ struct ApiTokenResponse {
     created_at: String,
     updated_at: String,
     version: i64,
+}
+
+#[derive(Serialize)]
+struct ApiTokenPageResponse {
+    items: Vec<ApiTokenResponse>,
+    next_cursor: Option<String>,
 }
 
 impl TryFrom<ApiTokenHttpResource> for ApiTokenResponse {
@@ -378,6 +524,80 @@ fn resource_response(
     }
 }
 
+fn list_response(
+    page: ApiTokenHttpListPage,
+    query: &ApiTokenHttpListQuery,
+    filter: &ApiTokenCursorFilter,
+    cursor_key: &ApiTokenCursorKey,
+    path: &str,
+    request_id: &RequestId,
+) -> Response {
+    if page.items.len() > usize::from(query.limit)
+        || page.has_more && page.items.is_empty()
+        || page
+            .items
+            .iter()
+            .any(|resource| !matches_query(resource, query))
+        || page.items.windows(2).any(|pair| {
+            (pair[0].created_at_unix_micros, pair[0].id)
+                <= (pair[1].created_at_unix_micros, pair[1].id)
+        })
+        || query.before.as_ref().is_some_and(|before| {
+            page.items.iter().any(|resource| {
+                (resource.created_at_unix_micros, resource.id)
+                    >= (before.created_at_unix_micros, before.id)
+            })
+        })
+    {
+        return internal_problem(path, request_id);
+    }
+    let next_cursor = if page.has_more {
+        let Some(last) = page.items.last() else {
+            return internal_problem(path, request_id);
+        };
+        match cursor_key.encode(
+            &ApiTokenCursorBoundary {
+                created_at_unix_micros: last.created_at_unix_micros,
+                id: last.id,
+            },
+            filter,
+        ) {
+            Ok(value) => Some(value),
+            Err(_) => return internal_problem(path, request_id),
+        }
+    } else {
+        None
+    };
+    let items = match page
+        .items
+        .into_iter()
+        .map(ApiTokenResponse::try_from)
+        .collect()
+    {
+        Ok(value) => value,
+        Err(()) => return internal_problem(path, request_id),
+    };
+    no_store(
+        (
+            StatusCode::OK,
+            Json(ApiTokenPageResponse { items, next_cursor }),
+        )
+            .into_response(),
+    )
+}
+
+fn matches_query(resource: &ApiTokenHttpResource, query: &ApiTokenHttpListQuery) -> bool {
+    query
+        .project_id
+        .is_none_or(|project_id| resource.project_id == Some(project_id))
+        && query.kind.is_none_or(|kind| resource.kind == kind)
+        && query.status.is_none_or(|status| resource.status == status)
+        && query
+            .scope
+            .as_ref()
+            .is_none_or(|scope| resource.scopes.contains(scope))
+}
+
 #[derive(Serialize)]
 struct Problem {
     r#type: String,
@@ -396,6 +616,10 @@ fn authentication_problem(path: &str, request_id: &RequestId) -> Response {
         path,
         request_id,
     )
+}
+
+fn invalid_cursor_problem(path: &str, request_id: &RequestId) -> Response {
+    problem(StatusCode::BAD_REQUEST, "invalid_cursor", path, request_id)
 }
 
 fn internal_problem(path: &str, request_id: &RequestId) -> Response {
@@ -425,12 +649,29 @@ fn port_problem(error: ApiTokenReadHttpError, path: &str, request_id: &RequestId
     }
 }
 
+fn list_port_problem(error: ApiTokenReadHttpError, path: &str, request_id: &RequestId) -> Response {
+    match error {
+        ApiTokenReadHttpError::AuthenticationFailed => authentication_problem(path, request_id),
+        ApiTokenReadHttpError::PermissionDenied => {
+            problem(StatusCode::FORBIDDEN, "permission_denied", path, request_id)
+        }
+        ApiTokenReadHttpError::NotFound | ApiTokenReadHttpError::Internal => {
+            internal_problem(path, request_id)
+        }
+    }
+}
+
 fn problem(status: StatusCode, code: &'static str, path: &str, request_id: &RequestId) -> Response {
-    let (title, detail) = match status {
-        StatusCode::UNAUTHORIZED => ("Authentication failed", "Authentication failed."),
-        StatusCode::FORBIDDEN => ("Permission denied", "Permission denied."),
-        StatusCode::NOT_FOUND => ("Not found", "The requested resource was not found."),
-        StatusCode::SERVICE_UNAVAILABLE => ("Service unavailable", "The service is not ready."),
+    let (title, detail) = match (status, code) {
+        (StatusCode::BAD_REQUEST, "invalid_cursor") => {
+            ("Invalid cursor", "The list cursor is invalid.")
+        }
+        (StatusCode::UNAUTHORIZED, _) => ("Authentication failed", "Authentication failed."),
+        (StatusCode::FORBIDDEN, _) => ("Permission denied", "Permission denied."),
+        (StatusCode::NOT_FOUND, _) => ("Not found", "The requested resource was not found."),
+        (StatusCode::SERVICE_UNAVAILABLE, _) => {
+            ("Service unavailable", "The service is not ready.")
+        }
         _ => (
             "Internal server error",
             "The request could not be completed.",

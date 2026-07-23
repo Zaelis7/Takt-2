@@ -88,7 +88,8 @@ requirements:
       - crates/api/src/api_tokens.rs
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
-    note: Browser login, session and logout run through `/api/v1`, and the API-token Get boundary now provides contract-shaped redacted metadata through an injected port. Production token-read composition, List/Writes, recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
+      - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+    note: Browser login, session and logout run through `/api/v1`, and the API-token List/Get boundaries now provide contract-shaped redacted metadata, typed filters and signed cursor pages through an injected port. Production token-read composition, Writes, recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
@@ -163,7 +164,10 @@ requirements:
       - crates/api/tests/api_token_cursor.rs
       - docs/implementation-evidence/iam-036-api-token-cursor.md
       - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
-    note: API-token listing contractually exposes cursor pagination, bounded filters and stable invalid_cursor Problems; its HMAC-signed UUIDv7 cursor foundation is bound to the stable sort plus every filter. HTTP/Application composition remains in IAM-035/IAM-034 and other resource lists are absent.
+      - crates/api/src/api_tokens.rs
+      - crates/api/tests/api_tokens_http.rs
+      - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+    note: API-token listing now parses bounded filters and limits, returns stable created_at-desc/id-desc pages and binds its HMAC-signed UUIDv7 cursor to every active filter over real HTTP. Production Application/Persistence composition remains in IAM-034 and other resource lists are absent.
   - id: PRD-API-005
     release: "0.1"
     coverage: partial
@@ -191,7 +195,8 @@ requirements:
       - crates/api/src/api_tokens.rs
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
-    note: Readiness/browser auth and API-token Get emit bounded redacted Problems; token Get preserves generic authentication and typed permission, absence and infrastructure failures over real HTTP. List/cursor HTTP serialization, production read composition, Writes and the general resource runtime error boundary remain absent.
+      - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+    note: Readiness/browser auth and API-token List/Get emit bounded redacted Problems; the token list preserves generic authentication, typed permission failures and stable invalid_cursor responses for malformed, duplicate, manipulated or filter-mismatched queries over real HTTP. Production read composition, Writes and the general resource runtime error boundary remain absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -397,7 +402,8 @@ requirements:
       - crates/api/src/api_tokens.rs
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
-    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and an injected Get HTTP boundary exist. List/Writes and production read composition remain absent; the current HTTP delta has full local but no independent commit-bound validation.
+      - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and injected List/Get HTTP boundaries exist. Writes and production read composition remain absent; the current HTTP delta has full local but no independent commit-bound validation.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -439,7 +445,8 @@ requirements:
       - crates/api/src/api_tokens.rs
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
-    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. The injected Get HTTP boundary preserves typed permission failures, but its Application/production composition and the general role/permission engine remain absent.
+      - docs/implementation-evidence/iam-035-api-token-read-boundary.md
+    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. The injected List/Get HTTP boundaries preserve typed permission failures and validate returned filters/pages fail closed, but their Application/production composition and the general role/permission engine remain absent.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
