@@ -77,6 +77,22 @@ findings:
       - PRD-IAM-005
     resolution: SPEC-020 defines that an identical replay returns the same token-bearing 201 status, relevant headers and body for 24 hours, bound to actor, method, path and request hash. A different hash returns 409 idempotency_key_reused without business or audit effect. The replay payload must use authenticated encryption and remain absent from ordinary reads, audit, Problems, logs and telemetry. IAM-024 implements the persistence and encryption boundary; IAM-025 and IAM-013 provide application and HTTP runtime behavior.
 
+  - id: SPEC-007
+    status: resolved
+    severity: high
+    kind: conflict
+    decision: spec_change
+    summary: Chapter 03 requires 400 invalid_cursor for an invalid or expired list cursor, while the API-token list operation references the InvalidRequestProblem schema whose code is fixed to invalid_request.
+    locations:
+      - specs/03-api-and-automation.md
+      - specs/contracts/openapi.yaml
+      - tools/openapi-token-contract.test.mjs
+    affects:
+      - PRD-API-002
+      - PRD-API-004
+      - PRD-API-005
+    resolution: SPEC-021 adds the stable InvalidCursorProblem response/schema to OpenAPI, binds the API-token list 400 response to it, regenerates the TypeScript contract and prevents regression with a focused PRD-API-004/005 test. IAM-035 can now implement the exact runtime serialization without interpreting the conflict.
+
   - id: SPEC-004
     status: resolved
     severity: high

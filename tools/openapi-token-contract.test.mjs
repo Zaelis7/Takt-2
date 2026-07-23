@@ -69,6 +69,24 @@ test("PRD-IAM-001 API token CRUD has explicit auth, concurrency and pagination",
   }
 });
 
+test("PRD-API-004 and PRD-API-005 API token cursor failures have a stable problem", () => {
+  const list = operation("/api/v1/api-tokens", "get");
+  assert.equal(
+    list.responses["400"].$ref,
+    "#/components/responses/InvalidCursorProblem",
+  );
+
+  const response = contract.components.responses.InvalidCursorProblem;
+  assert.equal(
+    response.content["application/problem+json"].schema.$ref,
+    "#/components/schemas/InvalidCursorProblem",
+  );
+  const specialization =
+    contract.components.schemas.InvalidCursorProblem.allOf[1].properties;
+  assert.equal(specialization.status.const, 400);
+  assert.equal(specialization.code.const, "invalid_cursor");
+});
+
 test("PRD-IAM-001 token value is one-time while safe schemas remain redacted", () => {
   const schemas = contract.components.schemas;
   for (const name of ["ApiTokenCreate", "ApiTokenPatch", "ApiToken", "ApiTokenCreated", "ApiTokenPage"]) {

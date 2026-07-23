@@ -905,6 +905,12 @@ export interface components {
             /** @constant */
             code?: "invalid_request";
         };
+        InvalidCursorProblem: components["schemas"]["Problem"] & {
+            /** @constant */
+            status?: 400;
+            /** @constant */
+            code?: "invalid_cursor";
+        };
         IdempotencyKeyReusedProblem: components["schemas"]["Problem"] & {
             /** @constant */
             status?: 409;
@@ -969,6 +975,16 @@ export interface components {
             };
             content: {
                 "application/problem+json": components["schemas"]["InvalidRequestProblem"];
+            };
+        };
+        /** @description The list cursor is invalid, expired or does not match the active filters and sort */
+        InvalidCursorProblem: {
+            headers: {
+                "X-Request-Id": components["headers"]["RequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["InvalidCursorProblem"];
             };
         };
         /** @description Authentication failed without disclosing account or session details */
@@ -1274,7 +1290,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiTokenPage"];
                 };
             };
-            400: components["responses"]["InvalidRequestProblem"];
+            400: components["responses"]["InvalidCursorProblem"];
             401: components["responses"]["AuthenticationProblem"];
             403: components["responses"]["Problem"];
         };

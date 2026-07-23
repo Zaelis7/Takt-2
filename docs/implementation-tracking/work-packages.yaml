@@ -955,12 +955,46 @@ packages:
       - API-Cursor Unit-/Negativtests mit PRD-IDs
       - docs/implementation-evidence/iam-036-api-token-cursor.md
 
+  - id: SPEC-021
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-002, PRD-API-004, PRD-API-005]
+    findings: [SPEC-007]
+    depends_on: [SPEC-015]
+    outcome: Der OpenAPI-Vertrag erlaubt für ungültige API-Token-Listencursor den in Kapitel 03 vorgeschriebenen stabilen Problemcode invalid_cursor.
+    preflight:
+      in_scope:
+        - Wiederverwendbare OpenAPI-Response und typisiertes Problem-Schema für 400 invalid_cursor.
+        - Bindung der API-Token-Listenoperation an die neue Response ohne Änderung ihrer übrigen Semantik.
+        - Positiver Contract-Test für Response-Referenz, Status und stabilen Code.
+      out_of_scope:
+        - HTTP-Runtime, Cursor-Kryptographie, Credential-Parsing oder Application-/Persistenzkomposition.
+        - Cursorfehler anderer Listenoperationen; diese werden mit ihrer jeweiligen Contract-/Runtime-Umsetzung gebunden.
+        - Neue Problemfelder, Endpunkte oder Fehlercodes außerhalb der bereits normativen invalid_cursor-Semantik.
+      affected_artifacts:
+        - specs/contracts/openapi.yaml
+        - tools/openapi-token-contract.test.mjs
+        - web/src/generated/openapi.ts
+        - docs/implementation-tracking/requirements.yaml
+        - docs/implementation-tracking/work-packages.yaml
+        - docs/implementation-tracking/findings.yaml
+        - docs/implementation-tracking/current-status.md
+        - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
+      estimated_handwritten_lines: 100
+      estimated_validation_minutes: 10
+    acceptance:
+      - GET /api/v1/api-tokens referenziert für 400 ausschließlich die InvalidCursorProblem-Response.
+      - Das zugehörige Schema fixiert Status 400 und Code invalid_cursor im bestehenden Problem-Details-Format.
+    evidence:
+      - PRD-API-004/005 OpenAPI-Contract-Test
+      - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
+
   - id: IAM-035
     release: "0.1"
     status: planned
     requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
     findings: [SPEC-003]
-    depends_on: [IAM-025, IAM-029, IAM-036]
+    depends_on: [IAM-025, IAM-029, IAM-036, SPEC-021]
     outcome: OpenAPI-konforme Axum-Read-Grenze für sichere API-Token-Metadaten mit Credential-Extraktion, Problems und signierten Cursorn.
     preflight:
       in_scope:

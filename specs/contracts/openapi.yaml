@@ -239,7 +239,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiTokenPage"
         "400":
-          $ref: "#/components/responses/InvalidRequestProblem"
+          $ref: "#/components/responses/InvalidCursorProblem"
         "401":
           $ref: "#/components/responses/AuthenticationProblem"
         "403":
@@ -880,6 +880,15 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/InvalidRequestProblem"
+    InvalidCursorProblem:
+      description: The list cursor is invalid, expired or does not match the active filters and sort
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/RequestId"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/InvalidCursorProblem"
     AuthenticationProblem:
       description: Authentication failed without disclosing account or session details
       headers:
@@ -2126,6 +2135,17 @@ components:
             code:
               type: string
               const: invalid_request
+    InvalidCursorProblem:
+      allOf:
+        - $ref: "#/components/schemas/Problem"
+        - type: object
+          properties:
+            status:
+              type: integer
+              const: 400
+            code:
+              type: string
+              const: invalid_cursor
     IdempotencyKeyReusedProblem:
       allOf:
         - $ref: "#/components/schemas/Problem"

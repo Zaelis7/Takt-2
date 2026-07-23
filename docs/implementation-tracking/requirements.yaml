@@ -89,7 +89,7 @@ requirements:
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
-    verification: independent
+    verification: full_local
     spec_health: clear
     evidence:
       - specs/contracts/openapi.yaml
@@ -123,7 +123,9 @@ requirements:
       - docs/implementation-evidence/spec-020-api-token-idempotency-contract.md
       - docs/implementation-evidence/iam-027-api-token-idempotency-foundation.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: OpenAPI lint, generated-type drift, browser-auth/API-token contracts including bounded encrypted token-bearing Create replay, complete cross-contract CheckSpec mapping, the codegen supply-chain guards and exact inventory of all 37 release scenarios pass; runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
+      - web/src/generated/openapi.ts
+      - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
+    note: OpenAPI lint, generated-type drift, browser-auth/API-token contracts including bounded encrypted token-bearing Create replay and stable invalid_cursor semantics, complete cross-contract CheckSpec mapping, the codegen supply-chain guards and exact inventory of all 37 release scenarios pass locally; the current contract delta lacks independent validation, and runtime conformance, released-baseline compatibility and runnable product-acceptance bindings remain absent.
   - id: PRD-API-003
     release: "0.1"
     coverage: partial
@@ -157,7 +159,8 @@ requirements:
       - crates/api/src/api_token_cursor.rs
       - crates/api/tests/api_token_cursor.rs
       - docs/implementation-evidence/iam-036-api-token-cursor.md
-    note: API-token listing contractually exposes cursor pagination and bounded filters, and its HMAC-signed UUIDv7 cursor foundation is bound to the stable sort plus every filter; HTTP/Application composition remains in IAM-035/IAM-034 and other resource lists are absent.
+      - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
+    note: API-token listing contractually exposes cursor pagination, bounded filters and stable invalid_cursor Problems; its HMAC-signed UUIDv7 cursor foundation is bound to the stable sort plus every filter. HTTP/Application composition remains in IAM-035/IAM-034 and other resource lists are absent.
   - id: PRD-API-005
     release: "0.1"
     coverage: partial
@@ -181,7 +184,8 @@ requirements:
       - crates/api/src/api_token_cursor.rs
       - crates/api/tests/api_token_cursor.rs
       - docs/implementation-evidence/iam-036-api-token-cursor.md
-    note: Readiness/browser auth emit bounded redacted Problems, API-token CRUD has explicit problem responses, framework-free management/Bearer use cases return generic authentication or typed infrastructure failures, and invalid API-token cursor material now has one non-disclosing typed failure; HTTP serialization and the general resource runtime error boundary remain absent.
+      - docs/implementation-evidence/spec-021-invalid-cursor-contract.md
+    note: Readiness/browser auth emit bounded redacted Problems, API-token CRUD has explicit problem responses including stable invalid_cursor semantics, framework-free management/Bearer use cases return generic authentication or typed infrastructure failures, and invalid API-token cursor material has one non-disclosing typed failure; HTTP serialization and the general resource runtime error boundary remain absent.
 
   - id: PRD-AUT-001
     release: "0.1"
