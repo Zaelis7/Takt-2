@@ -395,7 +395,7 @@ fn existing_mutation(
     if context.request_hash() != incoming.request_hash() {
         return Err(ApiTokenMutationIdempotencyError::KeyReused);
     }
-    Ok(Some(*result))
+    Ok(Some(result.clone()))
 }
 
 #[async_trait]
@@ -432,12 +432,11 @@ impl ApiTokenMutationIdempotencyRepository for TestRepository {
             stored.token.version += 1;
             stored.token.clone()
         };
-        let result = StoredApiTokenMutationResult {
-            api_token_id: token.id,
-            result_version: token.version,
-        };
+        let result = StoredApiTokenMutationResult::new(ApiTokenWriteMethod::Patch, token.clone());
         state.audits.push(plan.update.audit_event.event);
-        state.mutation_idempotency.push((plan.context, result));
+        state
+            .mutation_idempotency
+            .push((plan.context, result.clone()));
         Ok(ApiTokenMutationIdempotencyResult::Mutated {
             api_token: Box::new(token),
             result,
@@ -468,12 +467,11 @@ impl ApiTokenMutationIdempotencyRepository for TestRepository {
             stored.token.version += 1;
             stored.token.clone()
         };
-        let result = StoredApiTokenMutationResult {
-            api_token_id: token.id,
-            result_version: token.version,
-        };
+        let result = StoredApiTokenMutationResult::new(ApiTokenWriteMethod::Delete, token.clone());
         state.audits.push(plan.revoke.audit_event.event);
-        state.mutation_idempotency.push((plan.context, result));
+        state
+            .mutation_idempotency
+            .push((plan.context, result.clone()));
         Ok(ApiTokenMutationIdempotencyResult::Mutated {
             api_token: Box::new(token),
             result,
@@ -897,6 +895,10 @@ async fn prd_api_003_idempotent_api_token_mutations_are_safe_and_actor_bound()
     assert!(update_replay.replayed);
     assert_eq!(updated.api_token, update_replay.api_token);
     assert_eq!(
+        (updated.status, update_replay.status),
+        (ApiTokenStatus::Active, ApiTokenStatus::Active)
+    );
+    assert_eq!(
         (updated.api_token.name.as_str(), updated.api_token.version),
         ("renamed writer", 2)
     );
@@ -916,7 +918,7 @@ async fn prd_api_003_idempotent_api_token_mutations_are_safe_and_actor_bound()
         service.update(&browser, conflicting_update).await,
         Err(ApiTokenApplicationError::IdempotencyKeyReused)
     );
-    let mut stale_update = update;
+    let mut stale_update = update.clone();
     stale_update.idempotency = idempotency("update-key-0602", 0x43);
     assert_eq!(
         service.update(&browser, stale_update).await,
@@ -958,6 +960,10 @@ async fn prd_api_003_idempotent_api_token_mutations_are_safe_and_actor_bound()
     assert!(revoke_replay.replayed);
     assert_eq!(revoked.api_token, revoke_replay.api_token);
     assert_eq!(
+        (revoked.status, revoke_replay.status),
+        (ApiTokenStatus::Revoked, ApiTokenStatus::Revoked)
+    );
+    assert_eq!(
         (revoked.api_token.revoked_at, revoked.api_token.version),
         (Some(NOW), 3)
     );
@@ -974,6 +980,18 @@ async fn prd_api_003_idempotent_api_token_mutations_are_safe_and_actor_bound()
         AuditMetadata::ApiToken(ref metadata)
             if metadata.api_token_id == bearer_token_id
     ));
+    let delayed_update_replay = service.update(&browser, update).await?;
+    assert!(delayed_update_replay.replayed);
+    assert_eq!(delayed_update_replay.status, ApiTokenStatus::Active);
+    assert_eq!(
+        delayed_update_replay.api_token, updated.api_token,
+        "a Patch replay must return its original safe projection after a later mutation"
+    );
+    assert_eq!(
+        repository.audits().len(),
+        3,
+        "the delayed replay must not append an audit event"
+    );
 
     let mut conflicting_revoke = revoke.clone();
     conflicting_revoke.idempotency.request_hash = [0x52; 32];
@@ -1019,8 +1037,10 @@ async fn prd_api_003_idempotent_api_token_mutations_are_safe_and_actor_bound()
         )
     );
     assert!(
-        !format!("{updated:?}{update_replay:?}{revoked:?}{revoke_replay:?}{audits:?}")
-            .contains(created.token.expose_once())
+        !format!(
+            "{updated:?}{update_replay:?}{revoked:?}{revoke_replay:?}{delayed_update_replay:?}{audits:?}"
+        )
+        .contains(created.token.expose_once())
     );
     Ok(())
 }

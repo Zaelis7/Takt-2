@@ -622,7 +622,7 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
         plan: UpdateApiTokenIdempotencyPlan,
     ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError> {
         validate_idempotent_update(&plan)?;
-        let api_token = match &self.database.pool {
+        let (api_token, result) = match &self.database.pool {
             DatabasePool::PostgreSql(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
                 delete_expired_postgres(&mut transaction, &plan.context).await?;
@@ -646,9 +646,13 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
                     return Err(RepositoryError::VersionConflict.into());
                 };
                 insert_audit_postgres(&mut transaction, &plan.update.audit_event).await?;
-                complete_mutation_postgres(&mut transaction, &plan.context, &api_token).await?;
+                let result = StoredApiTokenMutationResult::new(
+                    ApiTokenWriteMethod::Patch,
+                    api_token.clone(),
+                );
+                complete_mutation_postgres(&mut transaction, &plan.context, &result).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
-                api_token
+                (api_token, result)
             }
             DatabasePool::Sqlite(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
@@ -673,14 +677,14 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
                     return Err(RepositoryError::VersionConflict.into());
                 };
                 insert_audit_sqlite(&mut transaction, &plan.update.audit_event).await?;
-                complete_mutation_sqlite(&mut transaction, &plan.context, &api_token).await?;
+                let result = StoredApiTokenMutationResult::new(
+                    ApiTokenWriteMethod::Patch,
+                    api_token.clone(),
+                );
+                complete_mutation_sqlite(&mut transaction, &plan.context, &result).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
-                api_token
+                (api_token, result)
             }
-        };
-        let result = StoredApiTokenMutationResult {
-            api_token_id: api_token.id,
-            result_version: api_token.version,
         };
         Ok(ApiTokenMutationIdempotencyResult::Mutated {
             api_token: Box::new(api_token),
@@ -693,7 +697,7 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
         plan: RevokeApiTokenIdempotencyPlan,
     ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError> {
         validate_idempotent_revoke(&plan)?;
-        let api_token = match &self.database.pool {
+        let (api_token, result) = match &self.database.pool {
             DatabasePool::PostgreSql(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
                 delete_expired_postgres(&mut transaction, &plan.context).await?;
@@ -717,9 +721,13 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
                     return Err(RepositoryError::VersionConflict.into());
                 };
                 insert_audit_postgres(&mut transaction, &plan.revoke.audit_event).await?;
-                complete_mutation_postgres(&mut transaction, &plan.context, &api_token).await?;
+                let result = StoredApiTokenMutationResult::new(
+                    ApiTokenWriteMethod::Delete,
+                    api_token.clone(),
+                );
+                complete_mutation_postgres(&mut transaction, &plan.context, &result).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
-                api_token
+                (api_token, result)
             }
             DatabasePool::Sqlite(pool) => {
                 let mut transaction = pool.begin().await.map_err(map_sqlx_error)?;
@@ -744,14 +752,14 @@ impl ApiTokenMutationIdempotencyRepository for SqlxRepository {
                     return Err(RepositoryError::VersionConflict.into());
                 };
                 insert_audit_sqlite(&mut transaction, &plan.revoke.audit_event).await?;
-                complete_mutation_sqlite(&mut transaction, &plan.context, &api_token).await?;
+                let result = StoredApiTokenMutationResult::new(
+                    ApiTokenWriteMethod::Delete,
+                    api_token.clone(),
+                );
+                complete_mutation_sqlite(&mut transaction, &plan.context, &result).await?;
                 transaction.commit().await.map_err(map_sqlx_error)?;
-                api_token
+                (api_token, result)
             }
-        };
-        let result = StoredApiTokenMutationResult {
-            api_token_id: api_token.id,
-            result_version: api_token.version,
         };
         Ok(ApiTokenMutationIdempotencyResult::Mutated {
             api_token: Box::new(api_token),
@@ -874,16 +882,20 @@ async fn apply_revoke_sqlite(
 async fn complete_mutation_postgres(
     connection: &mut PgConnection,
     context: &ApiTokenIdempotencyContext,
-    result: &ApiToken,
+    result: &StoredApiTokenMutationResult,
 ) -> Result<(), RepositoryError> {
-    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = $6, result_version = $7 WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5 AND api_token_id IS NULL")
+    let api_token = result.api_token();
+    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = $6, result_version = $7, response_status = $8, response_etag = $9, mutation_snapshot = $10 WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5 AND api_token_id IS NULL")
         .bind(context.actor_type().as_str())
         .bind(context.actor_id().as_uuid())
         .bind(context.method().as_str())
         .bind(context.path())
         .bind(context.key())
-        .bind(result.id.as_uuid())
-        .bind(result.version)
+        .bind(api_token.id.as_uuid())
+        .bind(api_token.version)
+        .bind(i16::try_from(result.response_status()).map_err(|_| RepositoryError::ConstraintViolation)?)
+        .bind(result.response_etag())
+        .bind(mutation_snapshot(result))
         .execute(connection)
         .await
         .map_err(map_sqlx_error)?
@@ -894,16 +906,20 @@ async fn complete_mutation_postgres(
 async fn complete_mutation_sqlite(
     connection: &mut SqliteConnection,
     context: &ApiTokenIdempotencyContext,
-    result: &ApiToken,
+    result: &StoredApiTokenMutationResult,
 ) -> Result<(), RepositoryError> {
-    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = ?6, result_version = ?7 WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5 AND api_token_id IS NULL")
+    let api_token = result.api_token();
+    let affected = sqlx::query("UPDATE api_token_idempotency SET api_token_id = ?6, result_version = ?7, response_status = ?8, response_etag = ?9, mutation_snapshot = ?10 WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5 AND api_token_id IS NULL")
         .bind(context.actor_type().as_str())
         .bind(context.actor_id().to_string())
         .bind(context.method().as_str())
         .bind(context.path())
         .bind(context.key())
-        .bind(result.id.to_string())
-        .bind(result.version)
+        .bind(api_token.id.to_string())
+        .bind(api_token.version)
+        .bind(i64::from(result.response_status()))
+        .bind(result.response_etag())
+        .bind(mutation_snapshot(result).to_string())
         .execute(connection)
         .await
         .map_err(map_sqlx_error)?
@@ -915,7 +931,7 @@ async fn mutation_replay_postgres(
     connection: &mut PgConnection,
     context: &ApiTokenIdempotencyContext,
 ) -> Result<StoredApiTokenMutationResult, ApiTokenMutationIdempotencyError> {
-    let row = sqlx::query("SELECT request_hash, api_token_id, result_version FROM api_token_idempotency WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5")
+    let row = sqlx::query("SELECT request_hash, api_token_id, result_version, response_status::bigint AS response_status, response_etag, mutation_snapshot FROM api_token_idempotency WHERE actor_type = $1 AND actor_id = $2 AND method = $3 AND path = $4 AND idempotency_key = $5")
         .bind(context.actor_type().as_str())
         .bind(context.actor_id().as_uuid())
         .bind(context.method().as_str())
@@ -930,14 +946,17 @@ async fn mutation_replay_postgres(
         .map(ApiTokenId::from_uuid)
         .transpose()
         .map_err(|_| RepositoryError::UnknownInfrastructure)?;
-    mutation_replay_from_parts(&row, id, context)
+    let snapshot = row
+        .try_get::<Option<Value>, _>("mutation_snapshot")
+        .map_err(map_sqlx_error)?;
+    mutation_replay_from_parts(&row, id, snapshot, context)
 }
 
 async fn mutation_replay_sqlite(
     connection: &mut SqliteConnection,
     context: &ApiTokenIdempotencyContext,
 ) -> Result<StoredApiTokenMutationResult, ApiTokenMutationIdempotencyError> {
-    let row = sqlx::query("SELECT request_hash, api_token_id, result_version FROM api_token_idempotency WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5")
+    let row = sqlx::query("SELECT request_hash, api_token_id, result_version, response_status, response_etag, mutation_snapshot FROM api_token_idempotency WHERE actor_type = ?1 AND actor_id = ?2 AND method = ?3 AND path = ?4 AND idempotency_key = ?5")
         .bind(context.actor_type().as_str())
         .bind(context.actor_id().to_string())
         .bind(context.method().as_str())
@@ -952,18 +971,27 @@ async fn mutation_replay_sqlite(
         .map(|value| ApiTokenId::from_str(&value))
         .transpose()
         .map_err(|_| RepositoryError::UnknownInfrastructure)?;
-    mutation_replay_from_parts(&row, id, context)
+    let snapshot = row
+        .try_get::<Option<String>, _>("mutation_snapshot")
+        .map_err(map_sqlx_error)?
+        .map(|value| {
+            serde_json::from_str(&value).map_err(|_| RepositoryError::UnknownInfrastructure)
+        })
+        .transpose()?;
+    mutation_replay_from_parts(&row, id, snapshot, context)
 }
 
 fn mutation_replay_from_parts<R: Row>(
     row: &R,
     api_token_id: Option<ApiTokenId>,
+    snapshot: Option<Value>,
     context: &ApiTokenIdempotencyContext,
 ) -> Result<StoredApiTokenMutationResult, ApiTokenMutationIdempotencyError>
 where
     for<'a> &'a str: sqlx::ColumnIndex<R>,
     for<'a> Vec<u8>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
     for<'a> Option<i64>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
+    for<'a> Option<String>: sqlx::Decode<'a, R::Database> + sqlx::Type<R::Database>,
 {
     let request_hash: Vec<u8> = row.try_get("request_hash").map_err(map_sqlx_error)?;
     if request_hash.as_slice() != context.request_hash() {
@@ -972,13 +1000,30 @@ where
     let result_version = row
         .try_get::<Option<i64>, _>("result_version")
         .map_err(map_sqlx_error)?;
-    let (Some(api_token_id), Some(result_version)) = (api_token_id, result_version) else {
+    let response_status = row
+        .try_get::<Option<i64>, _>("response_status")
+        .map_err(map_sqlx_error)?
+        .and_then(|value| u16::try_from(value).ok());
+    let response_etag = row
+        .try_get::<Option<String>, _>("response_etag")
+        .map_err(map_sqlx_error)?;
+    let (Some(api_token_id), Some(result_version), Some(response_status), Some(snapshot)) =
+        (api_token_id, result_version, response_status, snapshot)
+    else {
         return Err(RepositoryError::UnknownInfrastructure.into());
     };
-    Ok(StoredApiTokenMutationResult {
-        api_token_id,
-        result_version,
-    })
+    let (api_token, api_token_status) = api_token_from_mutation_snapshot(snapshot)?;
+    if api_token.id != api_token_id || api_token.version != result_version {
+        return Err(RepositoryError::UnknownInfrastructure.into());
+    }
+    StoredApiTokenMutationResult::from_persistence(
+        context.method(),
+        api_token,
+        api_token_status,
+        response_status,
+        response_etag,
+    )
+    .ok_or_else(|| RepositoryError::UnknownInfrastructure.into())
 }
 
 #[async_trait]
@@ -1234,6 +1279,128 @@ fn scopes_json(values: &[ApiTokenScope]) -> Value {
 }
 fn networks_json(values: &[IpNetwork]) -> Value {
     json!(values.iter().map(ToString::to_string).collect::<Vec<_>>())
+}
+
+fn mutation_snapshot(result: &StoredApiTokenMutationResult) -> Value {
+    let value = result.api_token();
+    json!({
+        "id": value.id.to_string(),
+        "organization_id": value.organization_id.to_string(),
+        "project_id": value.project_id.map(|id| id.to_string()),
+        "name": value.name,
+        "kind": value.kind.as_str(),
+        "token_prefix": value.token_prefix.as_str(),
+        "scopes": value.scopes.iter().map(ApiTokenScope::as_str).collect::<Vec<_>>(),
+        "ip_networks": value.ip_networks.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "status": result.api_token_status().as_str(),
+        "expires_at": value.expires_at.map(UtcTimestamp::unix_micros),
+        "last_used_at": value.last_used_at.map(UtcTimestamp::unix_micros),
+        "revoked_at": value.revoked_at.map(UtcTimestamp::unix_micros),
+        "created_at": value.created_at.unix_micros(),
+        "updated_at": value.updated_at.unix_micros(),
+        "version": value.version,
+    })
+}
+
+fn api_token_from_mutation_snapshot(
+    value: Value,
+) -> Result<(ApiToken, takt_domain::api_token::ApiTokenStatus), RepositoryError> {
+    let object = value
+        .as_object()
+        .filter(|object| object.len() == 15)
+        .ok_or(RepositoryError::UnknownInfrastructure)?;
+    let status = match snapshot_string(object, "status")? {
+        "active" => takt_domain::api_token::ApiTokenStatus::Active,
+        "revoked" => takt_domain::api_token::ApiTokenStatus::Revoked,
+        "expired" => takt_domain::api_token::ApiTokenStatus::Expired,
+        _ => return Err(RepositoryError::UnknownInfrastructure),
+    };
+    let api_token = ApiToken {
+        id: snapshot_string(object, "id")?
+            .parse()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        organization_id: snapshot_string(object, "organization_id")?
+            .parse()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        project_id: snapshot_optional_string(object, "project_id")?
+            .map(str::parse)
+            .transpose()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        name: snapshot_string(object, "name")?.to_owned(),
+        kind: snapshot_string(object, "kind")?
+            .parse()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        token_prefix: snapshot_string(object, "token_prefix")?
+            .parse()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?,
+        scopes: parse_string_array(snapshot_value(object, "scopes")?.clone())?,
+        ip_networks: parse_network_array(snapshot_value(object, "ip_networks")?.clone())?,
+        expires_at: snapshot_optional_time(object, "expires_at")?,
+        last_used_at: snapshot_optional_time(object, "last_used_at")?,
+        revoked_at: snapshot_optional_time(object, "revoked_at")?,
+        created_at: UtcTimestamp::from_unix_micros(snapshot_i64(object, "created_at")?),
+        updated_at: UtcTimestamp::from_unix_micros(snapshot_i64(object, "updated_at")?),
+        version: snapshot_i64(object, "version")?,
+    };
+    Ok((api_token, status))
+}
+
+fn snapshot_value<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a Value, RepositoryError> {
+    object
+        .get(key)
+        .ok_or(RepositoryError::UnknownInfrastructure)
+}
+
+fn snapshot_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, RepositoryError> {
+    snapshot_value(object, key)?
+        .as_str()
+        .ok_or(RepositoryError::UnknownInfrastructure)
+}
+
+fn snapshot_optional_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a str>, RepositoryError> {
+    let value = snapshot_value(object, key)?;
+    if value.is_null() {
+        Ok(None)
+    } else {
+        value
+            .as_str()
+            .map(Some)
+            .ok_or(RepositoryError::UnknownInfrastructure)
+    }
+}
+
+fn snapshot_i64(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<i64, RepositoryError> {
+    snapshot_value(object, key)?
+        .as_i64()
+        .ok_or(RepositoryError::UnknownInfrastructure)
+}
+
+fn snapshot_optional_time(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<UtcTimestamp>, RepositoryError> {
+    let value = snapshot_value(object, key)?;
+    if value.is_null() {
+        Ok(None)
+    } else {
+        value
+            .as_i64()
+            .map(UtcTimestamp::from_unix_micros)
+            .map(Some)
+            .ok_or(RepositoryError::UnknownInfrastructure)
+    }
 }
 
 fn token_from_postgres(row: &PgRow) -> Result<ApiToken, RepositoryError> {

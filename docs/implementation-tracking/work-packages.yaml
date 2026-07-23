@@ -1129,6 +1129,7 @@ packages:
         - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
         - Neue öffentliche Vertragsfelder oder von SPEC-015 abweichende Response-/Fehlersemantik.
       affected_artifacts:
+        - Cargo.toml
         - crates/api/src/api_tokens.rs
         - crates/api/src/lib.rs
         - crates/api/tests/api_tokens_http.rs
@@ -1261,7 +1262,7 @@ packages:
 
   - id: IAM-043
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-002, PRD-API-003, PRD-API-005, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004]
     findings: [SPEC-008]
     depends_on: [IAM-042]
@@ -1299,7 +1300,7 @@ packages:
 
   - id: IAM-040
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
     depends_on: [IAM-037, IAM-039]
@@ -1314,6 +1315,7 @@ packages:
         - Application-Orchestrierung und Persistenz; diese liefern IAM-039 und IAM-038.
         - Produktionskomposition und echte Datenbank-HTTP-Tests; diese folgen in IAM-013.
       affected_artifacts:
+        - Cargo.toml
         - crates/api/src/api_tokens.rs
         - crates/api/src/lib.rs
         - crates/api/tests/api_tokens_http.rs
@@ -1326,6 +1328,7 @@ packages:
       - 201, Location, ETag, Problems und identischer Replay entsprechen OpenAPI; nur Create/Replay enthalten den Tokenwert.
     evidence:
       - Axum-Create-, CSRF-, Replay-, Problem- und Secret-Negativtests
+      - docs/implementation-evidence/iam-040-api-token-create-http.md
 
   - id: IAM-041
     release: "0.1"

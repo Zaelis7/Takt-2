@@ -9,12 +9,13 @@ use std::{
 use async_trait::async_trait;
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, OriginalUri, Path, State},
+    extract::{ConnectInfo, DefaultBodyLimit, OriginalUri, Path, State, rejection::JsonRejection},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha2_11::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use uuid::{Uuid, Version};
 use zeroize::Zeroizing;
@@ -22,6 +23,9 @@ use zeroize::Zeroizing;
 use super::{ApiState, ApiTokenCursorBoundary, ApiTokenCursorFilter, ApiTokenCursorKey, RequestId};
 
 const SESSION_COOKIE: &str = "takt_session";
+const CSRF_HEADER: &str = "x-csrf-token";
+const IDEMPOTENCY_HEADER: &str = "idempotency-key";
+const API_TOKEN_COLLECTION_PATH: &str = "/api/v1/api-tokens";
 const DEFAULT_LIMIT: u16 = 50;
 const MAX_QUERY_LENGTH: usize = 4_096;
 
@@ -177,10 +181,211 @@ pub trait ApiTokenReadHttpPort: Send + Sync {
     ) -> Result<ApiTokenHttpResource, ApiTokenReadHttpError>;
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenHttpCreate {
+    pub name: String,
+    pub kind: ApiTokenHttpKind,
+    pub scopes: Vec<String>,
+    pub project_id: Option<Uuid>,
+    pub expires_at_unix_micros: Option<i64>,
+    pub ip_networks: Vec<String>,
+}
+
+#[derive(Eq, PartialEq)]
+pub struct ApiTokenHttpSecret(Zeroizing<String>);
+
+impl ApiTokenHttpSecret {
+    pub fn new(value: String) -> Result<Self, ApiTokenCreateHttpError> {
+        if !(48..=512).contains(&value.len())
+            || !value.starts_with("takt_")
+            || !value[5..]
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(ApiTokenCreateHttpError::Internal);
+        }
+        Ok(Self(Zeroizing::new(value)))
+    }
+
+    #[must_use]
+    pub fn expose_to_client(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl fmt::Debug for ApiTokenHttpSecret {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ApiTokenHttpSecret([REDACTED])")
+    }
+}
+
+impl Serialize for ApiTokenHttpSecret {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.expose_to_client())
+    }
+}
+
+#[derive(Debug)]
+pub struct ApiTokenHttpCreated {
+    pub token: ApiTokenHttpSecret,
+    pub api_token: ApiTokenHttpResource,
+}
+
+pub struct ApiTokenHttpCreateContext {
+    credential: ApiTokenHttpCredential,
+    csrf_token: Option<Zeroizing<String>>,
+    source: IpAddr,
+    idempotency_key: Option<String>,
+    request_hash: [u8; 32],
+    request_id: String,
+}
+
+impl ApiTokenHttpCreateContext {
+    #[must_use]
+    pub const fn credential(&self) -> &ApiTokenHttpCredential {
+        &self.credential
+    }
+
+    #[must_use]
+    pub fn csrf_token(&self) -> Option<&str> {
+        self.csrf_token.as_deref().map(String::as_str)
+    }
+
+    #[must_use]
+    pub const fn source(&self) -> IpAddr {
+        self.source
+    }
+
+    #[must_use]
+    pub fn idempotency_key(&self) -> Option<&str> {
+        self.idempotency_key.as_deref()
+    }
+
+    #[must_use]
+    pub const fn request_hash(&self) -> &[u8; 32] {
+        &self.request_hash
+    }
+
+    #[must_use]
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+}
+
+impl fmt::Debug for ApiTokenHttpCreateContext {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ApiTokenHttpCreateContext")
+            .field("credential_kind", &self.credential.kind())
+            .field(
+                "csrf_token",
+                &self.csrf_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("source", &self.source)
+            .field(
+                "idempotency_key",
+                &self.idempotency_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("request_hash", &"[REDACTED]")
+            .field("request_id", &self.request_id)
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApiTokenCreateHttpError {
+    AuthenticationFailed,
+    CsrfFailed,
+    PermissionDenied,
+    ValidationFailed,
+    IdempotencyKeyReused,
+    Internal,
+}
+
+impl fmt::Display for ApiTokenCreateHttpError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("API token create request failed")
+    }
+}
+
+impl Error for ApiTokenCreateHttpError {}
+
+#[async_trait]
+pub trait ApiTokenCreateHttpPort: Send + Sync {
+    async fn create(
+        &self,
+        context: ApiTokenHttpCreateContext,
+        create: ApiTokenHttpCreate,
+    ) -> Result<ApiTokenHttpCreated, ApiTokenCreateHttpError>;
+}
+
 pub(crate) fn routes() -> Router<ApiState> {
     Router::new()
-        .route("/api/v1/api-tokens", get(list_api_tokens))
+        .route(
+            API_TOKEN_COLLECTION_PATH,
+            get(list_api_tokens)
+                .post(create_api_token)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
         .route("/api/v1/api-tokens/{api_token_id}", get(get_api_token))
+}
+
+async fn create_api_token(
+    State(state): State<ApiState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    axum::Extension(request_id): axum::Extension<RequestId>,
+    headers: HeaderMap,
+    payload: Result<Json<ApiTokenCreateRequest>, JsonRejection>,
+) -> Response {
+    let credential = match credential(&headers) {
+        Ok(value) => value,
+        Err(()) => return authentication_problem(API_TOKEN_COLLECTION_PATH, &request_id),
+    };
+    let csrf_token = match csrf_token(&headers, credential.kind()) {
+        Ok(value) => value,
+        Err(()) => return create_problem(StatusCode::FORBIDDEN, "csrf_failed", &request_id),
+    };
+    let idempotency_key = match idempotency_key(&headers) {
+        Ok(value) => value,
+        Err(()) => return create_problem(StatusCode::BAD_REQUEST, "invalid_request", &request_id),
+    };
+    let Json(payload) = match payload {
+        Ok(value) => value,
+        Err(_) => return create_problem(StatusCode::BAD_REQUEST, "invalid_request", &request_id),
+    };
+    let create = match ApiTokenHttpCreate::try_from(payload) {
+        Ok(value) => value,
+        Err(()) => {
+            return create_problem(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "validation_failed",
+                &request_id,
+            );
+        }
+    };
+    let Some(port) = &state.api_token_create else {
+        return create_problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "service_unavailable",
+            &request_id,
+        );
+    };
+    let context = ApiTokenHttpCreateContext {
+        credential,
+        csrf_token,
+        source: peer.ip(),
+        idempotency_key,
+        request_hash: create_request_hash(&create),
+        request_id: request_id.0.clone(),
+    };
+    match port.create(context, create.clone()).await {
+        Ok(output) => created_response(output, &create, API_TOKEN_COLLECTION_PATH, &request_id),
+        Err(error) => create_port_problem(error, API_TOKEN_COLLECTION_PATH, &request_id),
+    }
+}
+
+fn create_problem(status: StatusCode, code: &'static str, request_id: &RequestId) -> Response {
+    problem(status, code, API_TOKEN_COLLECTION_PATH, request_id)
 }
 
 async fn list_api_tokens(
@@ -368,6 +573,41 @@ fn session_cookie(headers: &HeaderMap) -> Result<Option<&str>, ()> {
     Ok(found)
 }
 
+fn csrf_token(
+    headers: &HeaderMap,
+    credential_kind: ApiTokenHttpCredentialKind,
+) -> Result<Option<Zeroizing<String>>, ()> {
+    if credential_kind == ApiTokenHttpCredentialKind::Bearer {
+        return Ok(None);
+    }
+    let mut values = headers.get_all(CSRF_HEADER).iter();
+    let value = values.next().ok_or(())?;
+    if values.next().is_some() {
+        return Err(());
+    }
+    let value = value.to_str().map_err(|_| ())?;
+    if !(32..=512).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
+        return Err(());
+    }
+    Ok(Some(Zeroizing::new(value.to_owned())))
+}
+
+fn idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ()> {
+    let mut values = headers.get_all(IDEMPOTENCY_HEADER).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(());
+    }
+    let value = value.to_str().map_err(|_| ())?;
+    let characters = value.chars().count();
+    if !(8..=128).contains(&characters) || value.chars().any(char::is_control) {
+        return Err(());
+    }
+    Ok(Some(value.to_owned()))
+}
+
 fn valid_scope(value: &str) -> bool {
     let Some((resource, verb)) = value.split_once(':') else {
         return false;
@@ -383,6 +623,115 @@ fn valid_scope_part(value: &str) -> bool {
         && value.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
         })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApiTokenCreateRequest {
+    name: String,
+    kind: String,
+    scopes: Vec<String>,
+    #[serde(default, deserialize_with = "present_string")]
+    project_id: Option<String>,
+    #[serde(default, deserialize_with = "present_string")]
+    expires_at: Option<String>,
+    #[serde(default)]
+    ip_networks: Vec<String>,
+}
+
+fn present_string<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<ApiTokenCreateRequest> for ApiTokenHttpCreate {
+    type Error = ();
+
+    fn try_from(value: ApiTokenCreateRequest) -> Result<Self, Self::Error> {
+        let scopes = value.scopes.iter().collect::<HashSet<_>>();
+        let networks = value.ip_networks.iter().collect::<HashSet<_>>();
+        if !(1..=120).contains(&value.name.chars().count())
+            || value.scopes.is_empty()
+            || value.scopes.len() > 100
+            || scopes.len() != value.scopes.len()
+            || value.scopes.iter().any(|scope| !valid_scope(scope))
+            || value.ip_networks.len() > 32
+            || networks.len() != value.ip_networks.len()
+            || value
+                .ip_networks
+                .iter()
+                .any(|network| !valid_network(network))
+        {
+            return Err(());
+        }
+        let project_id = value
+            .project_id
+            .map(|value| {
+                Uuid::parse_str(&value)
+                    .ok()
+                    .filter(|id| id.get_version() == Some(Version::SortRand))
+                    .ok_or(())
+            })
+            .transpose()?;
+        let expires_at_unix_micros = value
+            .expires_at
+            .map(|value| {
+                OffsetDateTime::parse(&value, &Rfc3339)
+                    .map_err(|_| ())
+                    .and_then(|time| {
+                        i64::try_from(time.unix_timestamp_nanos() / 1_000).map_err(|_| ())
+                    })
+            })
+            .transpose()?;
+        Ok(Self {
+            name: value.name,
+            kind: ApiTokenHttpKind::parse(&value.kind)?,
+            scopes: value.scopes,
+            project_id,
+            expires_at_unix_micros,
+            ip_networks: value.ip_networks,
+        })
+    }
+}
+
+fn create_request_hash(value: &ApiTokenHttpCreate) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    hash_part(&mut digest, b"takt.api-token-create.v1");
+    hash_part(&mut digest, value.name.as_bytes());
+    hash_part(&mut digest, value.kind.as_str().as_bytes());
+    if let Some(project_id) = &value.project_id {
+        hash_part(&mut digest, project_id.as_bytes());
+    } else {
+        hash_part(&mut digest, &[]);
+    }
+    hash_part(
+        &mut digest,
+        &[u8::from(value.expires_at_unix_micros.is_some())],
+    );
+    hash_part(
+        &mut digest,
+        &value
+            .expires_at_unix_micros
+            .unwrap_or_default()
+            .to_be_bytes(),
+    );
+    hash_part(&mut digest, &stable_length(value.scopes.len()));
+    for scope in &value.scopes {
+        hash_part(&mut digest, scope.as_bytes());
+    }
+    hash_part(&mut digest, &stable_length(value.ip_networks.len()));
+    for network in &value.ip_networks {
+        hash_part(&mut digest, network.as_bytes());
+    }
+    digest.finalize().into()
+}
+
+fn hash_part(digest: &mut Sha256, value: &[u8]) {
+    digest.update(stable_length(value.len()));
+    digest.update(value);
+}
+
+fn stable_length(value: usize) -> [u8; 8] {
+    u64::try_from(value).unwrap_or(u64::MAX).to_be_bytes()
 }
 
 #[derive(Serialize)]
@@ -408,6 +757,12 @@ struct ApiTokenResponse {
 struct ApiTokenPageResponse {
     items: Vec<ApiTokenResponse>,
     next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiTokenCreatedResponse {
+    token: ApiTokenHttpSecret,
+    api_token: ApiTokenResponse,
 }
 
 impl TryFrom<ApiTokenHttpResource> for ApiTokenResponse {
@@ -524,6 +879,54 @@ fn resource_response(
     }
 }
 
+fn created_response(
+    output: ApiTokenHttpCreated,
+    expected: &ApiTokenHttpCreate,
+    path: &str,
+    request_id: &RequestId,
+) -> Response {
+    let ApiTokenHttpCreated { token, api_token } = output;
+    if api_token.project_id != expected.project_id
+        || api_token.name != expected.name
+        || api_token.kind != expected.kind
+        || api_token.scopes != expected.scopes
+        || api_token.ip_networks != expected.ip_networks
+        || api_token.expires_at_unix_micros != expected.expires_at_unix_micros
+        || api_token.status != ApiTokenHttpStatus::Active
+        || api_token.last_used_at_unix_micros.is_some()
+        || api_token.revoked_at_unix_micros.is_some()
+        || api_token.created_at_unix_micros != api_token.updated_at_unix_micros
+        || api_token.version != 1
+        || !token
+            .expose_to_client()
+            .starts_with(&api_token.token_prefix)
+    {
+        return create_internal_problem(path, request_id);
+    }
+    let id = api_token.id;
+    let version = api_token.version;
+    let api_token = match ApiTokenResponse::try_from(api_token) {
+        Ok(value) => value,
+        Err(()) => return create_internal_problem(path, request_id),
+    };
+    let (Ok(etag), Ok(location)) = (
+        HeaderValue::from_str(&format!("\"{version}\"")),
+        HeaderValue::from_str(&format!("{API_TOKEN_COLLECTION_PATH}/{id}")),
+    ) else {
+        return create_internal_problem(path, request_id);
+    };
+    let mut response = no_store(
+        (
+            StatusCode::CREATED,
+            Json(ApiTokenCreatedResponse { token, api_token }),
+        )
+            .into_response(),
+    );
+    response.headers_mut().insert(header::ETAG, etag);
+    response.headers_mut().insert(header::LOCATION, location);
+    response
+}
+
 fn list_response(
     page: ApiTokenHttpListPage,
     query: &ApiTokenHttpListQuery,
@@ -636,6 +1039,49 @@ fn internal_problem(path: &str, request_id: &RequestId) -> Response {
     )
 }
 
+fn create_internal_problem(path: &str, request_id: &RequestId) -> Response {
+    tracing::warn!(
+        event_code = "api_token_create_failed",
+        request_id = %request_id.0,
+        "API token create boundary failed"
+    );
+    problem(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        path,
+        request_id,
+    )
+}
+
+fn create_port_problem(
+    error: ApiTokenCreateHttpError,
+    path: &str,
+    request_id: &RequestId,
+) -> Response {
+    match error {
+        ApiTokenCreateHttpError::AuthenticationFailed => authentication_problem(path, request_id),
+        ApiTokenCreateHttpError::CsrfFailed => {
+            problem(StatusCode::FORBIDDEN, "csrf_failed", path, request_id)
+        }
+        ApiTokenCreateHttpError::PermissionDenied => {
+            problem(StatusCode::FORBIDDEN, "permission_denied", path, request_id)
+        }
+        ApiTokenCreateHttpError::ValidationFailed => problem(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "validation_failed",
+            path,
+            request_id,
+        ),
+        ApiTokenCreateHttpError::IdempotencyKeyReused => problem(
+            StatusCode::CONFLICT,
+            "idempotency_key_reused",
+            path,
+            request_id,
+        ),
+        ApiTokenCreateHttpError::Internal => create_internal_problem(path, request_id),
+    }
+}
+
 fn port_problem(error: ApiTokenReadHttpError, path: &str, request_id: &RequestId) -> Response {
     match error {
         ApiTokenReadHttpError::AuthenticationFailed => authentication_problem(path, request_id),
@@ -663,12 +1109,26 @@ fn list_port_problem(error: ApiTokenReadHttpError, path: &str, request_id: &Requ
 
 fn problem(status: StatusCode, code: &'static str, path: &str, request_id: &RequestId) -> Response {
     let (title, detail) = match (status, code) {
+        (StatusCode::BAD_REQUEST, "invalid_request") => {
+            ("Invalid request", "The request is invalid.")
+        }
         (StatusCode::BAD_REQUEST, "invalid_cursor") => {
             ("Invalid cursor", "The list cursor is invalid.")
         }
         (StatusCode::UNAUTHORIZED, _) => ("Authentication failed", "Authentication failed."),
+        (StatusCode::FORBIDDEN, "csrf_failed") => (
+            "CSRF verification failed",
+            "The CSRF proof is missing or invalid.",
+        ),
         (StatusCode::FORBIDDEN, _) => ("Permission denied", "Permission denied."),
         (StatusCode::NOT_FOUND, _) => ("Not found", "The requested resource was not found."),
+        (StatusCode::CONFLICT, "idempotency_key_reused") => (
+            "Idempotency key reused",
+            "The idempotency key was reused for a different request.",
+        ),
+        (StatusCode::UNPROCESSABLE_ENTITY, _) => {
+            ("Validation failed", "One or more fields are invalid.")
+        }
         (StatusCode::SERVICE_UNAVAILABLE, _) => {
             ("Service unavailable", "The service is not ready.")
         }

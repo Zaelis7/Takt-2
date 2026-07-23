@@ -8,9 +8,10 @@ pub use api_token_cursor::{
     ApiTokenCursorBoundary, ApiTokenCursorError, ApiTokenCursorFilter, ApiTokenCursorKey,
 };
 pub use api_tokens::{
-    ApiTokenHttpCredential, ApiTokenHttpCredentialKind, ApiTokenHttpKind, ApiTokenHttpListPage,
-    ApiTokenHttpListQuery, ApiTokenHttpResource, ApiTokenHttpStatus, ApiTokenReadHttpError,
-    ApiTokenReadHttpPort,
+    ApiTokenCreateHttpError, ApiTokenCreateHttpPort, ApiTokenHttpCreate, ApiTokenHttpCreateContext,
+    ApiTokenHttpCreated, ApiTokenHttpCredential, ApiTokenHttpCredentialKind, ApiTokenHttpKind,
+    ApiTokenHttpListPage, ApiTokenHttpListQuery, ApiTokenHttpResource, ApiTokenHttpSecret,
+    ApiTokenHttpStatus, ApiTokenReadHttpError, ApiTokenReadHttpPort,
 };
 pub use auth::{
     AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HttpAuthentication, HttpLogin,
@@ -53,6 +54,7 @@ pub(crate) struct ApiState {
     health_metrics: Arc<HealthMetrics>,
     authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
     api_token_reads: Option<Arc<dyn ApiTokenReadHttpPort>>,
+    api_token_create: Option<Arc<dyn ApiTokenCreateHttpPort>>,
     api_token_cursor_key: Option<ApiTokenCursorKey>,
     auth_config: AuthHttpConfig,
     login_guard: Arc<auth::LoginGuard>,
@@ -140,6 +142,7 @@ pub fn router_with_readiness(
         None,
         None,
         None,
+        None,
         AuthHttpConfig::localhost(),
     )
 }
@@ -152,6 +155,7 @@ pub fn router_with_auth(
         Arc::new(AlwaysReady),
         Arc::new(HealthMetrics::default()),
         Some(authentication),
+        None,
         None,
         None,
         config,
@@ -167,7 +171,20 @@ pub fn router_with_api_token_reads(
         Arc::new(HealthMetrics::default()),
         None,
         Some(api_token_reads),
+        None,
         Some(api_token_cursor_key),
+        AuthHttpConfig::localhost(),
+    )
+}
+
+pub fn router_with_api_token_create(api_token_create: Arc<dyn ApiTokenCreateHttpPort>) -> Router {
+    build_router(
+        Arc::new(AlwaysReady),
+        Arc::new(HealthMetrics::default()),
+        None,
+        None,
+        Some(api_token_create),
+        None,
         AuthHttpConfig::localhost(),
     )
 }
@@ -185,6 +202,7 @@ pub fn router_with_dependencies(
         health_metrics,
         Some(authentication),
         Some(api_token_reads),
+        None,
         Some(api_token_cursor_key),
         config,
     )
@@ -195,6 +213,7 @@ fn build_router(
     health_metrics: Arc<HealthMetrics>,
     authentication: Option<Arc<dyn BrowserAuthenticationHttpPort>>,
     api_token_reads: Option<Arc<dyn ApiTokenReadHttpPort>>,
+    api_token_create: Option<Arc<dyn ApiTokenCreateHttpPort>>,
     api_token_cursor_key: Option<ApiTokenCursorKey>,
     auth_config: AuthHttpConfig,
 ) -> Router {
@@ -210,6 +229,7 @@ fn build_router(
             health_metrics,
             authentication,
             api_token_reads,
+            api_token_create,
             api_token_cursor_key,
             auth_config,
             login_guard,

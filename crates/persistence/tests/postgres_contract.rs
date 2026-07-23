@@ -57,8 +57,14 @@ async fn assert_idempotency_schema(pool: &PgPool) -> Result<(), Box<dyn Error>> 
         .bind(actor).execute(pool).await.is_err());
     assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,replay_key_version,replay_nonce,replay_ciphertext,created_at,expires_at) VALUES ('system',$1,'PATCH','/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000001','schema-key-patch',decode(repeat('11',32),'hex'),1,decode(repeat('22',12),'hex'),decode(repeat('33',17),'hex'),TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00Z')")
         .bind(actor).execute(pool).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,response_status,response_etag,mutation_snapshot,created_at,expires_at) VALUES ('system',$1,'PATCH','/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000001','schema-key-response',decode(repeat('11',32),'hex'),200,'\"1\"','{\"id\":\"019b3cf0-0000-7000-8000-000000000001\"}'::jsonb,TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+        .bind(actor).execute(pool).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,mutation_snapshot,created_at,expires_at) VALUES ('system',$1,'POST','/api/v1/api-tokens','schema-key-secret',decode(repeat('11',32),'hex'),'{\"token\":\"must-not-store\"}'::jsonb,TIMESTAMPTZ '2026-07-22 00:00:00Z',TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+        .bind(actor).execute(pool).await.is_err());
     assert_eq!(sqlx::query("SELECT COUNT(*) AS count FROM information_schema.columns WHERE table_name='api_token_idempotency' AND column_name LIKE '%plaintext%'")
         .fetch_one(pool).await?.try_get::<i64, _>("count")?, 0);
+    assert_eq!(sqlx::query("SELECT COUNT(*) AS count FROM information_schema.columns WHERE table_name='api_token_idempotency' AND column_name IN ('response_status','response_etag','mutation_snapshot')")
+        .fetch_one(pool).await?.try_get::<i64, _>("count")?, 3);
     Ok(())
 }
 
@@ -173,6 +179,23 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
         .await?;
     common::run_browser_authentication_contract(&SqlxRepository::new(database.clone())).await?;
     assert_api_token_actor_schema(&raw).await?;
+    let mutation_snapshots: String = sqlx::query(
+        "SELECT string_agg(mutation_snapshot::text, ' ') AS snapshots FROM api_token_idempotency WHERE mutation_snapshot IS NOT NULL",
+    )
+    .fetch_one(&raw)
+    .await?
+    .try_get("snapshots")?;
+    assert!(mutation_snapshots.contains("patch-applied"));
+    for forbidden in [
+        "must-not-store",
+        "token_hash",
+        "request_hash",
+        "replay_ciphertext",
+        TEST_PASSWORD,
+        TEST_RAW_SESSION_TOKEN,
+    ] {
+        assert!(!mutation_snapshots.contains(forbidden));
+    }
     let row = sqlx::query(
         "SELECT string_agg(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
     )
@@ -352,14 +375,14 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .try_get::<i64, _>("count")?,
         1
     );
-    sqlx::query("UPDATE _sqlx_migrations SET version = 7 WHERE version = 6")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 8 WHERE version = 7")
         .execute(&raw)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 7,
-            supported: 6
+            found: 8,
+            supported: 7
         }
     );
     assert!(database.migrate().await.is_err());

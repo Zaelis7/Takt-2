@@ -178,13 +178,16 @@ export interface paths {
         get: operations["getApiToken"];
         put?: never;
         post?: never;
-        /** Revoke an API token */
+        /**
+         * Revoke an API token
+         * @description An identical replay returns the original empty 204 response for 24 hours even if the token resource changes later.
+         */
         delete: operations["revokeApiToken"];
         options?: never;
         head?: never;
         /**
          * Update non-privilege-bearing API-token metadata
-         * @description Scopes, kind, organization and project are immutable; replace the token to change its authorization.
+         * @description Scopes, kind, organization and project are immutable; replace the token to change its authorization. An identical replay returns the original 200 response, ETag and safe redacted body for 24 hours even if the token was mutated again later.
          */
         patch: operations["updateApiToken"];
         trace?: never;
@@ -1385,7 +1388,7 @@ export interface operations {
             401: components["responses"]["AuthenticationProblem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
-            409: components["responses"]["Problem"];
+            409: components["responses"]["IdempotencyKeyReusedProblem"];
             412: components["responses"]["Problem"];
         };
     };
@@ -1424,7 +1427,7 @@ export interface operations {
             401: components["responses"]["AuthenticationProblem"];
             403: components["responses"]["Problem"];
             404: components["responses"]["Problem"];
-            409: components["responses"]["Problem"];
+            409: components["responses"]["IdempotencyKeyReusedProblem"];
             412: components["responses"]["Problem"];
             422: components["responses"]["ValidationProblem"];
         };

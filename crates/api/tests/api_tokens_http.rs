@@ -10,9 +10,11 @@ use std::{
 use async_trait::async_trait;
 use serde_json::Value;
 use takt_api::{
-    ApiTokenCursorKey, ApiTokenHttpCredential, ApiTokenHttpCredentialKind, ApiTokenHttpKind,
-    ApiTokenHttpListPage, ApiTokenHttpListQuery, ApiTokenHttpResource, ApiTokenHttpStatus,
-    ApiTokenReadHttpError, ApiTokenReadHttpPort,
+    ApiTokenCreateHttpError, ApiTokenCreateHttpPort, ApiTokenCursorKey, ApiTokenHttpCreate,
+    ApiTokenHttpCreateContext, ApiTokenHttpCreated, ApiTokenHttpCredential,
+    ApiTokenHttpCredentialKind, ApiTokenHttpKind, ApiTokenHttpListPage, ApiTokenHttpListQuery,
+    ApiTokenHttpResource, ApiTokenHttpSecret, ApiTokenHttpStatus, ApiTokenReadHttpError,
+    ApiTokenReadHttpPort,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -45,6 +47,92 @@ struct RecordingPort {
     list_calls: Mutex<Vec<ApiTokenHttpListQuery>>,
     resource: ApiTokenHttpResource,
     page: ApiTokenHttpListPage,
+}
+
+#[derive(Debug)]
+struct CreateCall {
+    kind: ApiTokenHttpCredentialKind,
+    context_debug: String,
+    credential_debug: String,
+    csrf_len: Option<usize>,
+    idempotency_key: Option<String>,
+    request_hash: [u8; 32],
+    source: IpAddr,
+    create: ApiTokenHttpCreate,
+}
+
+#[derive(Default)]
+struct RecordingCreatePort {
+    calls: Mutex<Vec<CreateCall>>,
+}
+
+impl RecordingCreatePort {
+    fn calls(&self) -> Result<std::sync::MutexGuard<'_, Vec<CreateCall>>, ApiTokenCreateHttpError> {
+        self.calls
+            .lock()
+            .map_err(|_| ApiTokenCreateHttpError::Internal)
+    }
+}
+
+#[async_trait]
+impl ApiTokenCreateHttpPort for RecordingCreatePort {
+    async fn create(
+        &self,
+        context: ApiTokenHttpCreateContext,
+        create: ApiTokenHttpCreate,
+    ) -> Result<ApiTokenHttpCreated, ApiTokenCreateHttpError> {
+        self.calls()?.push(CreateCall {
+            kind: context.credential().kind(),
+            context_debug: format!("{context:?}"),
+            credential_debug: format!("{:?}", context.credential()),
+            csrf_len: context.csrf_token().map(str::len),
+            idempotency_key: context.idempotency_key().map(str::to_owned),
+            request_hash: *context.request_hash(),
+            source: context.source(),
+            create: create.clone(),
+        });
+        match create.name.as_str() {
+            "auth" => Err(ApiTokenCreateHttpError::AuthenticationFailed),
+            "csrf" => Err(ApiTokenCreateHttpError::CsrfFailed),
+            "permission" => Err(ApiTokenCreateHttpError::PermissionDenied),
+            "validation" => Err(ApiTokenCreateHttpError::ValidationFailed),
+            "idempotency" => Err(ApiTokenCreateHttpError::IdempotencyKeyReused),
+            "internal" => Err(ApiTokenCreateHttpError::Internal),
+            "invalid" => {
+                let mut output = created_output(&create)?;
+                output.api_token.name = "drifted-output".to_owned();
+                Ok(output)
+            }
+            _ => created_output(&create),
+        }
+    }
+}
+
+fn created_output(
+    create: &ApiTokenHttpCreate,
+) -> Result<ApiTokenHttpCreated, ApiTokenCreateHttpError> {
+    let token = format!("takt_{}", "z".repeat(80));
+    Ok(ApiTokenHttpCreated {
+        api_token: ApiTokenHttpResource {
+            id: Uuid::parse_str(TOKEN_ID).map_err(|_| ApiTokenCreateHttpError::Internal)?,
+            organization_id: Uuid::parse_str(ORGANIZATION_ID)
+                .map_err(|_| ApiTokenCreateHttpError::Internal)?,
+            project_id: create.project_id,
+            name: create.name.clone(),
+            kind: create.kind,
+            token_prefix: token[..21].to_owned(),
+            scopes: create.scopes.clone(),
+            ip_networks: create.ip_networks.clone(),
+            status: ApiTokenHttpStatus::Active,
+            expires_at_unix_micros: create.expires_at_unix_micros,
+            last_used_at_unix_micros: None,
+            revoked_at_unix_micros: None,
+            created_at_unix_micros: NOW,
+            updated_at_unix_micros: NOW,
+            version: 1,
+        },
+        token: ApiTokenHttpSecret::new(token)?,
+    })
 }
 
 impl RecordingPort {
@@ -175,6 +263,26 @@ async fn request_path(
         .collect::<String>();
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: {address}\r\nX-Request-Id: {REQUEST_ID}\r\n{headers}Connection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await?;
+    Ok(response)
+}
+
+async fn create_request(
+    address: SocketAddr,
+    headers: &[String],
+    payload: &str,
+) -> Result<String, Box<dyn Error>> {
+    let mut stream = TcpStream::connect(address).await?;
+    let headers = headers
+        .iter()
+        .map(|value| format!("{value}\r\n"))
+        .collect::<String>();
+    let request = format!(
+        "POST /api/v1/api-tokens HTTP/1.1\r\nHost: {address}\r\nX-Request-Id: {REQUEST_ID}\r\nContent-Type: application/json\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
     );
     stream.write_all(request.as_bytes()).await?;
     let mut response = String::new();
@@ -446,6 +554,198 @@ async fn api_token_list_boundary_is_filter_and_cursor_bound() -> Result<(), Box<
     )
     .await?;
     assert_problem(&forbidden, "HTTP/1.1 403 Forbidden", "permission_denied");
+    server.abort();
+    Ok(())
+}
+
+// PRD-API-001/003/005 and PRD-IAM-001/004/005: exercise Create over a real
+// listener, including conditional CSRF, exact replay data and secret boundaries.
+#[tokio::test]
+async fn api_token_create_boundary_is_idempotent_and_secret_safe() -> Result<(), Box<dyn Error>> {
+    let port = Arc::new(RecordingCreatePort::default());
+    let router = takt_api::router_with_api_token_create(port.clone());
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let address = listener.local_addr()?;
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+    });
+    let bearer = format!("takt_{}", "a".repeat(80));
+    let session = "s".repeat(43);
+    let csrf = "c".repeat(43);
+    let payload = format!(
+        r#"{{"name":"created writer","kind":"service","scopes":["api_tokens:write"],"project_id":"{PROJECT_ID}","expires_at":"2026-07-24T00:00:00Z","ip_networks":["192.0.2.0/24"]}}"#
+    );
+    let browser_headers = [
+        format!("Cookie: takt_session={session}"),
+        format!("X-CSRF-Token: {csrf}"),
+        "Idempotency-Key: create-key-0001".to_owned(),
+    ];
+
+    let created = create_request(address, &browser_headers, &payload).await?;
+    assert!(created.starts_with("HTTP/1.1 201 Created\r\n"));
+    assert!(created.contains("content-type: application/json"));
+    assert!(created.contains("cache-control: no-store"));
+    assert!(created.contains(&format!("location: /api/v1/api-tokens/{TOKEN_ID}")));
+    assert!(created.to_ascii_lowercase().contains("etag: \"1\""));
+    let created_body: Value = serde_json::from_str(body(&created)?)?;
+    let opaque = created_body["token"]
+        .as_str()
+        .ok_or_else(|| io::Error::other("created response has no token"))?;
+    assert_eq!(created_body["api_token"]["id"], TOKEN_ID);
+    assert_eq!(created_body["api_token"]["project_id"], PROJECT_ID);
+    assert_eq!(created_body["api_token"]["status"], "active");
+    assert_eq!(created_body["api_token"]["version"], 1);
+    assert!(opaque.starts_with("takt_") && opaque.len() >= 48);
+    assert!(
+        !created.contains(&bearer)
+            && !created.contains(&session)
+            && !created.contains(&csrf)
+            && !created.contains("create-key-0001")
+    );
+
+    let replay = create_request(address, &browser_headers, &payload).await?;
+    assert!(body(&created)? == body(&replay)?);
+    assert!(replay.contains(&format!("location: /api/v1/api-tokens/{TOKEN_ID}")));
+    assert!(replay.to_ascii_lowercase().contains("etag: \"1\""));
+
+    let bearer_headers = [
+        format!("Authorization: Bearer {bearer}"),
+        "X-CSRF-Token: ignored-for-bearer".to_owned(),
+    ];
+    let bearer_created = create_request(address, &bearer_headers, &payload).await?;
+    assert!(bearer_created.starts_with("HTTP/1.1 201 Created\r\n"));
+    assert!(body(&created)? == body(&bearer_created)?);
+
+    let large_scopes = (0..100)
+        .map(|index| format!("resource{index:03}{}:read", "x".repeat(50)))
+        .collect::<Vec<_>>();
+    let large_payload =
+        serde_json::json!({"name":"large writer","kind":"service","scopes":large_scopes})
+            .to_string();
+    assert!(large_payload.len() > 4_096);
+    let large = create_request(address, &bearer_headers, &large_payload).await?;
+    assert!(large.starts_with("HTTP/1.1 201 Created\r\n"));
+
+    let boundary_failures = [
+        (
+            Vec::new(),
+            payload.clone(),
+            "401 Unauthorized",
+            "authentication_failed",
+        ),
+        (
+            vec![format!("Cookie: takt_session={session}")],
+            payload.clone(),
+            "403 Forbidden",
+            "csrf_failed",
+        ),
+        (
+            browser_headers.to_vec(),
+            r#"{"name":"writer","kind":"service","scopes":["api_tokens:write"],"project_id":null}"#
+                .to_owned(),
+            "400 Bad Request",
+            "invalid_request",
+        ),
+        (
+            browser_headers.to_vec(),
+            r#"{"name":"writer","kind":"service","scopes":["api_tokens:write"],"unknown":true}"#
+                .to_owned(),
+            "400 Bad Request",
+            "invalid_request",
+        ),
+        (
+            browser_headers.to_vec(),
+            r#"{"name":"writer","kind":"service","scopes":["api_tokens:write","api_tokens:write"]}"#
+                .to_owned(),
+            "422 Unprocessable Entity",
+            "validation_failed",
+        ),
+        (
+            browser_headers.to_vec(),
+            r#"{"name":"writer","kind":"service","scopes":["api_tokens:write"],"ip_networks":["192.0.2.1/24"]}"#
+                .to_owned(),
+            "422 Unprocessable Entity",
+            "validation_failed",
+        ),
+        (
+            vec![
+                format!("Cookie: takt_session={session}"),
+                format!("X-CSRF-Token: {csrf}"),
+                "Idempotency-Key: short".to_owned(),
+            ],
+            payload.clone(),
+            "400 Bad Request",
+            "invalid_request",
+        ),
+    ];
+    for (headers, payload, status, code) in boundary_failures {
+        let response = create_request(address, &headers, &payload).await?;
+        assert_problem(&response, &format!("HTTP/1.1 {status}"), code);
+        assert!(
+            !response.contains(opaque)
+                && !response.contains(&bearer)
+                && !response.contains(&session)
+                && !response.contains(&csrf)
+        );
+    }
+    let mut duplicate_csrf = browser_headers.to_vec();
+    duplicate_csrf.push(format!("X-CSRF-Token: {csrf}"));
+    let response = create_request(address, &duplicate_csrf, &payload).await?;
+    assert_problem(&response, "HTTP/1.1 403 Forbidden", "csrf_failed");
+    let mut duplicate_key = browser_headers.to_vec();
+    duplicate_key.push("Idempotency-Key: create-key-0002".to_owned());
+    let response = create_request(address, &duplicate_key, &payload).await?;
+    assert_problem(&response, "HTTP/1.1 400 Bad Request", "invalid_request");
+
+    let port_errors = [
+        ("auth", "401 Unauthorized", "authentication_failed"),
+        ("csrf", "403 Forbidden", "csrf_failed"),
+        ("permission", "403 Forbidden", "permission_denied"),
+        (
+            "validation",
+            "422 Unprocessable Entity",
+            "validation_failed",
+        ),
+        ("idempotency", "409 Conflict", "idempotency_key_reused"),
+        ("internal", "500 Internal Server Error", "internal_error"),
+        ("invalid", "500 Internal Server Error", "internal_error"),
+    ];
+    for (name, status, code) in port_errors {
+        let payload =
+            format!(r#"{{"name":"{name}","kind":"service","scopes":["api_tokens:write"]}}"#);
+        let response = create_request(address, &bearer_headers, &payload).await?;
+        assert_problem(&response, &format!("HTTP/1.1 {status}"), code);
+        assert!(!response.contains(opaque) && !response.contains(&bearer));
+    }
+
+    let calls = port.calls()?;
+    assert_eq!(calls.len(), 11);
+    assert_eq!(calls[0].kind, ApiTokenHttpCredentialKind::Session);
+    assert_eq!(calls[0].csrf_len, Some(csrf.len()));
+    assert_eq!(calls[0].idempotency_key.as_deref(), Some("create-key-0001"));
+    assert_eq!(calls[1].request_hash, calls[0].request_hash);
+    assert_eq!(calls[2].kind, ApiTokenHttpCredentialKind::Bearer);
+    assert_eq!(calls[2].csrf_len, None);
+    assert_eq!(calls[2].idempotency_key, None);
+    assert_ne!(calls[3].request_hash, calls[0].request_hash);
+    assert_eq!(calls[3].create.scopes.len(), 100);
+    assert_eq!(
+        calls[0].create.project_id,
+        Some(Uuid::parse_str(PROJECT_ID)?)
+    );
+    assert_eq!(calls[0].create.scopes, vec!["api_tokens:write"]);
+    assert!(calls.iter().all(|call| call.source.is_loopback()));
+    assert!(calls.iter().all(|call| {
+        call.credential_debug.ends_with("[REDACTED])")
+            && !call.context_debug.contains(&session)
+            && !call.context_debug.contains(&bearer)
+            && !call.context_debug.contains(&csrf)
+            && !call.context_debug.contains("create-key-0001")
+    }));
     server.abort();
     Ok(())
 }

@@ -1728,9 +1728,21 @@ pub async fn run_api_token_patch_idempotency_contract(
             return Err("the first idempotent patch unexpectedly replayed".into());
         }
     };
+    assert_eq!(stored_result.response_status(), 200);
+    assert_eq!(stored_result.response_etag(), Some("\"2\""));
+    assert_eq!(stored_result.api_token_status(), ApiTokenStatus::Active);
     assert_eq!(
-        repository.update_api_token_idempotent(primary).await?,
-        ApiTokenMutationIdempotencyResult::Replay(stored_result)
+        (
+            stored_result.api_token().name.as_str(),
+            stored_result.api_token().version
+        ),
+        ("patch-applied", 2)
+    );
+    assert_eq!(
+        repository
+            .update_api_token_idempotent(primary.clone())
+            .await?,
+        ApiTokenMutationIdempotencyResult::Replay(stored_result.clone())
     );
     let conflicting = idempotent_update_plan(
         primary_id,
@@ -1757,6 +1769,53 @@ pub async fn run_api_token_patch_idempotency_contract(
         audit_before + 1,
         "patch replay and hash conflict must not append audit events"
     );
+    let later_patch_time = UtcTimestamp::from_unix_micros(patch_time.unix_micros() + 1);
+    assert!(matches!(
+        repository
+            .update_api_token_idempotent(idempotent_update_plan(
+                primary_id,
+                2,
+                "patch-applied-later",
+                62_004,
+                "patch-key-later",
+                [0x23; 32],
+                later_patch_time,
+            )?)
+            .await?,
+        ApiTokenMutationIdempotencyResult::Mutated { .. }
+    ));
+    assert_eq!(
+        repository.update_api_token_idempotent(primary).await?,
+        ApiTokenMutationIdempotencyResult::Replay(stored_result.clone()),
+        "the original safe response snapshot must survive a later mutation"
+    );
+    assert_eq!(
+        (
+            repository.api_token_by_id(primary_id).await?.name,
+            repository.api_token_by_id(primary_id).await?.version
+        ),
+        ("patch-applied-later".to_owned(), 3),
+        "replaying the earlier response must not roll back the current resource"
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_before + 2,
+        "the delayed replay must not append another audit event"
+    );
+    let rendered_snapshot = format!("{stored_result:?}");
+    for forbidden in [
+        TEST_PASSWORD,
+        "argon2",
+        "token_hash",
+        "request_hash",
+        "replay_ciphertext",
+        "encrypted-create-response-marker",
+    ] {
+        assert!(!rendered_snapshot.contains(forbidden));
+    }
 
     let rollback_id = create_mutation_token(
         repository,
@@ -1950,6 +2009,16 @@ pub async fn run_api_token_revoke_idempotency_contract(
             return Err("the first idempotent revoke unexpectedly replayed".into());
         }
     };
+    assert_eq!(stored_result.response_status(), 204);
+    assert_eq!(stored_result.response_etag(), None);
+    assert_eq!(stored_result.api_token_status(), ApiTokenStatus::Revoked);
+    assert_eq!(
+        (
+            stored_result.api_token().revoked_at,
+            stored_result.api_token().version
+        ),
+        (Some(revoked_at), 2)
+    );
     assert_eq!(
         repository.revoke_api_token_idempotent(primary).await?,
         ApiTokenMutationIdempotencyResult::Replay(stored_result)
@@ -2057,6 +2126,58 @@ pub async fn run_api_token_revoke_idempotency_contract(
         "exactly one concurrent revoke must mutate and the other replay: {left:?} / {right:?}"
     );
     assert_eq!(repository.api_token_by_id(concurrent_id).await?.version, 2);
+
+    let expiring_id = create_mutation_token(
+        repository,
+        63_030,
+        "takt_8081828384858687",
+        "revoke-expiring",
+        63_031,
+    )
+    .await?;
+    let expiring_time = UtcTimestamp::from_unix_micros(TEST_NOW.unix_micros() + 800);
+    assert!(matches!(
+        repository
+            .revoke_api_token_idempotent(idempotent_revoke_plan(
+                expiring_id,
+                1,
+                63_032,
+                "revoke-key-expiring",
+                [0x75; 32],
+                expiring_time,
+            )?)
+            .await?,
+        ApiTokenMutationIdempotencyResult::Mutated { .. }
+    ));
+    let audit_after_revoke = repository
+        .audit_events_for_organization(organization_id)
+        .await?
+        .len();
+    let after_window = UtcTimestamp::from_unix_micros(expiring_time.unix_micros() + 86_400_000_000);
+    assert_eq!(
+        repository
+            .revoke_api_token_idempotent(idempotent_revoke_plan(
+                expiring_id,
+                1,
+                63_033,
+                "revoke-key-expiring",
+                [0x76; 32],
+                after_window,
+            )?)
+            .await,
+        Err(ApiTokenMutationIdempotencyError::Repository(
+            RepositoryError::VersionConflict
+        )),
+        "an expired Revoke key must not replay or conflict on its old request hash"
+    );
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_after_revoke,
+        "retrying after expiry must not append audit when the resource is already revoked"
+    );
 
     Ok(())
 }

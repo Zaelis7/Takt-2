@@ -149,3 +149,40 @@ test("PRD-API-003 API token create replay is bounded and encrypted", () => {
     "idempotency_key_reused",
   );
 });
+
+test("PRD-API-003 API token mutation replays preserve the original safe response", () => {
+  const itemPath = "/api/v1/api-tokens/{api_token_id}";
+  const patch = operation(itemPath, "patch");
+  const revoke = operation(itemPath, "delete");
+
+  assert.deepEqual(patch["x-takt-idempotency"], {
+    retention_hours: 24,
+    scope: ["actor", "method", "path"],
+    request_hash: "required",
+    identical_replay: "same_status_headers_body",
+    stored_status: 200,
+    stored_headers: ["ETag"],
+    stored_body: "safe_api_token_snapshot",
+    conflict_code: "idempotency_key_reused",
+  });
+  assert.deepEqual(revoke["x-takt-idempotency"], {
+    retention_hours: 24,
+    scope: ["actor", "method", "path"],
+    request_hash: "required",
+    identical_replay: "same_status_headers_body",
+    stored_status: 204,
+    stored_headers: [],
+    stored_body: "none",
+    conflict_code: "idempotency_key_reused",
+  });
+  assert.equal(
+    patch.responses["409"].$ref,
+    "#/components/responses/IdempotencyKeyReusedProblem",
+  );
+  assert.equal(
+    revoke.responses["409"].$ref,
+    "#/components/responses/IdempotencyKeyReusedProblem",
+  );
+  assert.match(patch.description, /original.*200.*ETag.*body.*24 hours/i);
+  assert.match(revoke.description, /original.*204.*24 hours/i);
+});

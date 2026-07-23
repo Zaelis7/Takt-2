@@ -94,7 +94,7 @@ findings:
     resolution: SPEC-021 adds the stable InvalidCursorProblem response/schema to OpenAPI, binds the API-token list 400 response to it, regenerates the TypeScript contract and prevents regression with a focused PRD-API-004/005 test. IAM-035 can now implement the exact runtime serialization without interpreting the conflict.
 
   - id: SPEC-008
-    status: open
+    status: resolved
     severity: high
     kind: gap
     decision: implementation
@@ -114,7 +114,7 @@ findings:
       - PRD-DATA-001
       - PRD-DATA-002
       - PRD-DATA-004
-    resolution: IAM-043 must add the missing machine-readable Patch/Revoke replay semantics and a forward-only, engine-parity safe-response snapshot. Until then IAM-042 fails closed when a later mutation makes the stored token ID/version reference insufficient; IAM-041 must not expose the incomplete behavior over HTTP.
+    resolution: IAM-043 adds machine-readable 24-hour Patch/Revoke replay semantics to OpenAPI and forward-only migration 0007 on PostgreSQL/SQLite. Mutation writes now atomically store the original safe status, relevant ETag and an exact redacted token projection; Application replay consumes that snapshot after later mutations without another write or audit. Shared engine contracts cover delayed replay, hash conflicts, exact expiry and secret-negative persistence.
 
   - id: SPEC-004
     status: resolved

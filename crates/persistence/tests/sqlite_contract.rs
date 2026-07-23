@@ -44,8 +44,14 @@ async fn assert_idempotency_schema(
         .bind(&actor).execute(&mut *connection).await.is_err());
     assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,replay_key_version,replay_nonce,replay_ciphertext,created_at,expires_at) VALUES ('system',?1,'PATCH','/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000001','schema-key-patch',zeroblob(32),1,zeroblob(12),zeroblob(17),1,86400000001)")
         .bind(&actor).execute(&mut *connection).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,response_status,response_etag,mutation_snapshot,created_at,expires_at) VALUES ('system',?1,'PATCH','/api/v1/api-tokens/019b3cf0-0000-7000-8000-000000000001','schema-key-response',zeroblob(32),200,'\"1\"','{\"id\":\"019b3cf0-0000-7000-8000-000000000001\"}',1,86400000001)")
+        .bind(&actor).execute(&mut *connection).await.is_err());
+    assert!(sqlx::query("INSERT INTO api_token_idempotency (actor_type,actor_id,method,path,idempotency_key,request_hash,mutation_snapshot,created_at,expires_at) VALUES ('system',?1,'POST','/api/v1/api-tokens','schema-key-secret',zeroblob(32),'{\"token\":\"must-not-store\"}',1,86400000001)")
+        .bind(&actor).execute(&mut *connection).await.is_err());
     assert_eq!(sqlx::query("SELECT COUNT(*) AS count FROM pragma_table_info('api_token_idempotency') WHERE name LIKE '%plaintext%'")
         .fetch_one(&mut *connection).await?.try_get::<i64, _>("count")?, 0);
+    assert_eq!(sqlx::query("SELECT COUNT(*) AS count FROM pragma_table_info('api_token_idempotency') WHERE name IN ('response_status','response_etag','mutation_snapshot')")
+        .fetch_one(&mut *connection).await?.try_get::<i64, _>("count")?, 3);
     Ok(())
 }
 
@@ -170,14 +176,14 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
     database.migrate().await?;
     let mut connection = raw_connection(&path).await?;
-    sqlx::query("UPDATE _sqlx_migrations SET version = 7 WHERE version = 6")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 8 WHERE version = 7")
         .execute(&mut connection)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 7,
-            supported: 6
+            found: 8,
+            supported: 7
         }
     );
     assert_eq!(
@@ -208,6 +214,23 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
 
     let mut connection = raw_connection(&path).await?;
     assert_api_token_actor_schema(&mut connection).await?;
+    let mutation_snapshots: String = sqlx::query(
+        "SELECT group_concat(mutation_snapshot, ' ') AS snapshots FROM api_token_idempotency WHERE mutation_snapshot IS NOT NULL",
+    )
+    .fetch_one(&mut connection)
+    .await?
+    .try_get("snapshots")?;
+    assert!(mutation_snapshots.contains("patch-applied"));
+    for forbidden in [
+        "must-not-store",
+        "token_hash",
+        "request_hash",
+        "replay_ciphertext",
+        TEST_PASSWORD,
+        TEST_RAW_SESSION_TOKEN,
+    ] {
+        assert!(!mutation_snapshots.contains(forbidden));
+    }
     let row = sqlx::query(
         "SELECT group_concat(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT group_concat(metadata, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
     )

@@ -326,7 +326,16 @@ paths:
       tags: [Identity]
       operationId: updateApiToken
       summary: Update non-privilege-bearing API-token metadata
-      description: Scopes, kind, organization and project are immutable; replace the token to change its authorization.
+      description: Scopes, kind, organization and project are immutable; replace the token to change its authorization. An identical replay returns the original 200 response, ETag and safe redacted body for 24 hours even if the token was mutated again later.
+      x-takt-idempotency:
+        retention_hours: 24
+        scope: [actor, method, path]
+        request_hash: required
+        identical_replay: same_status_headers_body
+        stored_status: 200
+        stored_headers: [ETag]
+        stored_body: safe_api_token_snapshot
+        conflict_code: idempotency_key_reused
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -361,7 +370,7 @@ paths:
         "404":
           $ref: "#/components/responses/Problem"
         "409":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/IdempotencyKeyReusedProblem"
         "412":
           $ref: "#/components/responses/Problem"
         "422":
@@ -370,6 +379,16 @@ paths:
       tags: [Identity]
       operationId: revokeApiToken
       summary: Revoke an API token
+      description: An identical replay returns the original empty 204 response for 24 hours even if the token resource changes later.
+      x-takt-idempotency:
+        retention_hours: 24
+        scope: [actor, method, path]
+        request_hash: required
+        identical_replay: same_status_headers_body
+        stored_status: 204
+        stored_headers: []
+        stored_body: none
+        conflict_code: idempotency_key_reused
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -390,7 +409,7 @@ paths:
         "404":
           $ref: "#/components/responses/Problem"
         "409":
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/IdempotencyKeyReusedProblem"
         "412":
           $ref: "#/components/responses/Problem"
   /api/v1/projects/{project_id}/monitors:
