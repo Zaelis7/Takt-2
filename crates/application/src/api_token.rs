@@ -983,6 +983,24 @@ pub struct ApiTokenIdempotentCreateOutput {
     pub replayed: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct ApiTokenIdempotentUpdateCommand {
+    pub update: ApiTokenUpdateCommand,
+    pub idempotency: ApiTokenIdempotencyInput,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApiTokenIdempotentRevokeCommand {
+    pub revoke: ApiTokenRevokeCommand,
+    pub idempotency: ApiTokenIdempotencyInput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenIdempotentMutationOutput {
+    pub api_token: ApiToken,
+    pub replayed: bool,
+}
+
 pub struct ApiTokenManagementService<'a, R, H, C, I, G> {
     repository: &'a R,
     hashing: &'a H,
@@ -1227,7 +1245,7 @@ pub struct ApiTokenIdempotentWriteService<'a, R, H, C, I, G> {
 
 impl<'a, R, H, C, I, G> ApiTokenIdempotentWriteService<'a, R, H, C, I, G>
 where
-    R: ApiTokenStore + ApiTokenCreateIdempotencyRepository,
+    R: ApiTokenStore + ApiTokenCreateIdempotencyRepository + ApiTokenMutationIdempotencyRepository,
     H: ApiTokenHashing,
     C: Clock,
     I: IdGenerator,
@@ -1334,6 +1352,141 @@ where
                 )?;
                 Ok(ApiTokenIdempotentCreateOutput {
                     token,
+                    api_token,
+                    replayed: true,
+                })
+            }
+        }
+    }
+
+    pub async fn update(
+        &self,
+        actor: &ApiTokenWriteActor,
+        command: ApiTokenIdempotentUpdateCommand,
+    ) -> Result<ApiTokenIdempotentMutationOutput, ApiTokenApplicationError> {
+        let ApiTokenIdempotentUpdateCommand {
+            update,
+            idempotency,
+        } = command;
+        let ApiTokenUpdateCommand {
+            target,
+            expected_version,
+            patch,
+            request_id,
+        } = update;
+        self.prepare_mutation(actor, target).await?;
+        let now = self.now()?;
+        let context = self.idempotency_context(
+            actor,
+            ApiTokenWriteMethod::Patch,
+            format!("/api/v1/api-tokens/{}", target.id),
+            idempotency,
+            now,
+        )?;
+        let audit_event = self.audit(
+            actor,
+            target.id,
+            target.organization_id,
+            target.project_id,
+            request_id,
+            API_TOKEN_UPDATED_AUDIT_ACTION,
+            now,
+        )?;
+        let result = self
+            .repository
+            .update_api_token_idempotent(UpdateApiTokenIdempotencyPlan {
+                update: UpdateApiTokenPlan {
+                    id: target.id,
+                    expected_version,
+                    patch,
+                    now,
+                    audit_event: NewAuditEvent { event: audit_event },
+                },
+                context,
+            })
+            .await
+            .map_err(map_mutation_idempotency_error)?;
+        self.mutation_output(target, result).await
+    }
+
+    pub async fn revoke(
+        &self,
+        actor: &ApiTokenWriteActor,
+        command: ApiTokenIdempotentRevokeCommand,
+    ) -> Result<ApiTokenIdempotentMutationOutput, ApiTokenApplicationError> {
+        let ApiTokenIdempotentRevokeCommand {
+            revoke,
+            idempotency,
+        } = command;
+        let ApiTokenRevokeCommand {
+            target,
+            expected_version,
+            request_id,
+        } = revoke;
+        self.prepare_mutation(actor, target).await?;
+        let now = self.now()?;
+        let context = self.idempotency_context(
+            actor,
+            ApiTokenWriteMethod::Delete,
+            format!("/api/v1/api-tokens/{}", target.id),
+            idempotency,
+            now,
+        )?;
+        let audit_event = self.audit(
+            actor,
+            target.id,
+            target.organization_id,
+            target.project_id,
+            request_id,
+            API_TOKEN_REVOKED_AUDIT_ACTION,
+            now,
+        )?;
+        let result = self
+            .repository
+            .revoke_api_token_idempotent(RevokeApiTokenIdempotencyPlan {
+                revoke: RevokeApiTokenPlan {
+                    id: target.id,
+                    expected_version,
+                    now,
+                    audit_event: NewAuditEvent { event: audit_event },
+                },
+                context,
+            })
+            .await
+            .map_err(map_mutation_idempotency_error)?;
+        self.mutation_output(target, result).await
+    }
+
+    async fn prepare_mutation(
+        &self,
+        actor: &ApiTokenWriteActor,
+        target: ApiTokenTarget,
+    ) -> Result<(), ApiTokenApplicationError> {
+        actor.authorize(target.organization_id, target.project_id)?;
+        let token = self.repository.api_token_by_id(target.id).await?;
+        ensure_target(&token, target)
+    }
+
+    async fn mutation_output(
+        &self,
+        target: ApiTokenTarget,
+        result: ApiTokenMutationIdempotencyResult,
+    ) -> Result<ApiTokenIdempotentMutationOutput, ApiTokenApplicationError> {
+        match result {
+            ApiTokenMutationIdempotencyResult::Mutated { api_token, result } => {
+                validate_mutation_result(target, &api_token, result)?;
+                Ok(ApiTokenIdempotentMutationOutput {
+                    api_token: *api_token,
+                    replayed: false,
+                })
+            }
+            ApiTokenMutationIdempotencyResult::Replay(result) => {
+                if result.api_token_id != target.id {
+                    return Err(invalid_repository_result());
+                }
+                let api_token = self.repository.api_token_by_id(target.id).await?;
+                validate_mutation_result(target, &api_token, result)?;
+                Ok(ApiTokenIdempotentMutationOutput {
                     api_token,
                     replayed: true,
                 })
@@ -1482,6 +1635,31 @@ fn map_create_idempotency_error(error: ApiTokenCreateIdempotencyError) -> ApiTok
             ApiTokenApplicationError::Repository(error)
         }
     }
+}
+
+fn map_mutation_idempotency_error(
+    error: ApiTokenMutationIdempotencyError,
+) -> ApiTokenApplicationError {
+    match error {
+        ApiTokenMutationIdempotencyError::KeyReused => {
+            ApiTokenApplicationError::IdempotencyKeyReused
+        }
+        ApiTokenMutationIdempotencyError::Repository(error) => {
+            ApiTokenApplicationError::Repository(error)
+        }
+    }
+}
+
+fn validate_mutation_result(
+    target: ApiTokenTarget,
+    api_token: &ApiToken,
+    result: StoredApiTokenMutationResult,
+) -> Result<(), ApiTokenApplicationError> {
+    ensure_target(api_token, target)?;
+    if result.api_token_id != api_token.id || result.result_version != api_token.version {
+        return Err(invalid_repository_result());
+    }
+    Ok(())
 }
 
 const fn invalid_repository_result() -> ApiTokenApplicationError {

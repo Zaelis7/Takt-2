@@ -1232,9 +1232,9 @@ packages:
 
   - id: IAM-042
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
-    findings: []
+    findings: [SPEC-008]
     depends_on: [IAM-039]
     outcome: Frameworkfreie idempotente Patch-/Revoke-Orchestrierung für Browser- und API-Token-Akteure.
     preflight:
@@ -1250,13 +1250,52 @@ packages:
         - crates/application/tests/api_tokens.rs
         - docs/implementation-tracking/
         - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
-      estimated_handwritten_lines: 420
+      estimated_handwritten_lines: 550
       estimated_validation_minutes: 20
     acceptance:
       - Browser und api_tokens:write-Bearer erzeugen actor-gebundene idempotente Patch-/Revoke-Pläne; read-only oder kontextfremde Akteure scheitern vor Fachwirkung.
       - Identische Replays wiederholen weder Mutation noch Audit; Hash-/Versionskonflikte und Patch/Revoke geben niemals ein Secret aus.
     evidence:
       - Application-Tests für Browser-/Bearer-Permission, Patch-/Revoke-Idempotenz, Audit und Secret-Redaktion
+      - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+
+  - id: IAM-043
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-002, PRD-API-003, PRD-API-005, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004]
+    findings: [SPEC-008]
+    depends_on: [IAM-042]
+    outcome: Vollständiger 24-Stunden-Replay der ursprünglichen sicheren Patch-/Revoke-Antwort auch nach späteren Tokenmutationen.
+    preflight:
+      in_scope:
+        - Machine-readable OpenAPI-Semantik für actor-/method-/path-/hash-gebundene Patch-/Revoke-Replays mit identischem Status, relevanten Headern und Body.
+        - Forward-only PostgreSQL-/SQLite-Speicherung einer sicheren Mutationsantwort ohne Tokenwert, Hash oder verschlüsseltes Create-Secret.
+        - Engine-paritäre Repository- und Application-Tests für Replay nach einer späteren Mutation, 24-Stunden-Ablauf, Hashkonflikt, Audit-Einmaligkeit und Redaktion.
+      out_of_scope:
+        - HTTP-DTOs, CSRF, If-Match-Parsing, Problems und Produktionsrouter; diese folgen in IAM-041 und IAM-013.
+        - Änderungen am tokenhaltigen Create-Replay, an normalen Token-Reads oder an veröffentlichten Migrationen.
+        - Monitor-Idempotenz und generische Idempotenzinfrastruktur außerhalb der API-Token-Grenze.
+      affected_artifacts:
+        - specs/contracts/openapi.yaml
+        - tools/openapi-token-contract.test.mjs
+        - web/src/generated/openapi.ts
+        - crates/domain/src/api_token.rs
+        - crates/application/src/api_token.rs
+        - crates/application/tests/api_tokens.rs
+        - crates/persistence/src/api_token_repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - migrations/postgres/
+        - migrations/sqlite/
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-043-api-token-mutation-replay.md
+      estimated_handwritten_lines: 700
+      estimated_validation_minutes: 25
+    acceptance:
+      - Identische Patch-/Revoke-Replays liefern innerhalb von 24 Stunden dieselbe sichere Antwort wie der erste Write, auch wenn der Token danach erneut mutiert wurde.
+      - Speicherung und Antwort enthalten weder Tokenwert noch Hash oder Create-Replay-Ciphertext; abweichende Hashes sowie abgelaufene Keys bleiben wirkungslos und engine-paritär.
+    evidence:
+      - OpenAPI-Contract-, Application- und gemeinsame PostgreSQL-/SQLite-Replaytests mit PRD-IDs
+      - docs/implementation-evidence/iam-043-api-token-mutation-replay.md
 
   - id: IAM-040
     release: "0.1"
@@ -1293,7 +1332,7 @@ packages:
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-037, IAM-042]
+    depends_on: [IAM-037, IAM-043]
     outcome: OpenAPI-konforme Axum-Patch-/Revoke-Grenzen für API-Tokens mit Browser-CSRF, If-Match und Idempotenz.
     preflight:
       in_scope:

@@ -16,14 +16,17 @@ use takt_application::api_token::{
     ApiTokenApplicationError, ApiTokenBearerAuthenticationService, ApiTokenCreateCommand,
     ApiTokenCreateIdempotencyError, ApiTokenCreateIdempotencyRepository,
     ApiTokenCreateIdempotencyResult, ApiTokenHasher, ApiTokenHashing, ApiTokenIdempotencyContext,
-    ApiTokenIdempotencyInput, ApiTokenIdempotentCreateCommand, ApiTokenIdempotentWriteService,
-    ApiTokenListQuery, ApiTokenManagementActor, ApiTokenManagementPermission,
-    ApiTokenManagementService, ApiTokenPatch, ApiTokenReadActor, ApiTokenReadService,
+    ApiTokenIdempotencyInput, ApiTokenIdempotentCreateCommand, ApiTokenIdempotentRevokeCommand,
+    ApiTokenIdempotentUpdateCommand, ApiTokenIdempotentWriteService, ApiTokenListQuery,
+    ApiTokenManagementActor, ApiTokenManagementPermission, ApiTokenManagementService,
+    ApiTokenMutationIdempotencyError, ApiTokenMutationIdempotencyRepository,
+    ApiTokenMutationIdempotencyResult, ApiTokenPatch, ApiTokenReadActor, ApiTokenReadService,
     ApiTokenReplayCipher, ApiTokenRevokeCommand, ApiTokenSecret, ApiTokenSecretGenerator,
     ApiTokenStore, ApiTokenTarget, ApiTokenUpdateCommand, ApiTokenWriteActor, ApiTokenWriteMethod,
-    CreateApiTokenIdempotencyPlan, CreateApiTokenPlan, EncryptedApiTokenReplay, RevokeApiTokenPlan,
-    StoredApiToken, StoredApiTokenCreateReplay, TokenSecretGenerator, UpdateApiTokenPlan,
-    authorize_token_actor, validate_new_api_token,
+    CreateApiTokenIdempotencyPlan, CreateApiTokenPlan, EncryptedApiTokenReplay,
+    RevokeApiTokenIdempotencyPlan, RevokeApiTokenPlan, StoredApiToken, StoredApiTokenCreateReplay,
+    StoredApiTokenMutationResult, TokenSecretGenerator, UpdateApiTokenIdempotencyPlan,
+    UpdateApiTokenPlan, authorize_token_actor, validate_new_api_token,
 };
 use takt_application::{ApplicationError, Argon2idConfig, Clock, RepositoryError, UuidV7Generator};
 use takt_domain::{
@@ -110,6 +113,7 @@ struct TestRepositoryState {
     stored: Option<StoredApiToken>,
     audits: Vec<AuditEvent>,
     create_idempotency: Option<(ApiTokenIdempotencyContext, StoredApiTokenCreateReplay)>,
+    mutation_idempotency: Vec<(ApiTokenIdempotencyContext, StoredApiTokenMutationResult)>,
 }
 
 #[derive(Default)]
@@ -145,6 +149,19 @@ impl TestRepository {
         self.0
             .lock()
             .map(|state| state.audits.clone())
+            .unwrap_or_default()
+    }
+
+    fn mutation_contexts(&self) -> Vec<ApiTokenIdempotencyContext> {
+        self.0
+            .lock()
+            .map(|state| {
+                state
+                    .mutation_idempotency
+                    .iter()
+                    .map(|(context, _)| context.clone())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -361,6 +378,106 @@ impl ApiTokenCreateIdempotencyRepository for TestRepository {
         _limit: u16,
     ) -> Result<u64, RepositoryError> {
         Ok(0)
+    }
+}
+
+fn existing_mutation(
+    state: &TestRepositoryState,
+    incoming: &ApiTokenIdempotencyContext,
+) -> Result<Option<StoredApiTokenMutationResult>, ApiTokenMutationIdempotencyError> {
+    let Some((context, result)) = state
+        .mutation_idempotency
+        .iter()
+        .find(|(context, _)| same_idempotency_scope(context, incoming))
+    else {
+        return Ok(None);
+    };
+    if context.request_hash() != incoming.request_hash() {
+        return Err(ApiTokenMutationIdempotencyError::KeyReused);
+    }
+    Ok(Some(*result))
+}
+
+#[async_trait]
+impl ApiTokenMutationIdempotencyRepository for TestRepository {
+    async fn update_api_token_idempotent(
+        &self,
+        plan: UpdateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        if let Some(result) = existing_mutation(&state, &plan.context)? {
+            return Ok(ApiTokenMutationIdempotencyResult::Replay(result));
+        }
+        let token = {
+            let stored = state.stored.as_mut().ok_or(RepositoryError::NotFound)?;
+            if stored.token.id != plan.update.id
+                || stored.token.version != plan.update.expected_version
+                || stored.token.revoked_at.is_some()
+            {
+                return Err(RepositoryError::VersionConflict.into());
+            }
+            if let Some(name) = plan.update.patch.name {
+                stored.token.name = name;
+            }
+            if let Some(expires_at) = plan.update.patch.expires_at {
+                stored.token.expires_at = expires_at;
+            }
+            if let Some(ip_networks) = plan.update.patch.ip_networks {
+                stored.token.ip_networks = ip_networks;
+            }
+            stored.token.updated_at = plan.update.now;
+            stored.token.version += 1;
+            stored.token.clone()
+        };
+        let result = StoredApiTokenMutationResult {
+            api_token_id: token.id,
+            result_version: token.version,
+        };
+        state.audits.push(plan.update.audit_event.event);
+        state.mutation_idempotency.push((plan.context, result));
+        Ok(ApiTokenMutationIdempotencyResult::Mutated {
+            api_token: Box::new(token),
+            result,
+        })
+    }
+
+    async fn revoke_api_token_idempotent(
+        &self,
+        plan: RevokeApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenMutationIdempotencyResult, ApiTokenMutationIdempotencyError> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        if let Some(result) = existing_mutation(&state, &plan.context)? {
+            return Ok(ApiTokenMutationIdempotencyResult::Replay(result));
+        }
+        let token = {
+            let stored = state.stored.as_mut().ok_or(RepositoryError::NotFound)?;
+            if stored.token.id != plan.revoke.id
+                || stored.token.version != plan.revoke.expected_version
+                || stored.token.revoked_at.is_some()
+            {
+                return Err(RepositoryError::VersionConflict.into());
+            }
+            stored.token.revoked_at = Some(plan.revoke.now);
+            stored.token.updated_at = plan.revoke.now;
+            stored.token.version += 1;
+            stored.token.clone()
+        };
+        let result = StoredApiTokenMutationResult {
+            api_token_id: token.id,
+            result_version: token.version,
+        };
+        state.audits.push(plan.revoke.audit_event.event);
+        state.mutation_idempotency.push((plan.context, result));
+        Ok(ApiTokenMutationIdempotencyResult::Mutated {
+            api_token: Box::new(token),
+            result,
+        })
     }
 }
 
@@ -691,6 +808,220 @@ async fn prd_api_003_idempotent_api_token_create_binds_actor_context_and_secrets
             if metadata.api_token_id == bearer_token_id
     ));
     assert!(!format!("{audits:?}").contains(bearer_created.token.expose_once()));
+    Ok(())
+}
+
+// PRD-API-003 / PRD-API-005 / PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005:
+// Patch and Revoke bind actor, context, request hash, version and truthful audit
+// without replaying either the mutation or any token secret.
+#[tokio::test]
+async fn prd_api_003_idempotent_api_token_mutations_are_safe_and_actor_bound()
+-> Result<(), Box<dyn Error>> {
+    let organization_id =
+        OrganizationId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000601")?);
+    let project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000602")?);
+    let foreign_project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000603")?);
+    let repository = TestRepository::default();
+    let hashing = TestHashing::new();
+    let clock = MutableClock::new(NOW);
+    let ids = UuidV7Generator;
+    let secrets = ApiTokenSecretGenerator;
+    let cipher = ApiTokenReplayCipher::new(1, [0x52; 32])?;
+    let manager = management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Write],
+    )?;
+    let management = ApiTokenManagementService::new(&repository, &hashing, &clock, &ids, &secrets);
+    let created = management
+        .create(
+            &manager,
+            ApiTokenCreateCommand {
+                organization_id,
+                project_id: Some(project_id),
+                name: "mutable writer".to_owned(),
+                kind: ApiTokenKind::Service,
+                scopes: vec![ApiTokenScope::from_str("monitors:write")?],
+                ip_networks: Vec::new(),
+                expires_at: None,
+                request_id: operation_id("019b3cf0-0000-7000-8000-000000000604")?,
+            },
+        )
+        .await?;
+    let target = ApiTokenTarget {
+        id: created.api_token.id,
+        organization_id,
+        project_id: Some(project_id),
+    };
+    let browser = ApiTokenWriteActor::from_browser_management(manager);
+    let read_only_browser = ApiTokenWriteActor::from_browser_management(management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Read],
+    )?);
+    let service =
+        ApiTokenIdempotentWriteService::new(&repository, &hashing, &clock, &ids, &secrets, &cipher);
+    let update = ApiTokenIdempotentUpdateCommand {
+        update: ApiTokenUpdateCommand {
+            target,
+            expected_version: 1,
+            patch: ApiTokenPatch {
+                name: Some("renamed writer".to_owned()),
+                expires_at: None,
+                ip_networks: Some(vec![IpNetwork::from_str("192.0.2.0/24")?]),
+            },
+            request_id: operation_id("019b3cf0-0000-7000-8000-000000000605")?,
+        },
+        idempotency: idempotency("update-key-0601", 0x41),
+    };
+
+    assert_eq!(
+        service.update(&read_only_browser, update.clone()).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    let mut foreign_update = update.clone();
+    foreign_update.update.target.project_id = Some(foreign_project_id);
+    assert_eq!(
+        service.update(&browser, foreign_update).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert_eq!(repository.audits().len(), 1);
+
+    let updated = service.update(&browser, update.clone()).await?;
+    let update_replay = service.update(&browser, update.clone()).await?;
+    assert!(!updated.replayed);
+    assert!(update_replay.replayed);
+    assert_eq!(updated.api_token, update_replay.api_token);
+    assert_eq!(
+        (updated.api_token.name.as_str(), updated.api_token.version),
+        ("renamed writer", 2)
+    );
+    assert_eq!(
+        updated.api_token.ip_networks,
+        vec![IpNetwork::from_str("192.0.2.0/24")?]
+    );
+    assert_eq!(repository.audits().len(), 2);
+    assert_eq!(
+        repository.audits()[1].action,
+        API_TOKEN_UPDATED_AUDIT_ACTION
+    );
+
+    let mut conflicting_update = update.clone();
+    conflicting_update.idempotency.request_hash = [0x42; 32];
+    assert_eq!(
+        service.update(&browser, conflicting_update).await,
+        Err(ApiTokenApplicationError::IdempotencyKeyReused)
+    );
+    let mut stale_update = update;
+    stale_update.idempotency = idempotency("update-key-0602", 0x43);
+    assert_eq!(
+        service.update(&browser, stale_update).await,
+        Err(ApiTokenApplicationError::Repository(
+            RepositoryError::VersionConflict
+        ))
+    );
+    assert_eq!(repository.audits().len(), 2);
+
+    let bearer_token_id =
+        ApiTokenId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000606")?);
+    let read_only_bearer = TokenActor::new(
+        bearer_token_id,
+        organization_id,
+        Some(project_id),
+        vec![ApiTokenScope::from_str("api_tokens:read")?],
+    )?;
+    assert_eq!(
+        ApiTokenWriteActor::from_token_actor(&read_only_bearer),
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    let bearer = ApiTokenWriteActor::from_token_actor(&TokenActor::new(
+        bearer_token_id,
+        organization_id,
+        Some(project_id),
+        vec![ApiTokenScope::from_str("api_tokens:write")?],
+    )?)?;
+    let revoke = ApiTokenIdempotentRevokeCommand {
+        revoke: ApiTokenRevokeCommand {
+            target,
+            expected_version: 2,
+            request_id: operation_id("019b3cf0-0000-7000-8000-000000000607")?,
+        },
+        idempotency: idempotency("revoke-key-0601", 0x51),
+    };
+    let revoked = service.revoke(&bearer, revoke.clone()).await?;
+    let revoke_replay = service.revoke(&bearer, revoke.clone()).await?;
+    assert!(!revoked.replayed);
+    assert!(revoke_replay.replayed);
+    assert_eq!(revoked.api_token, revoke_replay.api_token);
+    assert_eq!(
+        (revoked.api_token.revoked_at, revoked.api_token.version),
+        (Some(NOW), 3)
+    );
+    let audits = repository.audits();
+    assert_eq!(audits.len(), 3);
+    assert_eq!(audits[2].action, API_TOKEN_REVOKED_AUDIT_ACTION);
+    assert_eq!(audits[2].actor_type, AuditActorType::ApiToken);
+    assert_eq!(
+        audits[2].actor_id,
+        Some(AuditActorId::ApiToken(bearer_token_id))
+    );
+    assert!(matches!(
+        audits[2].metadata,
+        AuditMetadata::ApiToken(ref metadata)
+            if metadata.api_token_id == bearer_token_id
+    ));
+
+    let mut conflicting_revoke = revoke.clone();
+    conflicting_revoke.idempotency.request_hash = [0x52; 32];
+    assert_eq!(
+        service.revoke(&bearer, conflicting_revoke).await,
+        Err(ApiTokenApplicationError::IdempotencyKeyReused)
+    );
+    let mut stale_revoke = revoke;
+    stale_revoke.idempotency = idempotency("revoke-key-0602", 0x53);
+    assert_eq!(
+        service.revoke(&bearer, stale_revoke).await,
+        Err(ApiTokenApplicationError::Repository(
+            RepositoryError::VersionConflict
+        ))
+    );
+    assert_eq!(repository.audits().len(), 3);
+    let contexts = repository.mutation_contexts();
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(
+        (
+            contexts[0].actor_type(),
+            contexts[0].method(),
+            contexts[0].path()
+        ),
+        (
+            AuditActorType::System,
+            ApiTokenWriteMethod::Patch,
+            format!("/api/v1/api-tokens/{}", target.id).as_str()
+        )
+    );
+    assert_eq!(
+        (
+            contexts[1].actor_type(),
+            contexts[1].actor_id().as_uuid(),
+            contexts[1].method(),
+            contexts[1].path()
+        ),
+        (
+            AuditActorType::ApiToken,
+            bearer_token_id.as_uuid(),
+            ApiTokenWriteMethod::Delete,
+            format!("/api/v1/api-tokens/{}", target.id).as_str()
+        )
+    );
+    assert!(
+        !format!("{updated:?}{update_replay:?}{revoked:?}{revoke_replay:?}{audits:?}")
+            .contains(created.token.expose_once())
+    );
     Ok(())
 }
 

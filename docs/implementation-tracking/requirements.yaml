@@ -157,7 +157,8 @@ requirements:
       - crates/application/tests/api_tokens.rs
       - crates/persistence/tests/common/mod.rs
       - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
-    note: API-token Create, Patch and Revoke atomically persist their business write, one audit event and replay data or a safe result reference on both engines; api_token actors retain the same identity across idempotency and audit. Framework-free Create orchestration now returns the same encrypted one-time secret and safe projection on identical replay, including after token expiry within the 24-hour window. Patch/Revoke application orchestration and HTTP runtime remain absent.
+      - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+    note: API-token Create, Patch and Revoke atomically persist their business write, one audit event and replay data or a safe result reference on both engines; api_token actors retain the same identity across idempotency and audit. Framework-free Browser/Bearer orchestration now covers Create, Patch and Revoke with actor-bound replay, typed hash/version conflicts and secret-free mutation outputs. Patch/Revoke still need the safe response snapshot from IAM-043 for an identical replay after a later mutation (SPEC-008), and write HTTP remains absent.
   - id: PRD-API-004
     release: "0.1"
     coverage: partial
@@ -208,7 +209,8 @@ requirements:
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
       - docs/implementation-evidence/iam-034-api-token-read-http.md
       - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
-    note: Readiness/browser auth and composed API-token List/Get emit bounded redacted Problems; token reads preserve generic authentication, typed permission failures and stable invalid_cursor responses for malformed, duplicate, manipulated or filter-mismatched queries over real HTTP. Framework-free Create now preserves typed permission, idempotency-key and infrastructure failures without exposing secrets; write HTTP Problems and the general resource runtime error boundary remain absent.
+      - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+    note: Readiness/browser auth and composed API-token List/Get emit bounded redacted Problems; token reads preserve generic authentication, typed permission failures and stable invalid_cursor responses for malformed, duplicate, manipulated or filter-mismatched queries over real HTTP. Framework-free Create/Patch/Revoke preserve typed permission, idempotency-key, version and infrastructure failures without exposing secrets. Patch/Revoke response-snapshot replay (SPEC-008), write HTTP Problems and the general resource runtime error boundary remain absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -421,7 +423,8 @@ requirements:
       - migrations/sqlite/0006_api_token_actor.sql
       - docs/implementation-evidence/iam-038-api-token-actor.md
       - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
-    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and production-composed List/Get HTTP reads exist. Browser and Bearer Create now share actor-bound application orchestration with truthful audit attribution and identical encrypted secret replay. Patch/Revoke orchestration and write HTTP remain absent, and the current deltas have no independent commit-bound validation.
+      - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and production-composed List/Get HTTP reads exist. Browser and Bearer Create/Patch/Revoke now share actor-bound application orchestration with truthful audit attribution; mutation replays repeat neither the write nor audit and never expose a secret. Complete Patch replay after a later mutation (SPEC-008), write HTTP and independent validation remain absent.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -471,7 +474,8 @@ requirements:
       - docs/implementation-evidence/iam-038-api-token-actor.md
       - crates/application/src/api_token.rs
       - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
-    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. Browser and API-token actors retain their truthful identities through actor-bound Create idempotency and audit, while Patch/Revoke orchestration, production writes and the general role/permission engine remain absent.
+      - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. Browser and API-token actors retain truthful identities through actor-bound Create/Patch/Revoke idempotency and audit. Complete mutation response replay (SPEC-008), production writes and the general role/permission engine remain absent.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -508,7 +512,8 @@ requirements:
       - migrations/sqlite/0006_api_token_actor.sql
       - docs/implementation-evidence/iam-038-api-token-actor.md
       - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
-    note: Existing auth and API-token writes are atomically audited with redacted metadata; framework-free Browser/Bearer Create uses truthful user/API-token attribution, and identical replay returns the encrypted one-time result without adding an event, including after token expiry within the retention window. The IAM-039 delta is only locally validated; full non-token action coverage, export and tamper evidence remain absent.
+      - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+    note: Existing auth and API-token writes are atomically audited with redacted metadata; framework-free Browser/Bearer Create/Patch/Revoke use truthful user/API-token attribution, and identical mutation replay adds neither another write nor event. Create preserves its encrypted one-time result; Patch still needs the safe response snapshot from IAM-043 after later mutations (SPEC-008). Current mutation orchestration is only locally validated, and full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"

@@ -93,6 +93,29 @@ findings:
       - PRD-API-005
     resolution: SPEC-021 adds the stable InvalidCursorProblem response/schema to OpenAPI, binds the API-token list 400 response to it, regenerates the TypeScript contract and prevents regression with a focused PRD-API-004/005 test. IAM-035 can now implement the exact runtime serialization without interpreting the conflict.
 
+  - id: SPEC-008
+    status: open
+    severity: high
+    kind: gap
+    decision: implementation
+    summary: The architecture requires every identical idempotency replay to return the stored status, relevant headers and body for 24 hours, but API-token Patch/Revoke persist only a token ID and result version and OpenAPI does not state their replay contract.
+    locations:
+      - specs/01-architecture.md
+      - specs/contracts/openapi.yaml
+      - migrations/postgres/0005_api_token_idempotency.sql
+      - migrations/sqlite/0005_api_token_idempotency.sql
+      - crates/persistence/src/api_token_repository.rs
+      - crates/application/src/api_token.rs
+    affects:
+      - PRD-API-002
+      - PRD-API-003
+      - PRD-API-005
+      - PRD-IAM-005
+      - PRD-DATA-001
+      - PRD-DATA-002
+      - PRD-DATA-004
+    resolution: IAM-043 must add the missing machine-readable Patch/Revoke replay semantics and a forward-only, engine-parity safe-response snapshot. Until then IAM-042 fails closed when a later mutation makes the stored token ID/version reference insufficient; IAM-041 must not expose the incomplete behavior over HTTP.
+
   - id: SPEC-004
     status: resolved
     severity: high
