@@ -249,11 +249,12 @@ pub struct Membership {
     pub version: i64,
 }
 
-/// Audit actor classes supported by the initial persistence schema.
+/// Stable audit actor classes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuditActorType {
     System,
     LocalCli,
+    ApiToken,
 }
 
 impl AuditActorType {
@@ -263,6 +264,25 @@ impl AuditActorType {
         match self {
             Self::System => "system",
             Self::LocalCli => "local_cli",
+            Self::ApiToken => "api_token",
+        }
+    }
+}
+
+/// Typed identity for an audit actor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AuditActorId {
+    User(UserId),
+    ApiToken(ApiTokenId),
+}
+
+impl AuditActorId {
+    /// Returns the actor identifier as a validated resource UUID.
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
+        match self {
+            Self::User(id) => id.as_uuid(),
+            Self::ApiToken(id) => id.as_uuid(),
         }
     }
 }
@@ -276,6 +296,21 @@ pub struct BootstrapAuditMetadata {
     pub membership_id: MembershipId,
 }
 
+/// Redacted audit metadata for an API-token authenticated action.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenAuditMetadata {
+    pub organization_id: OrganizationId,
+    pub project_id: Option<ProjectId>,
+    pub api_token_id: ApiTokenId,
+}
+
+/// Secret-free metadata variants stored with audit events.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AuditMetadata {
+    LocalIdentity(BootstrapAuditMetadata),
+    ApiToken(ApiTokenAuditMetadata),
+}
+
 /// Append-only audit record exposed through the repository contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuditEvent {
@@ -283,12 +318,12 @@ pub struct AuditEvent {
     pub organization_id: OrganizationId,
     pub project_id: Option<ProjectId>,
     pub actor_type: AuditActorType,
-    pub actor_id: Option<UserId>,
+    pub actor_id: Option<AuditActorId>,
     pub action: String,
     pub resource_type: String,
     pub resource_id: ResourceId,
     pub request_id: OperationId,
-    pub metadata: BootstrapAuditMetadata,
+    pub metadata: AuditMetadata,
     pub occurred_at: UtcTimestamp,
 }
 

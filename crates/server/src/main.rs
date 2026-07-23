@@ -3,22 +3,32 @@
 use std::{
     future::{Future, IntoFuture},
     io::{self, Read},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     process::ExitCode,
+    str::FromStr,
     sync::Arc,
 };
 
 use async_trait::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use takt_api::{
-    AuthHttpConfig, AuthHttpError, BrowserAuthenticationHttpPort, HealthMetrics,
-    HttpAuthentication, HttpLogin, HttpSecret, ReadinessCheck, ReadinessFailure,
+    ApiTokenCursorKey, ApiTokenHttpCredential, ApiTokenHttpCredentialKind, ApiTokenHttpKind,
+    ApiTokenHttpListPage, ApiTokenHttpListQuery, ApiTokenHttpResource, ApiTokenHttpStatus,
+    ApiTokenReadHttpError, ApiTokenReadHttpPort, AuthHttpConfig, AuthHttpError,
+    BrowserAuthenticationHttpPort, HealthMetrics, HttpAuthentication, HttpLogin, HttpSecret,
+    ReadinessCheck, ReadinessFailure,
 };
 use takt_application::{
     ApplicationError, Argon2idConfig, AuthenticationError, BootstrapOutput, BootstrapService,
     BootstrapStatus, BrowserAuthentication, BrowserAuthenticationService, PasswordHash,
     PasswordHasher, PasswordHashing, RepositoryError, SecureTokenGenerator, SystemClock,
     UuidV7Generator, ValidationError,
+    api_token::{
+        ApiTokenApplicationError, ApiTokenBearerAuthenticationService, ApiTokenHash,
+        ApiTokenHasher, ApiTokenHashing, ApiTokenId, ApiTokenKind, ApiTokenListQuery,
+        ApiTokenReadActor, ApiTokenReadResource, ApiTokenReadService, ApiTokenScope,
+        ApiTokenSecret, ApiTokenStatus, ProjectId, UtcTimestamp,
+    },
 };
 use takt_persistence::{
     ConfigError, Database, DatabaseConfig, DatabaseError, ReadinessError, RuntimeProfile,
@@ -308,6 +318,37 @@ const fn status_name(status: BootstrapStatus) -> &'static str {
     }
 }
 
+struct TokioApiTokenHasher {
+    config: Argon2idConfig,
+}
+
+#[async_trait]
+impl ApiTokenHashing for TokioApiTokenHasher {
+    async fn hash(
+        &self,
+        secret: &ApiTokenSecret,
+    ) -> Result<ApiTokenHash, ApiTokenApplicationError> {
+        let config = self.config;
+        let secret = secret.clone();
+        tokio::task::spawn_blocking(move || ApiTokenHasher::new(config).hash(&secret))
+            .await
+            .map_err(|_| ApiTokenApplicationError::Hashing)?
+    }
+
+    async fn verify(
+        &self,
+        secret: &ApiTokenSecret,
+        hash: &ApiTokenHash,
+    ) -> Result<bool, ApiTokenApplicationError> {
+        let config = self.config;
+        let secret = secret.clone();
+        let hash = hash.clone();
+        tokio::task::spawn_blocking(move || ApiTokenHasher::new(config).verify(&secret, &hash))
+            .await
+            .map_err(|_| ApiTokenApplicationError::Hashing)?
+    }
+}
+
 struct RuntimeAuthentication {
     repository: SqlxRepository,
     password_hasher: TokioPasswordHasher,
@@ -405,6 +446,215 @@ impl BrowserAuthenticationHttpPort for RuntimeAuthentication {
     }
 }
 
+struct RuntimeApiTokenReads {
+    authentication: Arc<RuntimeAuthentication>,
+    repository: SqlxRepository,
+    hashing: TokioApiTokenHasher,
+    clock: SystemClock,
+}
+
+impl RuntimeApiTokenReads {
+    fn new(
+        database: Database,
+        authentication: Arc<RuntimeAuthentication>,
+        hashing_config: Argon2idConfig,
+    ) -> Self {
+        Self {
+            authentication,
+            repository: SqlxRepository::new(database),
+            hashing: TokioApiTokenHasher {
+                config: hashing_config,
+            },
+            clock: SystemClock,
+        }
+    }
+
+    async fn actor(
+        &self,
+        credential: &ApiTokenHttpCredential,
+        source: IpAddr,
+    ) -> Result<ApiTokenReadActor, ApiTokenReadHttpError> {
+        match credential.kind() {
+            ApiTokenHttpCredentialKind::Session => {
+                let authentication = self
+                    .authentication
+                    .service()
+                    .authenticate_session_read_only(credential.expose_to_port())
+                    .await
+                    .map_err(map_api_token_session_error)?;
+                Ok(ApiTokenReadActor::from_browser_session(&authentication))
+            }
+            ApiTokenHttpCredentialKind::Bearer => {
+                let authentication = ApiTokenBearerAuthenticationService::new(
+                    &self.repository,
+                    &self.hashing,
+                    &self.clock,
+                );
+                let actor = authentication
+                    .authenticate(credential.expose_to_port(), source)
+                    .await
+                    .map_err(map_api_token_read_error)?;
+                ApiTokenReadActor::from_token_actor(&actor).map_err(map_api_token_read_error)
+            }
+        }
+    }
+}
+
+#[async_trait]
+impl ApiTokenReadHttpPort for RuntimeApiTokenReads {
+    async fn list(
+        &self,
+        credential: ApiTokenHttpCredential,
+        source: IpAddr,
+        query: ApiTokenHttpListQuery,
+        _request_id: &str,
+    ) -> Result<ApiTokenHttpListPage, ApiTokenReadHttpError> {
+        let actor = self.actor(&credential, source).await?;
+        let query = map_api_token_list_query(&actor, query)?;
+        let page = ApiTokenReadService::new(&self.repository, &self.clock)
+            .list(&actor, query)
+            .await
+            .map_err(map_api_token_read_error)?;
+        Ok(ApiTokenHttpListPage {
+            items: page.items.into_iter().map(map_api_token_resource).collect(),
+            has_more: page.has_more,
+        })
+    }
+
+    async fn get(
+        &self,
+        credential: ApiTokenHttpCredential,
+        source: IpAddr,
+        id: uuid::Uuid,
+        _request_id: &str,
+    ) -> Result<ApiTokenHttpResource, ApiTokenReadHttpError> {
+        let actor = self.actor(&credential, source).await?;
+        let id = ApiTokenId::from_uuid(id).map_err(|_| ApiTokenReadHttpError::Internal)?;
+        ApiTokenReadService::new(&self.repository, &self.clock)
+            .get(&actor, id)
+            .await
+            .map(map_api_token_resource)
+            .map_err(map_api_token_read_error)
+    }
+}
+
+fn map_api_token_list_query(
+    actor: &ApiTokenReadActor,
+    query: ApiTokenHttpListQuery,
+) -> Result<ApiTokenListQuery, ApiTokenReadHttpError> {
+    Ok(ApiTokenListQuery {
+        organization_id: actor.organization_id(),
+        project_id: query
+            .project_id
+            .map(ProjectId::from_uuid)
+            .transpose()
+            .map_err(|_| ApiTokenReadHttpError::Internal)?,
+        kind: query.kind.map(|kind| match kind {
+            ApiTokenHttpKind::Personal => ApiTokenKind::Personal,
+            ApiTokenHttpKind::Service => ApiTokenKind::Service,
+        }),
+        status: query.status.map(|status| match status {
+            ApiTokenHttpStatus::Active => ApiTokenStatus::Active,
+            ApiTokenHttpStatus::Revoked => ApiTokenStatus::Revoked,
+            ApiTokenHttpStatus::Expired => ApiTokenStatus::Expired,
+        }),
+        scope: query
+            .scope
+            .map(|scope| ApiTokenScope::from_str(&scope))
+            .transpose()
+            .map_err(|_| ApiTokenReadHttpError::Internal)?,
+        before: query
+            .before
+            .map(|boundary| {
+                ApiTokenId::from_uuid(boundary.id).map(|id| {
+                    (
+                        UtcTimestamp::from_unix_micros(boundary.created_at_unix_micros),
+                        id,
+                    )
+                })
+            })
+            .transpose()
+            .map_err(|_| ApiTokenReadHttpError::Internal)?,
+        limit: query.limit,
+        now: UtcTimestamp::from_unix_micros(0),
+    })
+}
+
+fn map_api_token_resource(resource: ApiTokenReadResource) -> ApiTokenHttpResource {
+    let token = resource.token;
+    ApiTokenHttpResource {
+        id: token.id.as_uuid(),
+        organization_id: token.organization_id.as_uuid(),
+        project_id: token.project_id.map(ProjectId::as_uuid),
+        name: token.name,
+        kind: match token.kind {
+            ApiTokenKind::Personal => ApiTokenHttpKind::Personal,
+            ApiTokenKind::Service => ApiTokenHttpKind::Service,
+        },
+        token_prefix: token.token_prefix.as_str().to_owned(),
+        scopes: token
+            .scopes
+            .into_iter()
+            .map(|scope| scope.as_str().to_owned())
+            .collect(),
+        ip_networks: token
+            .ip_networks
+            .into_iter()
+            .map(|network| network.to_string())
+            .collect(),
+        status: match resource.status {
+            ApiTokenStatus::Active => ApiTokenHttpStatus::Active,
+            ApiTokenStatus::Revoked => ApiTokenHttpStatus::Revoked,
+            ApiTokenStatus::Expired => ApiTokenHttpStatus::Expired,
+        },
+        expires_at_unix_micros: token.expires_at.map(UtcTimestamp::unix_micros),
+        last_used_at_unix_micros: token.last_used_at.map(UtcTimestamp::unix_micros),
+        revoked_at_unix_micros: token.revoked_at.map(UtcTimestamp::unix_micros),
+        created_at_unix_micros: token.created_at.unix_micros(),
+        updated_at_unix_micros: token.updated_at.unix_micros(),
+        version: token.version,
+    }
+}
+
+fn map_api_token_session_error(error: AuthenticationError) -> ApiTokenReadHttpError {
+    match error {
+        AuthenticationError::InvalidCredentials | AuthenticationError::Unauthenticated => {
+            ApiTokenReadHttpError::AuthenticationFailed
+        }
+        AuthenticationError::CsrfFailed
+        | AuthenticationError::Validation(_)
+        | AuthenticationError::Repository(_)
+        | AuthenticationError::Clock
+        | AuthenticationError::IdGeneration
+        | AuthenticationError::TokenGeneration => ApiTokenReadHttpError::Internal,
+    }
+}
+
+fn map_api_token_read_error(error: ApiTokenApplicationError) -> ApiTokenReadHttpError {
+    match error {
+        ApiTokenApplicationError::AuthenticationFailed
+        | ApiTokenApplicationError::InvalidSecret => ApiTokenReadHttpError::AuthenticationFailed,
+        ApiTokenApplicationError::PermissionDenied => ApiTokenReadHttpError::PermissionDenied,
+        ApiTokenApplicationError::Repository(RepositoryError::NotFound) => {
+            ApiTokenReadHttpError::NotFound
+        }
+        ApiTokenApplicationError::TokenGeneration
+        | ApiTokenApplicationError::InvalidHash
+        | ApiTokenApplicationError::Hashing
+        | ApiTokenApplicationError::InvalidMetadata
+        | ApiTokenApplicationError::ReplayEncryption
+        | ApiTokenApplicationError::Clock
+        | ApiTokenApplicationError::IdGeneration
+        | ApiTokenApplicationError::Repository(_) => ApiTokenReadHttpError::Internal,
+    }
+}
+
+fn runtime_api_token_cursor_key() -> Result<ApiTokenCursorKey, CliFailure> {
+    let mut key = [0_u8; 32];
+    getrandom::fill(&mut key).map_err(|_| CliFailure::Security)?;
+    ApiTokenCursorKey::new(key).map_err(|_| CliFailure::Security)
+}
+
 fn map_browser_authentication(
     authentication: BrowserAuthentication,
 ) -> Result<HttpAuthentication, AuthHttpError> {
@@ -467,10 +717,17 @@ async fn serve(
             .await
             .map_err(|error| CliFailure::Application(ApplicationError::Validation(error)))?,
     );
+    let api_token_reads = Arc::new(RuntimeApiTokenReads::new(
+        database.clone(),
+        Arc::clone(&authentication),
+        Argon2idConfig::production(),
+    ));
     let application = takt_api::router_with_dependencies(
         readiness,
         metrics,
         authentication,
+        api_token_reads,
+        runtime_api_token_cursor_key()?,
         auth_http_config(profile),
     );
     let initialize_schema = async {
@@ -544,6 +801,7 @@ enum CliFailure {
     Input,
     Output,
     Network,
+    Security,
 }
 
 impl CliFailure {
@@ -559,7 +817,8 @@ impl CliFailure {
             | Self::Database(_)
             | Self::Application(_)
             | Self::Output
-            | Self::Network => EXIT_INFRASTRUCTURE,
+            | Self::Network
+            | Self::Security => EXIT_INFRASTRUCTURE,
         }
     }
 
@@ -572,22 +831,30 @@ impl CliFailure {
             Self::Input => "failed to read password from standard input".to_owned(),
             Self::Output => "failed to serialize command output".to_owned(),
             Self::Network => "server network operation failed".to_owned(),
+            Self::Security => "server security initialization failed".to_owned(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io;
     use std::sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     };
+    use std::{io, str::FromStr};
 
     use async_trait::async_trait;
     use serde_json::Value;
     use takt_api::{HealthMetrics, ReadinessCheck, ReadinessFailure};
-    use takt_application::{Argon2idConfig, BootstrapService, SystemClock, UuidV7Generator};
+    use takt_application::{
+        Argon2idConfig, BootstrapService, SystemClock, UuidV7Generator,
+        api_token::{
+            ApiTokenCreateCommand, ApiTokenKind, ApiTokenManagementActor,
+            ApiTokenManagementPermission, ApiTokenManagementService, ApiTokenScope,
+            ApiTokenSecretGenerator, OperationId, ResourceId,
+        },
+    };
     use takt_persistence::{Database, DatabaseConfig, RuntimeProfile, SqlxRepository};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -596,7 +863,8 @@ mod tests {
     };
 
     use super::{
-        RuntimeAuthentication, TokioPasswordHasher, auth_http_config, serve_while_initializing,
+        RuntimeApiTokenReads, RuntimeAuthentication, TokioApiTokenHasher, TokioPasswordHasher,
+        auth_http_config, serve_while_initializing,
     };
 
     struct GatedReadiness(Arc<AtomicBool>);
@@ -684,10 +952,17 @@ mod tests {
         let authentication = Arc::new(
             RuntimeAuthentication::new(database.clone(), Argon2idConfig::testing()).await?,
         );
+        let api_token_reads = Arc::new(RuntimeApiTokenReads::new(
+            database.clone(),
+            Arc::clone(&authentication),
+            Argon2idConfig::testing(),
+        ));
         let application = takt_api::router_with_dependencies(
             Arc::new(GatedReadiness(Arc::new(AtomicBool::new(true)))),
             Arc::new(HealthMetrics::default()),
             authentication,
+            api_token_reads,
+            takt_api::ApiTokenCursorKey::new([7; 32])?,
             takt_api::AuthHttpConfig::localhost(),
         );
         let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -769,6 +1044,202 @@ mod tests {
         )
         .await?;
         assert!(revoked.starts_with("HTTP/1.1 401"), "{revoked}");
+        server.abort();
+        database.close().await?;
+        Ok(())
+    }
+
+    // PRD-API-001 / PRD-API-004 / PRD-API-005 / PRD-IAM-001 /
+    // PRD-IAM-004: real SQLite, session and bearer actors compose through the
+    // Application read use case without exposing token material.
+    #[tokio::test]
+    async fn api_token_read_runtime_enforces_scope_context_and_redaction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let config = DatabaseConfig::sqlite_for_test(directory.path().join("token-read.sqlite3"))?;
+        let database = Database::connect(&config).await?;
+        database.migrate().await?;
+        let repository = SqlxRepository::new(database.clone());
+        let password_hasher = TokioPasswordHasher {
+            config: Argon2idConfig::testing(),
+        };
+        let bootstrap = BootstrapService::new(
+            &repository,
+            &password_hasher,
+            &SystemClock,
+            &UuidV7Generator,
+        )
+        .execute("runtime.admin", "correct horse battery")
+        .await?;
+        let hashing = TokioApiTokenHasher {
+            config: Argon2idConfig::testing(),
+        };
+        let secrets = ApiTokenSecretGenerator;
+        let management = ApiTokenManagementService::new(
+            &repository,
+            &hashing,
+            &SystemClock,
+            &UuidV7Generator,
+            &secrets,
+        );
+        let manager = ApiTokenManagementActor::new(
+            bootstrap.resources.organization.id,
+            None,
+            bootstrap.resources.project.id,
+            bootstrap.resources.user.id,
+            bootstrap.resources.membership.id,
+            vec![ApiTokenManagementPermission::Write],
+        )?;
+        let reader = management
+            .create(
+                &manager,
+                ApiTokenCreateCommand {
+                    organization_id: bootstrap.resources.organization.id,
+                    project_id: Some(bootstrap.resources.project.id),
+                    name: "metadata reader".to_owned(),
+                    kind: ApiTokenKind::Service,
+                    scopes: vec![ApiTokenScope::from_str("api_tokens:read")?],
+                    ip_networks: Vec::new(),
+                    expires_at: None,
+                    request_id: OperationId::from_resource_id(ResourceId::from_uuid(
+                        uuid::Uuid::now_v7(),
+                    )?),
+                },
+            )
+            .await?;
+        let monitor_reader = management
+            .create(
+                &manager,
+                ApiTokenCreateCommand {
+                    organization_id: bootstrap.resources.organization.id,
+                    project_id: Some(bootstrap.resources.project.id),
+                    name: "monitor reader".to_owned(),
+                    kind: ApiTokenKind::Service,
+                    scopes: vec![ApiTokenScope::from_str("monitors:read")?],
+                    ip_networks: Vec::new(),
+                    expires_at: None,
+                    request_id: OperationId::from_resource_id(ResourceId::from_uuid(
+                        uuid::Uuid::now_v7(),
+                    )?),
+                },
+            )
+            .await?;
+        let authentication = Arc::new(
+            RuntimeAuthentication::new(database.clone(), Argon2idConfig::testing()).await?,
+        );
+        let api_token_reads = Arc::new(RuntimeApiTokenReads::new(
+            database.clone(),
+            Arc::clone(&authentication),
+            Argon2idConfig::testing(),
+        ));
+        let application = takt_api::router_with_dependencies(
+            Arc::new(GatedReadiness(Arc::new(AtomicBool::new(true)))),
+            Arc::new(HealthMetrics::default()),
+            authentication,
+            api_token_reads,
+            takt_api::ApiTokenCursorKey::new([7; 32])?,
+            takt_api::AuthHttpConfig::localhost(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let address = listener.local_addr()?;
+        let server = tokio::spawn(
+            axum::serve(
+                listener,
+                application.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .into_future(),
+        );
+
+        let login = http_request(
+            address,
+            "POST",
+            "/api/v1/auth/login",
+            "Content-Type: application/json\r\n",
+            r#"{"username":"runtime.admin","password":"correct horse battery"}"#,
+        )
+        .await?;
+        assert!(login.starts_with("HTTP/1.1 200"), "{login}");
+        let set_cookie = response_header(&login, "set-cookie").ok_or("missing session cookie")?;
+        let cookie = set_cookie.split(';').next().ok_or("missing cookie pair")?;
+        let login_document: Value = serde_json::from_str(response_body(&login)?)?;
+        let csrf = login_document["csrf_token"]
+            .as_str()
+            .ok_or("missing CSRF token")?;
+
+        let list = http_request(
+            address,
+            "GET",
+            &format!(
+                "/api/v1/api-tokens?project_id={}&scope=api_tokens%3Aread",
+                bootstrap.resources.project.id
+            ),
+            &format!("Cookie: {cookie}\r\n"),
+            "",
+        )
+        .await?;
+        assert!(list.starts_with("HTTP/1.1 200"), "{list}");
+        assert!(response_body(&list)?.contains("\"metadata reader\""));
+        assert!(!list.contains(reader.token.expose_once()));
+        assert!(!list.contains(monitor_reader.token.expose_once()));
+        assert!(!list.contains("$argon2id$"));
+
+        let get = http_request(
+            address,
+            "GET",
+            &format!("/api/v1/api-tokens/{}", reader.api_token.id),
+            &format!("Authorization: Bearer {}\r\n", reader.token.expose_once()),
+            "",
+        )
+        .await?;
+        assert!(get.starts_with("HTTP/1.1 200"), "{get}");
+        assert!(response_header(&get, "etag").is_some());
+        assert!(!get.contains(reader.token.expose_once()));
+
+        let foreign_project = uuid::Uuid::now_v7();
+        let foreign = http_request(
+            address,
+            "GET",
+            &format!("/api/v1/api-tokens?project_id={foreign_project}"),
+            &format!("Authorization: Bearer {}\r\n", reader.token.expose_once()),
+            "",
+        )
+        .await?;
+        assert!(foreign.starts_with("HTTP/1.1 403"), "{foreign}");
+
+        let denied = http_request(
+            address,
+            "GET",
+            "/api/v1/api-tokens",
+            &format!(
+                "Authorization: Bearer {}\r\n",
+                monitor_reader.token.expose_once()
+            ),
+            "",
+        )
+        .await?;
+        assert!(denied.starts_with("HTTP/1.1 403"), "{denied}");
+        assert!(response_body(&denied)?.contains("\"code\":\"permission_denied\""));
+
+        let invalid = http_request(
+            address,
+            "GET",
+            "/api/v1/api-tokens",
+            "Authorization: Bearer takt_invalid-but-bounded-token-value-0000000000000000\r\n",
+            "",
+        )
+        .await?;
+        assert!(invalid.starts_with("HTTP/1.1 401"), "{invalid}");
+
+        let logout = http_request(
+            address,
+            "POST",
+            "/api/v1/auth/logout",
+            &format!("Cookie: {cookie}\r\nX-CSRF-Token: {csrf}\r\n"),
+            "",
+        )
+        .await?;
+        assert!(logout.starts_with("HTTP/1.1 204"), "{logout}");
+
         server.abort();
         database.close().await?;
         Ok(())

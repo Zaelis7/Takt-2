@@ -5,19 +5,20 @@ use chacha20poly1305::{
     ChaCha20Poly1305, KeyInit, Nonce,
     aead::{Aead, Payload},
 };
+pub use takt_domain::{
+    ApiTokenId, OperationId, ProjectId, ResourceId, UtcTimestamp,
+    api_token::{ApiTokenKind, ApiTokenScope, ApiTokenStatus},
+};
 use takt_domain::{
-    ApiTokenId, AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId,
-    OperationId, OrganizationId, ProjectId, ResourceId, UserId, UtcTimestamp,
-    api_token::{
-        ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, ApiTokenStatus, IpNetwork,
-        TokenActor,
-    },
+    AuditActorId, AuditActorType, AuditEvent, AuditEventId, AuditMetadata, BootstrapAuditMetadata,
+    MembershipId, OrganizationId, UserId,
+    api_token::{ApiToken, ApiTokenPrefix, IpNetwork, TokenActor},
 };
 use zeroize::Zeroizing;
 
 use crate::{
-    ApplicationError, Argon2idConfig, Clock, IdGenerator, NewAuditEvent, PasswordHash,
-    PasswordHasher, RepositoryError,
+    ApplicationError, Argon2idConfig, BrowserSessionReadAuthentication, Clock, IdGenerator,
+    NewAuditEvent, PasswordHash, PasswordHasher, RepositoryError,
 };
 
 const PREFIX_HEX_BYTES: usize = 8;
@@ -617,6 +618,175 @@ pub trait ApiTokenRepository: ApiTokenStore + ApiTokenLifecycleRepository {}
 
 impl<T> ApiTokenRepository for T where T: ApiTokenStore + ApiTokenLifecycleRepository {}
 
+/// Secret-free authorization context for API-token metadata reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenReadActor {
+    organization_id: OrganizationId,
+    project_scope: Option<ProjectId>,
+}
+
+impl ApiTokenReadActor {
+    /// Creates the organization-wide read actor used by the local 0.1 administrator session.
+    #[must_use]
+    pub const fn from_browser_session(authentication: &BrowserSessionReadAuthentication) -> Self {
+        Self {
+            organization_id: authentication.organization_id,
+            project_scope: None,
+        }
+    }
+
+    /// Creates a project- or organization-scoped actor from an exact `api_tokens:read` token.
+    pub fn from_token_actor(actor: &TokenActor) -> Result<Self, ApiTokenApplicationError> {
+        let required_scope = ApiTokenScope::from_str("api_tokens:read")
+            .map_err(|_| ApiTokenApplicationError::InvalidMetadata)?;
+        if !actor.allows(&required_scope) {
+            return Err(ApiTokenApplicationError::PermissionDenied);
+        }
+        Ok(Self {
+            organization_id: actor.organization_id(),
+            project_scope: actor.project_id(),
+        })
+    }
+
+    /// Returns the organization that must be applied to every repository query.
+    #[must_use]
+    pub const fn organization_id(&self) -> OrganizationId {
+        self.organization_id
+    }
+
+    fn authorize(
+        &self,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+    ) -> Result<(), ApiTokenApplicationError> {
+        if self.organization_id != organization_id
+            || self
+                .project_scope
+                .is_some_and(|scope| project_id != Some(scope))
+        {
+            return Err(ApiTokenApplicationError::PermissionDenied);
+        }
+        Ok(())
+    }
+}
+
+/// Redacted token metadata and its status at one application-controlled instant.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenReadResource {
+    pub token: ApiToken,
+    pub status: ApiTokenStatus,
+}
+
+/// Stable API-token page plus an exact indication that another item exists.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenReadPage {
+    pub items: Vec<ApiTokenReadResource>,
+    pub has_more: bool,
+}
+
+/// Context-checking List/Get use cases over the engine-neutral token store.
+pub struct ApiTokenReadService<'a, R, C> {
+    repository: &'a R,
+    clock: &'a C,
+}
+
+impl<'a, R, C> ApiTokenReadService<'a, R, C>
+where
+    R: ApiTokenStore,
+    C: Clock,
+{
+    /// Builds a read service with injected persistence and clock boundaries.
+    #[must_use]
+    pub const fn new(repository: &'a R, clock: &'a C) -> Self {
+        Self { repository, clock }
+    }
+
+    /// Lists one stable page after enforcing actor, organization and project scope.
+    pub async fn list(
+        &self,
+        actor: &ApiTokenReadActor,
+        mut query: ApiTokenListQuery,
+    ) -> Result<ApiTokenReadPage, ApiTokenApplicationError> {
+        actor.authorize(query.organization_id, query.project_id)?;
+        let query_organization_id = query.organization_id;
+        let query_project_id = query.project_id;
+        if !(1..=200).contains(&query.limit) {
+            return Err(ApiTokenApplicationError::InvalidMetadata);
+        }
+        let now = self.clock.now().map_err(map_application_error)?;
+        query.now = now;
+        let tokens = self.repository.list_api_tokens(query.clone()).await?;
+        if tokens.len() > usize::from(query.limit) {
+            return Err(ApiTokenApplicationError::Repository(
+                RepositoryError::UnknownInfrastructure,
+            ));
+        }
+        ensure_read_context(actor, query_organization_id, query_project_id, &tokens)?;
+
+        let has_more = if tokens.len() == usize::from(query.limit) {
+            let last = tokens.last().ok_or(ApiTokenApplicationError::Repository(
+                RepositoryError::UnknownInfrastructure,
+            ))?;
+            let mut lookahead = query;
+            lookahead.before = Some((last.created_at, last.id));
+            lookahead.limit = 1;
+            let following = self.repository.list_api_tokens(lookahead).await?;
+            if following.len() > 1 {
+                return Err(ApiTokenApplicationError::Repository(
+                    RepositoryError::UnknownInfrastructure,
+                ));
+            }
+            ensure_read_context(actor, query_organization_id, query_project_id, &following)?;
+            !following.is_empty()
+        } else {
+            false
+        };
+        Ok(ApiTokenReadPage {
+            items: tokens
+                .into_iter()
+                .map(|token| ApiTokenReadResource {
+                    status: token.status(now),
+                    token,
+                })
+                .collect(),
+            has_more,
+        })
+    }
+
+    /// Reads one redacted token projection after checking its persisted context.
+    pub async fn get(
+        &self,
+        actor: &ApiTokenReadActor,
+        id: ApiTokenId,
+    ) -> Result<ApiTokenReadResource, ApiTokenApplicationError> {
+        let token = self.repository.api_token_by_id(id).await?;
+        actor.authorize(token.organization_id, token.project_id)?;
+        let now = self.clock.now().map_err(map_application_error)?;
+        Ok(ApiTokenReadResource {
+            status: token.status(now),
+            token,
+        })
+    }
+}
+
+fn ensure_read_context(
+    actor: &ApiTokenReadActor,
+    organization_id: OrganizationId,
+    project_id: Option<ProjectId>,
+    tokens: &[ApiToken],
+) -> Result<(), ApiTokenApplicationError> {
+    if tokens.iter().any(|token| {
+        token.organization_id != organization_id
+            || project_id.is_some() && token.project_id != project_id
+            || actor
+                .authorize(token.organization_id, token.project_id)
+                .is_err()
+    }) {
+        return Err(ApiTokenApplicationError::PermissionDenied);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum ApiTokenManagementPermission {
     Read,
@@ -922,18 +1092,18 @@ where
             organization_id,
             project_id,
             actor_type: AuditActorType::System,
-            actor_id: Some(actor.user_id),
+            actor_id: Some(AuditActorId::User(actor.user_id)),
             action: action.to_owned(),
             resource_type: "api_token".to_owned(),
             resource_id: ResourceId::from_uuid(token_id.as_uuid())
                 .map_err(|_| ApiTokenApplicationError::IdGeneration)?,
             request_id,
-            metadata: BootstrapAuditMetadata {
+            metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                 organization_id,
                 project_id: actor.audit_project_id,
                 user_id: actor.user_id,
                 membership_id: actor.membership_id,
-            },
+            }),
             occurred_at: now,
         })
     }

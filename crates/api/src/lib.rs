@@ -176,14 +176,16 @@ pub fn router_with_dependencies(
     readiness: Arc<dyn ReadinessCheck>,
     health_metrics: Arc<HealthMetrics>,
     authentication: Arc<dyn BrowserAuthenticationHttpPort>,
+    api_token_reads: Arc<dyn ApiTokenReadHttpPort>,
+    api_token_cursor_key: ApiTokenCursorKey,
     config: AuthHttpConfig,
 ) -> Router {
     build_router(
         readiness,
         health_metrics,
         Some(authentication),
-        None,
-        None,
+        Some(api_token_reads),
+        Some(api_token_cursor_key),
         config,
     )
 }

@@ -49,6 +49,84 @@ async fn assert_idempotency_schema(
     Ok(())
 }
 
+async fn assert_api_token_actor_schema(
+    connection: &mut SqliteConnection,
+) -> Result<(), Box<dyn Error>> {
+    let row = sqlx::query(
+        "SELECT actor_type, actor_id, api_token_actor_id, metadata FROM audit_events WHERE id = ?1",
+    )
+    .bind(common::resource_id(64_011)?.to_string())
+    .fetch_one(&mut *connection)
+    .await?;
+    assert_eq!(row.try_get::<String, _>("actor_type")?, "api_token");
+    assert_eq!(row.try_get::<Option<String>, _>("actor_id")?, None);
+    assert_eq!(
+        row.try_get::<Option<String>, _>("api_token_actor_id")?,
+        Some(common::resource_id(64_000)?.to_string())
+    );
+    let metadata: String = row.try_get("metadata")?;
+    assert!(metadata.contains("\"redacted\":true"));
+    for forbidden in [
+        "user_id",
+        "membership_id",
+        "token_hash",
+        "argon2",
+        TEST_PASSWORD,
+    ] {
+        assert!(!metadata.contains(forbidden));
+    }
+    assert_eq!(
+        sqlx::query("SELECT COUNT(*) AS count FROM api_token_idempotency WHERE actor_type = 'api_token' AND actor_id = ?1")
+            .bind(common::resource_id(64_000)?.to_string())
+            .fetch_one(&mut *connection)
+            .await?
+            .try_get::<i64, _>("count")?,
+        1
+    );
+
+    let organization_id = common::resource_id(1)?.to_string();
+    let project_id = common::resource_id(2)?.to_string();
+    let user_id = common::resource_id(3)?.to_string();
+    let actor_id = common::resource_id(64_000)?.to_string();
+    let metadata = serde_json::json!({
+        "organization_id": organization_id,
+        "project_id": project_id,
+        "api_token_id": actor_id,
+        "redacted": true
+    })
+    .to_string();
+    assert!(
+        sqlx::query("INSERT INTO audit_events (id,organization_id,project_id,actor_type,actor_id,api_token_actor_id,action,resource_type,resource_id,request_id,metadata,occurred_at) VALUES (?1,?2,?3,'api_token',?4,?5,'contract.invalid','api_token',?6,?7,?8,1)")
+            .bind(common::resource_id(64_090)?.to_string())
+            .bind(&organization_id)
+            .bind(&project_id)
+            .bind(&user_id)
+            .bind(&actor_id)
+            .bind(common::resource_id(64_091)?.to_string())
+            .bind(common::resource_id(64_092)?.to_string())
+            .bind(&metadata)
+            .execute(&mut *connection)
+            .await
+            .is_err(),
+        "an API-token actor must not also carry a user actor"
+    );
+    assert!(
+        sqlx::query("INSERT INTO audit_events (id,organization_id,project_id,actor_type,api_token_actor_id,action,resource_type,resource_id,request_id,metadata,occurred_at) VALUES (?1,?2,?3,'api_token',?4,'contract.invalid','api_token',?5,?6,?7,1)")
+            .bind(common::resource_id(64_093)?.to_string())
+            .bind(&organization_id)
+            .bind(&project_id)
+            .bind(common::resource_id(64_099)?.to_string())
+            .bind(common::resource_id(64_094)?.to_string())
+            .bind(common::resource_id(64_095)?.to_string())
+            .bind(&metadata)
+            .execute(&mut *connection)
+            .await
+            .is_err(),
+        "an audit API-token actor must reference an existing token"
+    );
+    Ok(())
+}
+
 // PRD-DATA-002 / PRD-NFR-001: a fresh SQLite file migrates, repeats without
 // drift, and is never created in the repository working directory.
 #[tokio::test]
@@ -92,14 +170,14 @@ async fn sqlite_rejects_unknown_newer_schema_versions() -> Result<(), Box<dyn Er
     let (database, path) = sqlite_database(&directory, "newer.sqlite3").await?;
     database.migrate().await?;
     let mut connection = raw_connection(&path).await?;
-    sqlx::query("UPDATE _sqlx_migrations SET version = 6 WHERE version = 5")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 7 WHERE version = 6")
         .execute(&mut connection)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 6,
-            supported: 5
+            found: 7,
+            supported: 6
         }
     );
     assert_eq!(
@@ -123,11 +201,13 @@ async fn sqlite_runs_the_shared_repository_contract() -> Result<(), Box<dyn Erro
     common::run_api_token_repository_contract(&repository).await?;
     common::run_api_token_lifecycle_contract(&repository).await?;
     common::run_api_token_create_idempotency_contract(&repository).await?;
+    common::run_api_token_actor_contract(&repository).await?;
     common::run_api_token_patch_idempotency_contract(&repository).await?;
     common::run_api_token_revoke_idempotency_contract(&repository).await?;
     common::run_browser_authentication_contract(&repository).await?;
 
     let mut connection = raw_connection(&path).await?;
+    assert_api_token_actor_schema(&mut connection).await?;
     let row = sqlx::query(
         "SELECT group_concat(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT group_concat(metadata, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
     )

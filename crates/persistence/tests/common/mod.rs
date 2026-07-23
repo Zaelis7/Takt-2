@@ -26,9 +26,9 @@ use takt_application::{
     SESSION_REVOKED_AUDIT_ACTION, SessionRepository, TokenDigest, TokenGenerator, ValidationError,
 };
 use takt_domain::{
-    ApiTokenId, AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, MembershipId,
-    OperationId, OrganizationId, ProjectId, RecoveryTokenId, ResourceId, Role, SessionId, UserId,
-    UtcTimestamp,
+    ApiTokenAuditMetadata, ApiTokenId, AuditActorId, AuditActorType, AuditEvent, AuditEventId,
+    AuditMetadata, BootstrapAuditMetadata, MembershipId, OperationId, OrganizationId, ProjectId,
+    RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
     api_token::{ApiTokenKind, ApiTokenPrefix, ApiTokenScope, ApiTokenStatus, IpNetwork},
     session::{SessionPolicy, SessionWindow},
 };
@@ -379,12 +379,12 @@ pub async fn run_repository_contract(repository: &SqlxRepository) -> Result<(), 
                 organization_id,
                 project_id: Some(project_id),
                 actor_type: AuditActorType::LocalCli,
-                actor_id: Some(user_id),
+                actor_id: Some(AuditActorId::User(user_id)),
                 action: "contract.created".to_owned(),
                 resource_type: "project".to_owned(),
                 resource_id: resource_id(2)?,
                 request_id,
-                metadata,
+                metadata: AuditMetadata::LocalIdentity(metadata),
                 occurred_at: TEST_NOW,
             },
         })
@@ -398,17 +398,17 @@ pub async fn run_repository_contract(repository: &SqlxRepository) -> Result<(), 
                 organization_id,
                 project_id: Some(project_id),
                 actor_type: AuditActorType::LocalCli,
-                actor_id: Some(user_id),
+                actor_id: Some(AuditActorId::User(user_id)),
                 action: "contract.updated".to_owned(),
                 resource_type: "project".to_owned(),
                 resource_id: resource_id(2)?,
                 request_id: OperationId::from_resource_id(resource_id(15)?),
-                metadata: BootstrapAuditMetadata {
+                metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                     organization_id,
                     project_id,
                     user_id,
                     membership_id,
-                },
+                }),
                 occurred_at: TEST_NOW,
             },
         })
@@ -463,17 +463,17 @@ fn session_audit_event(
             organization_id,
             project_id: Some(project_id),
             actor_type: AuditActorType::System,
-            actor_id: Some(user_id),
+            actor_id: Some(AuditActorId::User(user_id)),
             action: action.to_owned(),
             resource_type: "session".to_owned(),
             resource_id: ResourceId::from_uuid(session_id.as_uuid())?,
             request_id: OperationId::from_resource_id(resource_id(39_999)?),
-            metadata: BootstrapAuditMetadata {
+            metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                 organization_id,
                 project_id,
                 user_id,
                 membership_id,
-            },
+            }),
             occurred_at,
         },
     })
@@ -806,17 +806,17 @@ fn recovery_audit_event(
             organization_id,
             project_id: Some(project_id),
             actor_type: AuditActorType::System,
-            actor_id: Some(user_id),
+            actor_id: Some(AuditActorId::User(user_id)),
             action: action.to_owned(),
             resource_type: "recovery_token".to_owned(),
             resource_id: ResourceId::from_uuid(recovery_id.as_uuid())?,
             request_id: OperationId::from_resource_id(resource_id(49_999)?),
-            metadata: BootstrapAuditMetadata {
+            metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                 organization_id,
                 project_id,
                 user_id,
                 membership_id: MembershipId::from_resource_id(resource_id(4)?),
-            },
+            }),
             occurred_at,
         },
     })
@@ -1061,17 +1061,17 @@ fn api_token_audit_event(
             organization_id,
             project_id: Some(project_id),
             actor_type: AuditActorType::System,
-            actor_id: Some(user_id),
+            actor_id: Some(AuditActorId::User(user_id)),
             action: action.to_owned(),
             resource_type: "api_token".to_owned(),
             resource_id: ResourceId::from_uuid(token_id.as_uuid())?,
             request_id: OperationId::from_resource_id(resource_id(69_999)?),
-            metadata: BootstrapAuditMetadata {
+            metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                 organization_id,
                 project_id,
                 user_id,
                 membership_id: MembershipId::from_resource_id(resource_id(4)?),
-            },
+            }),
             occurred_at,
         },
     })
@@ -1526,6 +1526,110 @@ pub async fn run_api_token_create_idempotency_contract(
             .await,
         Err(RepositoryError::ConstraintViolation)
     );
+    Ok(())
+}
+
+// PRD-API-003 / PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005 / PRD-DATA-001 /
+// PRD-DATA-002 / PRD-DATA-004 / PRD-NFR-002 / PRD-NFR-005: Bearer writes
+// retain their API-token identity across idempotency, audit storage and readback.
+pub async fn run_api_token_actor_contract(
+    repository: &SqlxRepository,
+) -> Result<(), Box<dyn Error>> {
+    let organization_id = OrganizationId::from_resource_id(resource_id(1)?);
+    let project_id = ProjectId::from_resource_id(resource_id(2)?);
+    let actor_id = ApiTokenId::from_resource_id(resource_id(64_000)?);
+    repository
+        .create_api_token(CreateApiTokenPlan {
+            token: new_api_token(64_000, "takt_f0f1f2f3f4f5f6f7", "bearer-actor", TEST_NOW)?,
+            audit_event: api_token_audit_event(
+                AuditEventId::from_resource_id(resource_id(64_001)?),
+                actor_id,
+                API_TOKEN_CREATED_AUDIT_ACTION,
+                TEST_NOW,
+            )?,
+        })
+        .await?;
+
+    let target = new_api_token(
+        64_010,
+        "takt_e0e1e2e3e4e5e6e7",
+        "created-by-bearer",
+        TEST_NOW,
+    )?;
+    let context = ApiTokenIdempotencyContext::new(
+        AuditActorType::ApiToken,
+        ResourceId::from_uuid(actor_id.as_uuid())?,
+        ApiTokenWriteMethod::Post,
+        "/api/v1/api-tokens".to_owned(),
+        "create-key-token-actor".to_owned(),
+        [0x64; 32],
+        TEST_NOW,
+    )?;
+    let event = AuditEvent {
+        id: AuditEventId::from_resource_id(resource_id(64_011)?),
+        organization_id,
+        project_id: Some(project_id),
+        actor_type: AuditActorType::ApiToken,
+        actor_id: Some(AuditActorId::ApiToken(actor_id)),
+        action: API_TOKEN_CREATED_AUDIT_ACTION.to_owned(),
+        resource_type: "api_token".to_owned(),
+        resource_id: ResourceId::from_uuid(target.id.as_uuid())?,
+        request_id: OperationId::from_resource_id(resource_id(64_012)?),
+        metadata: AuditMetadata::ApiToken(ApiTokenAuditMetadata {
+            organization_id,
+            project_id: Some(project_id),
+            api_token_id: actor_id,
+        }),
+        occurred_at: TEST_NOW,
+    };
+    let encrypted_replay =
+        ApiTokenReplayCipher::new(1, [0x42; 32])?.encrypt(&context, TEST_API_TOKEN_REPLAY_BODY)?;
+    let plan = CreateApiTokenIdempotencyPlan {
+        create: CreateApiTokenPlan {
+            token: target,
+            audit_event: NewAuditEvent {
+                event: event.clone(),
+            },
+        },
+        context,
+        encrypted_replay,
+    };
+
+    let mut mismatched = plan.clone();
+    mismatched.create.audit_event.event.actor_id = Some(AuditActorId::ApiToken(
+        ApiTokenId::from_resource_id(resource_id(64_099)?),
+    ));
+    assert_eq!(
+        repository.create_api_token_idempotent(mismatched).await,
+        Err(ApiTokenCreateIdempotencyError::Repository(
+            RepositoryError::ConstraintViolation
+        )),
+        "idempotency and audit must reject different API-token actors"
+    );
+    assert_eq!(
+        repository.api_token_by_id(plan.create.token.id).await,
+        Err(RepositoryError::NotFound)
+    );
+
+    assert!(matches!(
+        repository.create_api_token_idempotent(plan.clone()).await?,
+        ApiTokenCreateIdempotencyResult::Created { .. }
+    ));
+    assert!(matches!(
+        repository.create_api_token_idempotent(plan.clone()).await?,
+        ApiTokenCreateIdempotencyResult::Replay(_)
+    ));
+    let stored = repository
+        .audit_events_for_organization(organization_id)
+        .await?
+        .into_iter()
+        .find(|candidate| candidate.id == event.id)
+        .ok_or("API-token actor audit event was not persisted")?;
+    assert_eq!(stored, event);
+    let rendered = format!("{stored:?}");
+    for secret in [TEST_PASSWORD, "argon2", "encrypted-create-response-marker"] {
+        assert!(!rendered.contains(secret));
+    }
     Ok(())
 }
 

@@ -19,9 +19,9 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use takt_domain::{
-    AuditActorType, AuditEvent, AuditEventId, BootstrapAuditMetadata, LocalUser, Membership,
-    MembershipId, OperationId, Organization, OrganizationId, Project, ProjectId, RecoveryToken,
-    RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
+    AuditActorId, AuditActorType, AuditEvent, AuditEventId, AuditMetadata, BootstrapAuditMetadata,
+    LocalUser, Membership, MembershipId, OperationId, Organization, OrganizationId, Project,
+    ProjectId, RecoveryToken, RecoveryTokenId, ResourceId, Role, SessionId, UserId, UtcTimestamp,
     session::{BrowserSession, CsrfProof, SessionPolicy, SessionWindow},
 };
 use uuid::Uuid;
@@ -726,6 +726,16 @@ pub struct BrowserLogin {
     pub session_token: OpaqueToken,
 }
 
+/// Secret-free identity context produced by a non-mutating browser-session read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BrowserSessionReadAuthentication {
+    pub organization_id: OrganizationId,
+    pub project_id: ProjectId,
+    pub membership_id: MembershipId,
+    pub user_id: UserId,
+    pub role: Role,
+}
+
 pub struct BrowserAuthenticationService<'a, R, H, C, I, T> {
     repository: &'a R,
     password_hasher: &'a H,
@@ -885,6 +895,31 @@ where
         browser_authentication(&context, refreshed, csrf_token)
     }
 
+    /// Authenticates an active session without refreshing it or rotating its CSRF proof.
+    pub async fn authenticate_session_read_only(
+        &self,
+        session_token: &str,
+    ) -> Result<BrowserSessionReadAuthentication, AuthenticationError> {
+        let digest = TokenDigest::from_raw_token(session_token)
+            .map_err(|_| AuthenticationError::Unauthenticated)?;
+        let session = self
+            .repository
+            .session_by_token_digest(&digest)
+            .await
+            .map_err(authentication_repository_error)?;
+        let now = self.clock.now()?;
+        ensure_active(&session, now)?;
+        let context = self.repository.local_authentication_context().await?;
+        ensure_context(&context, &session)?;
+        Ok(BrowserSessionReadAuthentication {
+            organization_id: context.organization_id,
+            project_id: context.project_id,
+            membership_id: context.membership_id,
+            user_id: context.user.id,
+            role: context.role,
+        })
+    }
+
     pub async fn logout(
         &self,
         session_token: &str,
@@ -1000,18 +1035,18 @@ fn authentication_audit(
             organization_id: context.organization_id,
             project_id: Some(context.project_id),
             actor_type: AuditActorType::System,
-            actor_id,
+            actor_id: actor_id.map(AuditActorId::User),
             action: action.to_owned(),
             resource_type: resource_type.to_owned(),
             resource_id: ResourceId::from_uuid(resource_id)
                 .map_err(|_| AuthenticationError::IdGeneration)?,
             request_id,
-            metadata: BootstrapAuditMetadata {
+            metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                 organization_id: context.organization_id,
                 project_id: context.project_id,
                 user_id: context.user.id,
                 membership_id: context.membership_id,
-            },
+            }),
             occurred_at,
         },
     })
@@ -1091,18 +1126,18 @@ where
                 organization_id,
                 project_id: Some(project_id),
                 actor_type: AuditActorType::LocalCli,
-                actor_id: Some(user_id),
+                actor_id: Some(AuditActorId::User(user_id)),
                 action: BOOTSTRAP_AUDIT_ACTION.to_owned(),
                 resource_type: "organization".to_owned(),
                 resource_id: ResourceId::from_uuid(organization_id.as_uuid())
                     .map_err(|_| ApplicationError::Clock)?,
                 request_id: operation_id,
-                metadata: BootstrapAuditMetadata {
+                metadata: AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
                     organization_id,
                     project_id,
                     user_id,
                     membership_id,
-                },
+                }),
                 occurred_at: now,
             },
         };

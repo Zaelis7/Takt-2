@@ -8,10 +8,11 @@ use takt_application::api_token::{
     ApiTokenApplicationError, ApiTokenBearerAuthenticationService, ApiTokenCreateCommand,
     ApiTokenHasher, ApiTokenHashing, ApiTokenIdempotencyContext, ApiTokenListQuery,
     ApiTokenManagementActor, ApiTokenManagementPermission, ApiTokenManagementService,
-    ApiTokenPatch, ApiTokenReplayCipher, ApiTokenRevokeCommand, ApiTokenSecret,
-    ApiTokenSecretGenerator, ApiTokenStore, ApiTokenTarget, ApiTokenUpdateCommand,
-    ApiTokenWriteMethod, CreateApiTokenPlan, EncryptedApiTokenReplay, RevokeApiTokenPlan,
-    StoredApiToken, TokenSecretGenerator, UpdateApiTokenPlan, authorize_token_actor,
+    ApiTokenPatch, ApiTokenReadActor, ApiTokenReadService, ApiTokenReplayCipher,
+    ApiTokenRevokeCommand, ApiTokenSecret, ApiTokenSecretGenerator, ApiTokenStore, ApiTokenTarget,
+    ApiTokenUpdateCommand, ApiTokenWriteMethod, CreateApiTokenPlan, EncryptedApiTokenReplay,
+    RevokeApiTokenPlan, StoredApiToken, TokenSecretGenerator, UpdateApiTokenPlan,
+    authorize_token_actor,
 };
 use takt_application::{ApplicationError, Argon2idConfig, Clock, RepositoryError, UuidV7Generator};
 use takt_domain::{
@@ -554,6 +555,98 @@ async fn prd_iam_001_bearer_authentication_fails_closed_and_records_use()
         Err(ApiTokenApplicationError::PermissionDenied)
     );
     assert!(!format!("{actor:?}").contains(created.token.expose_once()));
+    Ok(())
+}
+
+// PRD-API-004 / PRD-IAM-001 / PRD-IAM-004: the production read adapter must
+// compose an exact api_tokens:read actor with context-checked List/Get use cases.
+#[tokio::test]
+async fn prd_iam_004_api_token_reads_require_exact_scope_and_context() -> Result<(), Box<dyn Error>>
+{
+    let organization_id =
+        OrganizationId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000301")?);
+    let project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000302")?);
+    let foreign_project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000303")?);
+    let repository = TestRepository::default();
+    let hashing = TestHashing::new();
+    let clock = TestClock::new(NOW);
+    let ids = UuidV7Generator;
+    let secrets = ApiTokenSecretGenerator;
+    let management = ApiTokenManagementService::new(&repository, &hashing, &clock, &ids, &secrets);
+    let manager = management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Write],
+    )?;
+    let created = management
+        .create(
+            &manager,
+            ApiTokenCreateCommand {
+                organization_id,
+                project_id: Some(project_id),
+                name: "token metadata reader".to_owned(),
+                kind: ApiTokenKind::Service,
+                scopes: vec![ApiTokenScope::from_str("api_tokens:read")?],
+                ip_networks: Vec::new(),
+                expires_at: None,
+                request_id: operation_id("019b3cf0-0000-7000-8000-000000000304")?,
+            },
+        )
+        .await?;
+    let token_actor = TokenActor::new(
+        created.api_token.id,
+        organization_id,
+        Some(project_id),
+        vec![ApiTokenScope::from_str("api_tokens:read")?],
+    )?;
+    let actor = ApiTokenReadActor::from_token_actor(&token_actor)?;
+    let service = ApiTokenReadService::new(&repository, &clock);
+    let query = ApiTokenListQuery {
+        organization_id,
+        project_id: Some(project_id),
+        kind: None,
+        status: None,
+        scope: None,
+        before: None,
+        limit: 50,
+        now: UtcTimestamp::from_unix_micros(0),
+    };
+
+    let page = service.list(&actor, query.clone()).await?;
+    assert_eq!(page.items.len(), 1);
+    assert!(!page.has_more);
+    assert_eq!(page.items[0].token.id, created.api_token.id);
+    assert_eq!(page.items[0].status, ApiTokenStatus::Active);
+    assert_eq!(
+        service.get(&actor, created.api_token.id).await?.token.id,
+        created.api_token.id
+    );
+
+    let monitor_reader = TokenActor::new(
+        created.api_token.id,
+        organization_id,
+        Some(project_id),
+        vec![ApiTokenScope::from_str("monitors:read")?],
+    )?;
+    assert_eq!(
+        ApiTokenReadActor::from_token_actor(&monitor_reader),
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert_eq!(
+        service
+            .list(
+                &actor,
+                ApiTokenListQuery {
+                    project_id: Some(foreign_project_id),
+                    ..query
+                },
+            )
+            .await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
     Ok(())
 }
 

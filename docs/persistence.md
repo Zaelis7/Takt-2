@@ -1,9 +1,9 @@
 # Persistence, migrations and local administrator bootstrap
 
-This milestone implements the local identity, server-side session and recovery
-persistence slices of `PRD-IAM-001`; API tokens remain intentionally absent. It prepares
-`PRD-IAM-003`, `PRD-IAM-004` and `PRD-IAM-005` with organization/project
-boundaries, stable roles and append-only audit storage.
+This milestone implements the local identity, server-side session, recovery and
+API-token persistence slices of `PRD-IAM-001`. It prepares `PRD-IAM-003`,
+`PRD-IAM-004` and `PRD-IAM-005` with organization/project boundaries, stable
+roles, append-only audit storage and actor-bound write idempotency.
 
 ## Database configuration
 
@@ -39,6 +39,9 @@ Migration files are separate and forward-only:
 - `migrations/postgres/0001_persistent_identity.sql` and `migrations/sqlite/0001_persistent_identity.sql`
 - `migrations/postgres/0002_sessions.sql` and `migrations/sqlite/0002_sessions.sql`
 - `migrations/postgres/0003_recovery_tokens.sql` and `migrations/sqlite/0003_recovery_tokens.sql`
+- `migrations/postgres/0004_api_tokens.sql` and `migrations/sqlite/0004_api_tokens.sql`
+- `migrations/postgres/0005_api_token_idempotency.sql` and `migrations/sqlite/0005_api_token_idempotency.sql`
+- `migrations/postgres/0006_api_token_actor.sql` and `migrations/sqlite/0006_api_token_actor.sql`
 
 The local profile migrates automatically. Production checks the current schema
 and requires an explicit migration command:
@@ -56,7 +59,7 @@ unavailable before or during migration; liveness never depends on the database.
 
 ## Initial schema
 
-Both engines implement the same eight domain tables:
+Both engines implement the same ten domain tables:
 
 | Table | Purpose and principal constraints |
 |---|---|
@@ -65,9 +68,11 @@ Both engines implement the same eight domain tables:
 | `users` | UUIDv7, globally unique normalized local username, UTC timestamps, version |
 | `local_credentials` | one credential per user, Argon2id PHC hash only, UTC timestamps, version |
 | `memberships` | organization/project scope, user foreign key, stable role check, UTC timestamps, version |
-| `audit_events` | append-only trigger, actor/resource/request identifiers, redacted JSON metadata, UTC occurrence time |
+| `audit_events` | append-only trigger, mutually exclusive user/API-token actor references, resource/request identifiers, redacted JSON metadata, UTC occurrence time |
 | `sessions` | UUIDv7, organization/user scope, hashed cookie and CSRF values, expiry/revoke state, version |
 | `recovery_tokens` | UUIDv7, organization/user scope, hashed token value, expiry/single-consumption state, version |
+| `api_tokens` | UUIDv7, organization/project scope, non-secret lookup prefix, Argon2id hash, exact scopes, network/expiry/revoke state, version |
+| `api_token_idempotency` | actor/method/path/key/request-hash identity, exact 24-hour expiry, safe mutation result or encrypted Create replay |
 
 Role checks already accept `owner`, `admin`, `editor`, `operator` and `viewer`.
 Foreign-key, slug, membership and audit-time indexes are created in the first

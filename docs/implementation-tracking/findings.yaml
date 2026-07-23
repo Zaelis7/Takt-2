@@ -206,3 +206,29 @@ findings:
     affects:
       - PRD-API-002
     resolution: Resolved without an audit exception by pinning the workspace to fast-uri 3.1.4, adding a lockfile regression test that rejects every older fast-uri package and rerunning the high-severity Node audit successfully.
+
+  - id: SEC-003
+    status: resolved
+    severity: high
+    kind: gap
+    decision: implementation
+    summary: OpenAPI allows API-token Bearer credentials on API-token write operations, but the audit and idempotency schemas only accept system/local_cli actors and audit actor IDs are constrained to users, so a Bearer write cannot be attributed truthfully.
+    locations:
+      - specs/contracts/openapi.yaml
+      - crates/domain/src/lib.rs
+      - migrations/postgres/0001_persistent_identity.sql
+      - migrations/postgres/0005_api_token_idempotency.sql
+      - migrations/sqlite/0001_persistent_identity.sql
+      - migrations/sqlite/0005_api_token_idempotency.sql
+      - crates/persistence/src/api_token_repository.rs
+    affects:
+      - PRD-API-003
+      - PRD-IAM-001
+      - PRD-IAM-004
+      - PRD-IAM-005
+      - PRD-DATA-001
+      - PRD-DATA-002
+      - PRD-DATA-004
+      - PRD-NFR-002
+      - PRD-NFR-005
+    resolution: IAM-038 added forward-only PostgreSQL/SQLite migration 0006 plus typed domain and repository behavior for an api_token actor. User/token actor references are mutually exclusive, the token reference has a restrictive foreign key, idempotency is actor-bound, and shared engine tests prove redacted audit readback without secret material.

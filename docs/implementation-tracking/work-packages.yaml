@@ -1072,7 +1072,7 @@ packages:
 
   - id: IAM-034
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-001, PRD-API-004, PRD-API-005, PRD-IAM-001, PRD-IAM-004]
     findings: [SPEC-003]
     depends_on: [IAM-025, IAM-029, IAM-035]
@@ -1087,14 +1087,19 @@ packages:
         - Create, Patch, Revoke, Browser-CSRF und HTTP-Idempotenz; diese verbleiben im abhängigen Paket IAM-013.
         - Monitor-CRUD, allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
       affected_artifacts:
+        - Cargo.toml
+        - Cargo.lock
+        - crates/application/src/lib.rs
         - crates/application/src/api_token.rs
         - crates/application/tests/api_tokens.rs
+        - crates/api/src/lib.rs
+        - crates/server/Cargo.toml
         - crates/server/src/main.rs
         - docs/implementation-tracking/requirements.yaml
         - docs/implementation-tracking/work-packages.yaml
         - docs/implementation-tracking/current-status.md
         - docs/implementation-evidence/iam-034-api-token-read-http.md
-      estimated_handwritten_lines: 520
+      estimated_handwritten_lines: 590
       estimated_validation_minutes: 25
     acceptance:
       - Berechtigte Browser-Sessions und api_tokens:read-Bearer können List/Get lesen; ungültige Credentials, fehlender Scope und fremder Organisations-/Projektkontext scheitern generisch oder mit 403.
@@ -1110,14 +1115,15 @@ packages:
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-024, IAM-026, IAM-028, IAM-034]
+    depends_on: [IAM-034, IAM-040, IAM-041]
     outcome: OpenAPI-konforme API-Token-Write-HTTP-Runtime mit sicherer Browser-CSRF-Grenze und atomarer Idempotenz.
     preflight:
       in_scope:
-        - OpenAPI-konforme Create-/Patch-/Revoke-Handler mit einmaliger Create-/Replay-Ausgabe, ETag/If-Match und stabilen Problems.
-        - Browser-CSRF- und Bearer-Actor-Anbindung an die vorhandenen Application- und Idempotenzports.
+        - Produktionskomposition der vorhandenen Create-/Patch-/Revoke-HTTP-Grenzen mit Browser-Session, Bearer, Application und Persistenz.
         - Produktionskomposition sowie echte SQLite-HTTP-, Replay-, Concurrency-, Permission- und Secret-Negativfälle für Write.
       out_of_scope:
+        - Actor-/Audit-/Idempotenzschema und Repository-Parität liefert IAM-038; Application-Schreiborchestrierung liefert IAM-039.
+        - Create-DTO, CSRF, Idempotenz-Replay und Problems liefert IAM-040; Patch/Revoke, If-Match und Problems liefert IAM-041.
         - API-Token List/Get, Bearer-/Session-Read und signierte Cursor; diese liefert IAM-034.
         - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
         - Allgemeine rollenbasierte Permission Engine, OIDC, API-Token-UI, taktctl und Recovery-Auslieferung.
@@ -1132,7 +1138,7 @@ packages:
         - docs/implementation-tracking/work-packages.yaml
         - docs/implementation-tracking/current-status.md
         - docs/implementation-evidence/iam-013-api-token-runtime.md
-      estimated_handwritten_lines: 650
+      estimated_handwritten_lines: 600
       estimated_validation_minutes: 25
     acceptance:
       - Ein monitors:read-Token authentifiziert einen Actor, der lesen, aber weder erstellen noch Rechte ableiten darf; API-010 bindet diese Entscheidung an Monitor-HTTP.
@@ -1142,6 +1148,140 @@ packages:
       - v0.1 Token-Scope-Acceptance
       - API-Token-Write-HTTP-, Replay-, CSRF- und Negative-Permission-Tests
       - docs/implementation-evidence/iam-013-api-token-runtime.md
+
+  - id: IAM-038
+    release: "0.1"
+    status: implemented
+    requirements: [PRD-API-003, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005, PRD-DATA-001, PRD-DATA-002, PRD-DATA-004, PRD-NFR-002, PRD-NFR-005]
+    findings: [SEC-003]
+    depends_on: [IAM-028, IAM-029]
+    outcome: Engine-paritäre, wahrheitsgetreue Audit- und Idempotenzidentität für API-Token-authentifizierte Schreibzugriffe.
+    preflight:
+      in_scope:
+        - Typisierter api_token-Akteur und redigierte API-Token-Auditmetadaten ohne erfundene Benutzer- oder Systemidentität.
+        - Forward-only Migration 0006 mit gegenseitig ausgeschlossenen Benutzer-/Token-Akteurreferenzen und api_token-Idempotenzwert auf PostgreSQL und SQLite.
+        - Gemeinsamer Repository-Vertrag für API-Token-Akteur, atomare idempotente Create-Wirkung, Replay und Audit-Readback beider Engines.
+        - Negative Schema-, Actor-Binding-, Fremdschlüssel-, Redaction- und Migrationsversionsfälle sowie Tracking und Implementation Evidence.
+      out_of_scope:
+        - Erzeugung von Write-Plänen aus Browser-/Bearer-Akteuren; diese folgt in IAM-039.
+        - HTTP-DTOs, CSRF, ETag/If-Match, Problems und Produktionsrouter; diese folgen in IAM-040, IAM-041 und IAM-013.
+        - Änderungen am öffentlichen OpenAPI-Vertrag oder an veröffentlichten Migrationen 0001 bis 0005.
+        - API-Token-Reads, Monitor-CRUD, allgemeine Rollen-/Permission-Engine, OIDC, UI, CLI und Recovery.
+      affected_artifacts:
+        - crates/domain/src/lib.rs
+        - crates/application/src/api_token.rs
+        - crates/application/src/lib.rs
+        - crates/persistence/src/database.rs
+        - crates/persistence/src/repository.rs
+        - crates/persistence/src/api_token_repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/persistence/tests/postgres_contract.rs
+        - crates/persistence/tests/sqlite_contract.rs
+        - crates/server/tests/admin_bootstrap_cli.rs
+        - migrations/postgres/0006_api_token_actor.sql
+        - migrations/sqlite/0006_api_token_actor.sql
+        - docs/persistence.md
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-038-api-token-actor.md
+      estimated_handwritten_lines: 700
+      estimated_validation_minutes: 25
+    acceptance:
+      - Derselbe Repository-Vertrag speichert und liest einen api_token-Akteur auf PostgreSQL und SQLite ohne Benutzer- oder Systemfehlzuordnung.
+      - Idempotenzkontext und Audit-Akteur müssen denselben Token referenzieren; Konflikte bleiben ohne Token- oder Auditwirkung.
+      - Auditmetadaten, Debug und Persistenz enthalten keinen Roh-Token, Hash oder verschlüsselten Replay-Klartext.
+    evidence:
+      - Gemeinsame API-Token-Akteur-/Idempotenz-Suite beider Engines
+      - Migration-, Fremdschlüssel-, Actor-Binding- und Redaction-Tests
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+
+  - id: IAM-039
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-025, IAM-029, IAM-038]
+    outcome: Frameworkfreie idempotente Create-/Patch-/Revoke-Orchestrierung für Browser- und API-Token-Akteure.
+    preflight:
+      in_scope:
+        - Einheitliche Browser-/Bearer-Write-Akteure mit exakter api_tokens:write-Permission und Organisations-/Projektkontext.
+        - Atomare Create-/Patch-/Revoke-Use-Cases über die vorhandenen Idempotenzrepositories einschließlich verschlüsseltem Create-Replay.
+        - Permission-, Kontext-, Replay-, Konflikt-, Audit- und Secret-Negativtests auf Application-Ebene.
+      out_of_scope:
+        - Audit-/Idempotenzmigration und Repository-Akteurparität; diese liefert IAM-038.
+        - HTTP-DTOs, CSRF, ETag/If-Match, Problems und Produktionsrouter; diese folgen in IAM-040, IAM-041 und IAM-013.
+        - Monitor-CRUD, allgemeine Rollen-/Permission-Engine, OIDC, UI, CLI und Recovery.
+      affected_artifacts:
+        - crates/application/src/api_token.rs
+        - crates/application/tests/api_tokens.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 20
+    acceptance:
+      - Browser und api_tokens:write-Bearer erzeugen actor-gebundene idempotente Pläne; read-only oder kontextfremde Akteure scheitern vor Fachwirkung.
+      - Identischer Create-Replay gibt denselben einmaligen Tokenwert zurück; Hash-Konflikt, Patch und Revoke geben niemals ein Secret aus.
+    evidence:
+      - Application-Tests für Browser-/Bearer-Permission, Idempotenz, Audit und Secret-Redaktion
+
+  - id: IAM-040
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: [SPEC-003]
+    depends_on: [IAM-037, IAM-039]
+    outcome: OpenAPI-konforme Axum-Create-Grenze für API-Tokens mit Browser-CSRF und sicherem identischem Replay.
+    preflight:
+      in_scope:
+        - Strikte Create-DTO-/Header-Validierung, Credential- und Browser-CSRF-Grenze sowie typisierte Problems.
+        - 201-, Location- und ETag-Serialisierung mit Tokenwert ausschließlich für Create oder identischen Replay.
+        - Echte Axum-Contract-, CSRF-, Idempotenz-, Permission-, Problem- und Secret-Negativtests gegen einen beobachtbaren Port.
+      out_of_scope:
+        - Patch/Revoke und If-Match; diese folgen in IAM-041.
+        - Application-Orchestrierung und Persistenz; diese liefern IAM-039 und IAM-038.
+        - Produktionskomposition und echte Datenbank-HTTP-Tests; diese folgen in IAM-013.
+      affected_artifacts:
+        - crates/api/src/api_tokens.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/api_tokens_http.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-040-api-token-create-http.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 20
+    acceptance:
+      - Browser-Create benötigt gültiges CSRF; Bearer-Create verwendet kein Browser-CSRF und beide erreichen genau einen typisierten Port.
+      - 201, Location, ETag, Problems und identischer Replay entsprechen OpenAPI; nur Create/Replay enthalten den Tokenwert.
+    evidence:
+      - Axum-Create-, CSRF-, Replay-, Problem- und Secret-Negativtests
+
+  - id: IAM-041
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: [SPEC-003]
+    depends_on: [IAM-037, IAM-039]
+    outcome: OpenAPI-konforme Axum-Patch-/Revoke-Grenzen für API-Tokens mit Browser-CSRF, If-Match und Idempotenz.
+    preflight:
+      in_scope:
+        - Strikte Merge-Patch-/Header-Validierung, If-Match, Credential- und Browser-CSRF-Grenze sowie typisierte Problems.
+        - Patch-Metadaten/ETag und Revoke-204 ohne Secret-Readback, jeweils mit actor-gebundener Idempotenz.
+        - Echte Axum-Contract-, CSRF-, Versions-, Idempotenz-, Permission-, Problem- und Secret-Negativtests gegen einen beobachtbaren Port.
+      out_of_scope:
+        - Create und tokenhaltiger Replay; diese liefert IAM-040.
+        - Application-Orchestrierung und Persistenz; diese liefern IAM-039 und IAM-038.
+        - Produktionskomposition und echte Datenbank-HTTP-Tests; diese folgen in IAM-013.
+      affected_artifacts:
+        - crates/api/src/api_tokens.rs
+        - crates/api/src/lib.rs
+        - crates/api/tests/api_tokens_http.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-041-api-token-mutations-http.md
+      estimated_handwritten_lines: 650
+      estimated_validation_minutes: 20
+    acceptance:
+      - Patch/Revoke benötigen If-Match und für Browser gültiges CSRF; stale Versionen und Idempotenzkonflikte bleiben typisiert und wirkungslos.
+      - Patch liefert nur sichere Metadaten/ETag und Revoke 204; kein Pfad gibt einen Tokenwert, Hash oder Replay-Ciphertext aus.
+    evidence:
+      - Axum-Patch-/Revoke-, CSRF-, Versions-, Idempotenz- und Secret-Negativtests
 
   - id: SPEC-015
     release: "0.1"

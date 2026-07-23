@@ -16,7 +16,8 @@ use takt_application::api_token::{
 };
 use takt_application::{NewAuditEvent, RepositoryError};
 use takt_domain::{
-    ApiTokenId, OrganizationId, ProjectId, UtcTimestamp,
+    ApiTokenId, AuditActorId, AuditActorType, AuditMetadata, OrganizationId, ProjectId,
+    UtcTimestamp,
     api_token::{ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, IpNetwork},
 };
 use time::OffsetDateTime;
@@ -1170,9 +1171,26 @@ fn validate_audit(
     now: UtcTimestamp,
 ) -> Result<(), RepositoryError> {
     let event = &event.event;
+    let actor_matches = match (event.actor_type, event.actor_id, &event.metadata) {
+        (
+            AuditActorType::System | AuditActorType::LocalCli,
+            Some(AuditActorId::User(_)),
+            AuditMetadata::LocalIdentity(metadata),
+        ) => metadata.organization_id == organization_id,
+        (
+            AuditActorType::ApiToken,
+            Some(AuditActorId::ApiToken(actor_id)),
+            AuditMetadata::ApiToken(metadata),
+        ) => {
+            metadata.organization_id == organization_id
+                && metadata.project_id == project_id
+                && metadata.api_token_id == actor_id
+        }
+        _ => false,
+    };
     if event.organization_id != organization_id
         || event.project_id != project_id
-        || event.organization_id != event.metadata.organization_id
+        || !actor_matches
         || event.action != action
         || event.resource_type != "api_token"
         || event.resource_id.as_uuid() != id.as_uuid()
@@ -1413,18 +1431,41 @@ fn parse_optional_sqlite_id<T: FromStr>(
 }
 
 fn audit_metadata(event: &NewAuditEvent) -> Value {
-    json!({
-    "organization_id": event.event.metadata.organization_id.to_string(),
-    "project_id": event.event.metadata.project_id.to_string(), "user_id": event.event.metadata.user_id.to_string(),
-    "membership_id": event.event.metadata.membership_id.to_string(), "redacted": true })
+    match &event.event.metadata {
+        AuditMetadata::LocalIdentity(metadata) => json!({
+            "organization_id": metadata.organization_id.to_string(),
+            "project_id": metadata.project_id.to_string(),
+            "user_id": metadata.user_id.to_string(),
+            "membership_id": metadata.membership_id.to_string(),
+            "redacted": true
+        }),
+        AuditMetadata::ApiToken(metadata) => json!({
+            "organization_id": metadata.organization_id.to_string(),
+            "project_id": metadata.project_id.map(|id| id.to_string()),
+            "api_token_id": metadata.api_token_id.to_string(),
+            "redacted": true
+        }),
+    }
+}
+fn audit_user_actor_id(event: &NewAuditEvent) -> Option<uuid::Uuid> {
+    match event.event.actor_id {
+        Some(AuditActorId::User(id)) => Some(id.as_uuid()),
+        None | Some(AuditActorId::ApiToken(_)) => None,
+    }
+}
+fn audit_api_token_actor_id(event: &NewAuditEvent) -> Option<uuid::Uuid> {
+    match event.event.actor_id {
+        Some(AuditActorId::ApiToken(id)) => Some(id.as_uuid()),
+        None | Some(AuditActorId::User(_)) => None,
+    }
 }
 async fn insert_audit_postgres(
     connection: &mut PgConnection,
     event: &NewAuditEvent,
 ) -> Result<(), RepositoryError> {
-    sqlx::query("INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
+    sqlx::query("INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, api_token_actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
         .bind(event.event.id.as_uuid()).bind(event.event.organization_id.as_uuid()).bind(event.event.project_id.map(ProjectId::as_uuid))
-        .bind(event.event.actor_type.as_str()).bind(event.event.actor_id.map(|id| id.as_uuid())).bind(&event.event.action)
+        .bind(event.event.actor_type.as_str()).bind(audit_user_actor_id(event)).bind(audit_api_token_actor_id(event)).bind(&event.event.action)
         .bind(&event.event.resource_type).bind(event.event.resource_id.as_uuid()).bind(event.event.request_id.as_uuid())
         .bind(audit_metadata(event)).bind(postgres_time(event.event.occurred_at)?).execute(connection).await.map_err(map_sqlx_error)?;
     Ok(())
@@ -1433,9 +1474,9 @@ async fn insert_audit_sqlite(
     connection: &mut SqliteConnection,
     event: &NewAuditEvent,
 ) -> Result<(), RepositoryError> {
-    sqlx::query("INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")
+    sqlx::query("INSERT INTO audit_events (id, organization_id, project_id, actor_type, actor_id, api_token_actor_id, action, resource_type, resource_id, request_id, metadata, occurred_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")
         .bind(event.event.id.to_string()).bind(event.event.organization_id.to_string()).bind(event.event.project_id.map(|id| id.to_string()))
-        .bind(event.event.actor_type.as_str()).bind(event.event.actor_id.map(|id| id.to_string())).bind(&event.event.action)
+        .bind(event.event.actor_type.as_str()).bind(audit_user_actor_id(event).map(|id| id.to_string())).bind(audit_api_token_actor_id(event).map(|id| id.to_string())).bind(&event.event.action)
         .bind(&event.event.resource_type).bind(event.event.resource_id.to_string()).bind(event.event.request_id.to_string())
         .bind(audit_metadata(event).to_string()).bind(event.event.occurred_at.unix_micros()).execute(connection).await.map_err(map_sqlx_error)?;
     Ok(())

@@ -21,7 +21,7 @@ use crate::config::{ConnectionSettings, DatabaseConfig, DatabaseEngine};
 
 static POSTGRES_MIGRATOR: Migrator = sqlx::migrate!("../../migrations/postgres");
 static SQLITE_MIGRATOR: Migrator = sqlx::migrate!("../../migrations/sqlite");
-const LATEST_SCHEMA_VERSION: i64 = 5;
+const LATEST_SCHEMA_VERSION: i64 = 6;
 const STATE_NOT_READY: u8 = 0;
 const STATE_MIGRATING: u8 = 1;
 const STATE_READY: u8 = 2;

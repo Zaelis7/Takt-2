@@ -89,7 +89,8 @@ requirements:
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
-    note: Browser login, session and logout run through `/api/v1`, and the API-token List/Get boundaries now provide contract-shaped redacted metadata, typed filters and signed cursor pages through an injected port. Production token-read composition, Writes, recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
+      - docs/implementation-evidence/iam-034-api-token-read-http.md
+    note: Browser login, session and logout run through `/api/v1`; API-token List/Get now compose their contract-shaped redacted metadata, typed filters and signed cursor pages with real session/Bearer authentication and SQLite persistence. Writes, recovery runtime and the remaining required 0.1 management contracts/runtimes are incomplete (SPEC-003).
   - id: PRD-API-002
     release: "0.1"
     coverage: partial
@@ -150,7 +151,10 @@ requirements:
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
-    note: API-token Create, Patch and Revoke now atomically persist their business write, one audit event and replay data or a safe result reference on both engines; identical requests replay and hash conflicts have no business or audit effect. HTTP runtime remains absent.
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: API-token Create, Patch and Revoke atomically persist their business write, one audit event and replay data or a safe result reference on both engines; api_token actors now retain the same identity across idempotency and audit. HTTP runtime remains absent.
   - id: PRD-API-004
     release: "0.1"
     coverage: partial
@@ -167,7 +171,10 @@ requirements:
       - crates/api/src/api_tokens.rs
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
-    note: API-token listing now parses bounded filters and limits, returns stable created_at-desc/id-desc pages and binds its HMAC-signed UUIDv7 cursor to every active filter over real HTTP. Production Application/Persistence composition remains in IAM-034 and other resource lists are absent.
+      - crates/application/src/api_token.rs
+      - crates/server/src/main.rs
+      - docs/implementation-evidence/iam-034-api-token-read-http.md
+    note: API-token listing now parses bounded filters and limits, reads stable created_at-desc/id-desc pages from the production Application/Persistence composition and binds its HMAC-signed UUIDv7 cursor to every active filter over real HTTP. Other resource lists are absent.
   - id: PRD-API-005
     release: "0.1"
     coverage: partial
@@ -196,7 +203,8 @@ requirements:
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
-    note: Readiness/browser auth and API-token List/Get emit bounded redacted Problems; the token list preserves generic authentication, typed permission failures and stable invalid_cursor responses for malformed, duplicate, manipulated or filter-mismatched queries over real HTTP. Production read composition, Writes and the general resource runtime error boundary remain absent.
+      - docs/implementation-evidence/iam-034-api-token-read-http.md
+    note: Readiness/browser auth and composed API-token List/Get emit bounded redacted Problems; token reads preserve generic authentication, typed permission failures and stable invalid_cursor responses for malformed, duplicate, manipulated or filter-mismatched queries over real HTTP. Writes and the general resource runtime error boundary remain absent.
 
   - id: PRD-AUT-001
     release: "0.1"
@@ -403,7 +411,12 @@ requirements:
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
-    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and injected List/Get HTTP boundaries exist. Writes and production read composition remain absent; the current HTTP delta has full local but no independent commit-bound validation.
+      - crates/server/src/main.rs
+      - docs/implementation-evidence/iam-034-api-token-read-http.md
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Local owner/browser auth plus API-token secret/hash, CIDR, exact-scope, lifecycle, atomic Create/Patch/Revoke idempotency, framework-free management/Bearer use cases and production-composed List/Get HTTP reads exist. Bearer write identity is now persisted truthfully; write orchestration/HTTP remains absent and the current deltas have no independent commit-bound validation.
   - id: PRD-IAM-002
     release: "0.3"
     coverage: none
@@ -446,7 +459,12 @@ requirements:
       - crates/api/tests/api_tokens_http.rs
       - docs/implementation-evidence/iam-037-api-token-get-boundary.md
       - docs/implementation-evidence/iam-035-api-token-read-boundary.md
-    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. The injected List/Get HTTP boundaries preserve typed permission failures and validate returned filters/pages fail closed, but their Application/production composition and the general role/permission engine remain absent.
+      - crates/server/src/main.rs
+      - docs/implementation-evidence/iam-034-api-token-read-http.md
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Browser auth enforces session/CSRF; API-token management and Bearer use cases enforce organization/project context and exact Read/Write or token scopes after prefix/hash/status/IP validation. API-token actors now retain their token identity in audit/idempotency, while production writes and the general role/permission engine remain absent.
   - id: PRD-IAM-005
     release: "0.3"
     coverage: partial
@@ -479,7 +497,10 @@ requirements:
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
       - docs/implementation-evidence/iam-025-api-token-application.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: Existing auth and API-token writes are atomically audited with redacted metadata; management use cases construct context-bound Create/Patch/Revoke audit plans, and idempotent persistence commits exactly one event while conflicts/replays add none. Full non-token action coverage, export and tamper evidence remain absent.
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Existing auth and API-token writes are atomically audited with redacted metadata; Bearer writes can now use a foreign-keyed API-token actor instead of a fabricated user/system attribution, and idempotent replay adds no event. Full non-token action coverage, export and tamper evidence remain absent.
 
   - id: PRD-DATA-001
     release: "0.1"
@@ -505,7 +526,10 @@ requirements:
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
-    note: Identity, bootstrap, session, recovery, API-token lifecycle and atomic Create/Patch/Revoke-idempotency operations share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Identity, bootstrap, session, recovery, API-token lifecycle, atomic Create/Patch/Revoke idempotency and API-token actor attribution share engine contracts; monitor, observation, outbox, retention and later repositories are still absent.
   - id: PRD-DATA-002
     release: "0.1"
     coverage: partial
@@ -530,7 +554,10 @@ requirements:
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
-    note: Five forward/repeated migrations, newer-schema rejection and migration-time readiness exist; IAM-024/IAM-026/IAM-028 reuse immutable migration 0005 for engine-parity runtime behavior. Released-version upgrade fixtures and commit-bound validation remain future work.
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Six forward/repeated migrations, newer-schema rejection and migration-time readiness exist; immutable 0001-0005 remain unchanged and 0006 adds engine-parity API-token actor attribution. Released-version upgrade fixtures and commit-bound validation remain future work.
   - id: PRD-DATA-004
     release: "0.1"
     coverage: partial
@@ -554,7 +581,10 @@ requirements:
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
-    note: Persisted identity, session, recovery, API-token and atomic Create/Patch/Revoke idempotency references use UUIDv7, UTC microseconds and typed monotonic result versions where mutable; remaining product entities are not implemented.
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Persisted identity, session, recovery, API-token, typed audit actors and atomic Create/Patch/Revoke idempotency references use UUIDv7, UTC microseconds and typed monotonic result versions where mutable; remaining product entities are not implemented.
 
   - id: PRD-MIG-001
     release: "0.2"
@@ -616,7 +646,9 @@ requirements:
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
       - docs/implementation-evidence/evid-001-independent-head-validation.md
-    note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle and atomic Create/Patch/Revoke-idempotency evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
+      - migrations/postgres/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: PostgreSQL 16 migration, identity, session, recovery, API-token lifecycle, actor attribution and atomic Create/Patch/Revoke-idempotency evidence is locally green; remaining product repositories/release matrix and the planned PostgreSQL acceptance binding are absent.
   - id: PRD-NFR-003
     release: "0.1"
     coverage: partial
@@ -653,7 +685,10 @@ requirements:
       - docs/implementation-evidence/iam-024-api-token-idempotency-storage.md
       - docs/implementation-evidence/iam-026-api-token-patch-idempotency.md
       - docs/implementation-evidence/iam-028-api-token-revoke-idempotency.md
-    note: Identity, session, recovery, API-token and exactly 24-hour Create/Patch/Revoke-idempotency retention and reuse use UTC microseconds on both engines; IANA timezone selection and UI display are absent.
+      - migrations/postgres/0006_api_token_actor.sql
+      - migrations/sqlite/0006_api_token_actor.sql
+      - docs/implementation-evidence/iam-038-api-token-actor.md
+    note: Identity, session, recovery, API-token actor audit and exactly 24-hour Create/Patch/Revoke-idempotency retention and reuse use UTC microseconds on both engines; IANA timezone selection and UI display are absent.
   - id: PRD-NFR-006
     release: "0.1"
     coverage: none

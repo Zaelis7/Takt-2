@@ -62,6 +62,81 @@ async fn assert_idempotency_schema(pool: &PgPool) -> Result<(), Box<dyn Error>> 
     Ok(())
 }
 
+async fn assert_api_token_actor_schema(pool: &PgPool) -> Result<(), Box<dyn Error>> {
+    let row = sqlx::query(
+        "SELECT actor_type, actor_id, api_token_actor_id, metadata::text AS metadata FROM audit_events WHERE id = $1",
+    )
+    .bind(common::resource_id(64_011)?.as_uuid())
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(row.try_get::<String, _>("actor_type")?, "api_token");
+    assert_eq!(row.try_get::<Option<uuid::Uuid>, _>("actor_id")?, None);
+    assert_eq!(
+        row.try_get::<Option<uuid::Uuid>, _>("api_token_actor_id")?,
+        Some(common::resource_id(64_000)?.as_uuid())
+    );
+    let metadata: String = row.try_get("metadata")?;
+    assert!(metadata.contains("\"redacted\": true"));
+    for forbidden in [
+        "user_id",
+        "membership_id",
+        "token_hash",
+        "argon2",
+        TEST_PASSWORD,
+    ] {
+        assert!(!metadata.contains(forbidden));
+    }
+    assert_eq!(
+        sqlx::query("SELECT COUNT(*) AS count FROM api_token_idempotency WHERE actor_type = 'api_token' AND actor_id = $1")
+            .bind(common::resource_id(64_000)?.as_uuid())
+            .fetch_one(pool)
+            .await?
+            .try_get::<i64, _>("count")?,
+        1
+    );
+
+    let organization_id = common::resource_id(1)?.as_uuid();
+    let project_id = common::resource_id(2)?.as_uuid();
+    let user_id = common::resource_id(3)?.as_uuid();
+    let actor_id = common::resource_id(64_000)?.as_uuid();
+    let metadata = serde_json::json!({
+        "organization_id": organization_id.to_string(),
+        "project_id": project_id.to_string(),
+        "api_token_id": actor_id.to_string(),
+        "redacted": true
+    });
+    assert!(
+        sqlx::query("INSERT INTO audit_events (id,organization_id,project_id,actor_type,actor_id,api_token_actor_id,action,resource_type,resource_id,request_id,metadata,occurred_at) VALUES ($1,$2,$3,'api_token',$4,$5,'contract.invalid','api_token',$6,$7,$8,TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+            .bind(common::resource_id(64_090)?.as_uuid())
+            .bind(organization_id)
+            .bind(project_id)
+            .bind(user_id)
+            .bind(actor_id)
+            .bind(common::resource_id(64_091)?.as_uuid())
+            .bind(common::resource_id(64_092)?.as_uuid())
+            .bind(&metadata)
+            .execute(pool)
+            .await
+            .is_err(),
+        "an API-token actor must not also carry a user actor"
+    );
+    assert!(
+        sqlx::query("INSERT INTO audit_events (id,organization_id,project_id,actor_type,api_token_actor_id,action,resource_type,resource_id,request_id,metadata,occurred_at) VALUES ($1,$2,$3,'api_token',$4,'contract.invalid','api_token',$5,$6,$7,TIMESTAMPTZ '2026-07-23 00:00:00Z')")
+            .bind(common::resource_id(64_093)?.as_uuid())
+            .bind(organization_id)
+            .bind(project_id)
+            .bind(common::resource_id(64_099)?.as_uuid())
+            .bind(common::resource_id(64_094)?.as_uuid())
+            .bind(common::resource_id(64_095)?.as_uuid())
+            .bind(&metadata)
+            .execute(pool)
+            .await
+            .is_err(),
+        "an audit API-token actor must reference an existing token"
+    );
+    Ok(())
+}
+
 // PRD-DATA-001 / PRD-DATA-002 / PRD-DATA-004 / PRD-NFR-002 / PRD-IAM-001:
 // this test requires a real PostgreSQL 16+ service; it is intentionally not
 // skipped when the service configuration is absent.
@@ -91,11 +166,13 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
     common::run_api_token_lifecycle_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_api_token_create_idempotency_contract(&SqlxRepository::new(database.clone()))
         .await?;
+    common::run_api_token_actor_contract(&SqlxRepository::new(database.clone())).await?;
     common::run_api_token_patch_idempotency_contract(&SqlxRepository::new(database.clone()))
         .await?;
     common::run_api_token_revoke_idempotency_contract(&SqlxRepository::new(database.clone()))
         .await?;
     common::run_browser_authentication_contract(&SqlxRepository::new(database.clone())).await?;
+    assert_api_token_actor_schema(&raw).await?;
     let row = sqlx::query(
         "SELECT string_agg(token_digest || ' ' || csrf_digest, ' ') AS stored, (SELECT string_agg(metadata::text, ' ') FROM audit_events WHERE resource_type = 'session') AS metadata FROM sessions",
     )
@@ -275,14 +352,14 @@ async fn postgres_migrations_repository_and_bootstrap_contracts() -> Result<(), 
             .try_get::<i64, _>("count")?,
         1
     );
-    sqlx::query("UPDATE _sqlx_migrations SET version = 6 WHERE version = 5")
+    sqlx::query("UPDATE _sqlx_migrations SET version = 7 WHERE version = 6")
         .execute(&raw)
         .await?;
     assert_eq!(
         database.schema_status().await?,
         SchemaStatus::TooNew {
-            found: 6,
-            supported: 5
+            found: 7,
+            supported: 6
         }
     );
     assert!(database.migrate().await.is_err());
