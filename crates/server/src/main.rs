@@ -643,6 +643,7 @@ fn map_api_token_read_error(error: ApiTokenApplicationError) -> ApiTokenReadHttp
         | ApiTokenApplicationError::Hashing
         | ApiTokenApplicationError::InvalidMetadata
         | ApiTokenApplicationError::ReplayEncryption
+        | ApiTokenApplicationError::IdempotencyKeyReused
         | ApiTokenApplicationError::Clock
         | ApiTokenApplicationError::IdGeneration
         | ApiTokenApplicationError::Repository(_) => ApiTokenReadHttpError::Internal,

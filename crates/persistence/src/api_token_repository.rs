@@ -213,7 +213,7 @@ impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
         &self,
         plan: CreateApiTokenIdempotencyPlan,
     ) -> Result<ApiTokenCreateIdempotencyResult, ApiTokenCreateIdempotencyError> {
-        validate_idempotent_create(&plan)?;
+        validate_idempotent_create_context(&plan)?;
         let scopes = scopes_json(&plan.create.token.scopes);
         let networks = networks_json(&plan.create.token.ip_networks);
         match &self.database.pool {
@@ -226,6 +226,7 @@ impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
                     transaction.commit().await.map_err(map_sqlx_error)?;
                     return Ok(ApiTokenCreateIdempotencyResult::Replay(replay));
                 }
+                validate_idempotent_create_write(&plan)?;
                 insert_token_postgres(&mut transaction, &plan.create.token, &scopes, &networks)
                     .await?;
                 insert_audit_postgres(&mut transaction, &plan.create.audit_event).await?;
@@ -241,6 +242,7 @@ impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
                     transaction.commit().await.map_err(map_sqlx_error)?;
                     return Ok(ApiTokenCreateIdempotencyResult::Replay(replay));
                 }
+                validate_idempotent_create_write(&plan)?;
                 insert_token_sqlite(&mut transaction, &plan.create.token, &scopes, &networks)
                     .await?;
                 insert_audit_sqlite(&mut transaction, &plan.create.audit_event).await?;
@@ -291,7 +293,21 @@ impl ApiTokenCreateIdempotencyRepository for SqlxRepository {
     }
 }
 
-fn validate_idempotent_create(
+fn validate_idempotent_create_context(
+    plan: &CreateApiTokenIdempotencyPlan,
+) -> Result<(), ApiTokenCreateIdempotencyError> {
+    let event = &plan.create.audit_event.event;
+    if plan.context.method() != ApiTokenWriteMethod::Post
+        || plan.context.created_at() != plan.create.token.now
+        || plan.context.actor_type() != event.actor_type
+        || event.actor_id.map(|id| id.as_uuid()) != Some(plan.context.actor_id().as_uuid())
+    {
+        return Err(RepositoryError::ConstraintViolation.into());
+    }
+    Ok(())
+}
+
+fn validate_idempotent_create_write(
     plan: &CreateApiTokenIdempotencyPlan,
 ) -> Result<(), ApiTokenCreateIdempotencyError> {
     validate_new_api_token(&plan.create.token).map_err(|_| RepositoryError::ConstraintViolation)?;
@@ -302,16 +318,8 @@ fn validate_idempotent_create(
         plan.create.token.project_id,
         API_TOKEN_CREATED_AUDIT_ACTION,
         plan.create.token.now,
-    )?;
-    let event = &plan.create.audit_event.event;
-    if plan.context.method() != ApiTokenWriteMethod::Post
-        || plan.context.created_at() != plan.create.token.now
-        || plan.context.actor_type() != event.actor_type
-        || event.actor_id.map(|id| id.as_uuid()) != Some(plan.context.actor_id().as_uuid())
-    {
-        return Err(RepositoryError::ConstraintViolation.into());
-    }
-    Ok(())
+    )
+    .map_err(Into::into)
 }
 
 async fn insert_token_postgres(

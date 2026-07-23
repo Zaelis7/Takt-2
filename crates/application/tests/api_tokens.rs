@@ -1,23 +1,34 @@
 #![forbid(unsafe_code)]
 
-use std::{error::Error, net::IpAddr, str::FromStr, sync::Mutex};
+use std::{
+    error::Error,
+    net::IpAddr,
+    str::FromStr,
+    sync::{
+        Mutex,
+        atomic::{AtomicI64, Ordering},
+    },
+};
 
 use async_trait::async_trait;
 use takt_application::api_token::{
     API_TOKEN_CREATED_AUDIT_ACTION, API_TOKEN_REVOKED_AUDIT_ACTION, API_TOKEN_UPDATED_AUDIT_ACTION,
     ApiTokenApplicationError, ApiTokenBearerAuthenticationService, ApiTokenCreateCommand,
-    ApiTokenHasher, ApiTokenHashing, ApiTokenIdempotencyContext, ApiTokenListQuery,
-    ApiTokenManagementActor, ApiTokenManagementPermission, ApiTokenManagementService,
-    ApiTokenPatch, ApiTokenReadActor, ApiTokenReadService, ApiTokenReplayCipher,
-    ApiTokenRevokeCommand, ApiTokenSecret, ApiTokenSecretGenerator, ApiTokenStore, ApiTokenTarget,
-    ApiTokenUpdateCommand, ApiTokenWriteMethod, CreateApiTokenPlan, EncryptedApiTokenReplay,
-    RevokeApiTokenPlan, StoredApiToken, TokenSecretGenerator, UpdateApiTokenPlan,
-    authorize_token_actor,
+    ApiTokenCreateIdempotencyError, ApiTokenCreateIdempotencyRepository,
+    ApiTokenCreateIdempotencyResult, ApiTokenHasher, ApiTokenHashing, ApiTokenIdempotencyContext,
+    ApiTokenIdempotencyInput, ApiTokenIdempotentCreateCommand, ApiTokenIdempotentWriteService,
+    ApiTokenListQuery, ApiTokenManagementActor, ApiTokenManagementPermission,
+    ApiTokenManagementService, ApiTokenPatch, ApiTokenReadActor, ApiTokenReadService,
+    ApiTokenReplayCipher, ApiTokenRevokeCommand, ApiTokenSecret, ApiTokenSecretGenerator,
+    ApiTokenStore, ApiTokenTarget, ApiTokenUpdateCommand, ApiTokenWriteActor, ApiTokenWriteMethod,
+    CreateApiTokenIdempotencyPlan, CreateApiTokenPlan, EncryptedApiTokenReplay, RevokeApiTokenPlan,
+    StoredApiToken, StoredApiTokenCreateReplay, TokenSecretGenerator, UpdateApiTokenPlan,
+    authorize_token_actor, validate_new_api_token,
 };
 use takt_application::{ApplicationError, Argon2idConfig, Clock, RepositoryError, UuidV7Generator};
 use takt_domain::{
-    ApiTokenId, AuditActorType, AuditEvent, MembershipId, OperationId, OrganizationId, ProjectId,
-    ResourceId, UserId, UtcTimestamp,
+    ApiTokenId, AuditActorId, AuditActorType, AuditEvent, AuditMetadata, MembershipId, OperationId,
+    OrganizationId, ProjectId, ResourceId, UserId, UtcTimestamp,
     api_token::{
         ApiToken, ApiTokenKind, ApiTokenPrefix, ApiTokenScope, ApiTokenStatus, IpNetwork,
         TokenActor,
@@ -42,6 +53,26 @@ impl TestClock {
 impl Clock for TestClock {
     fn now(&self) -> Result<UtcTimestamp, ApplicationError> {
         Ok(self.0)
+    }
+}
+
+struct MutableClock(AtomicI64);
+
+impl MutableClock {
+    const fn new(now: UtcTimestamp) -> Self {
+        Self(AtomicI64::new(now.unix_micros()))
+    }
+
+    fn set(&self, now: UtcTimestamp) {
+        self.0.store(now.unix_micros(), Ordering::SeqCst);
+    }
+}
+
+impl Clock for MutableClock {
+    fn now(&self) -> Result<UtcTimestamp, ApplicationError> {
+        Ok(UtcTimestamp::from_unix_micros(
+            self.0.load(Ordering::SeqCst),
+        ))
     }
 }
 
@@ -78,6 +109,7 @@ impl ApiTokenHashing for TestHashing {
 struct TestRepositoryState {
     stored: Option<StoredApiToken>,
     audits: Vec<AuditEvent>,
+    create_idempotency: Option<(ApiTokenIdempotencyContext, StoredApiTokenCreateReplay)>,
 }
 
 #[derive(Default)]
@@ -107,6 +139,13 @@ impl TestRepository {
             .lock()
             .ok()
             .and_then(|state| state.stored.as_ref()?.token.last_used_at)
+    }
+
+    fn audits(&self) -> Vec<AuditEvent> {
+        self.0
+            .lock()
+            .map(|state| state.audits.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -261,6 +300,67 @@ impl takt_application::api_token::ApiTokenLifecycleRepository for TestRepository
         token.updated_at = now;
         token.version += 1;
         Ok(())
+    }
+}
+
+fn same_idempotency_scope(
+    stored: &ApiTokenIdempotencyContext,
+    incoming: &ApiTokenIdempotencyContext,
+) -> bool {
+    stored.actor_type() == incoming.actor_type()
+        && stored.actor_id() == incoming.actor_id()
+        && stored.method() == incoming.method()
+        && stored.path() == incoming.path()
+        && stored.key() == incoming.key()
+}
+
+#[async_trait]
+impl ApiTokenCreateIdempotencyRepository for TestRepository {
+    async fn create_api_token_idempotent(
+        &self,
+        plan: CreateApiTokenIdempotencyPlan,
+    ) -> Result<ApiTokenCreateIdempotencyResult, ApiTokenCreateIdempotencyError> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| RepositoryError::UnknownInfrastructure)?;
+        if let Some((context, replay)) = &state.create_idempotency
+            && same_idempotency_scope(context, &plan.context)
+        {
+            if context.request_hash() != plan.context.request_hash() {
+                return Err(ApiTokenCreateIdempotencyError::KeyReused);
+            }
+            return Ok(ApiTokenCreateIdempotencyResult::Replay(replay.clone()));
+        }
+        if state.stored.is_some() {
+            return Err(RepositoryError::AlreadyExists.into());
+        }
+        validate_new_api_token(&plan.create.token)
+            .map_err(|_| RepositoryError::ConstraintViolation)?;
+        let token = projection(&plan.create);
+        let replay = StoredApiTokenCreateReplay {
+            api_token_id: token.id,
+            result_version: token.version,
+            encrypted_replay: plan.encrypted_replay,
+        };
+        state.audits.push(plan.create.audit_event.event);
+        state.stored = Some(StoredApiToken {
+            token: token.clone(),
+            token_hash: plan.create.token.token_hash,
+        });
+        state.create_idempotency = Some((plan.context, replay.clone()));
+        Ok(ApiTokenCreateIdempotencyResult::Created {
+            api_token: Box::new(token),
+            replay,
+        })
+    }
+
+    async fn purge_expired_api_token_idempotency(
+        &self,
+        _now: UtcTimestamp,
+        _limit: u16,
+    ) -> Result<u64, RepositoryError> {
+        Ok(0)
     }
 }
 
@@ -429,6 +529,168 @@ async fn prd_iam_001_api_token_crud_enforces_permission_context_and_audit()
             API_TOKEN_REVOKED_AUDIT_ACTION,
         ]
     );
+    Ok(())
+}
+
+fn idempotency(key: &str, request_hash: u8) -> ApiTokenIdempotencyInput {
+    ApiTokenIdempotencyInput {
+        key: key.to_owned(),
+        request_hash: [request_hash; 32],
+    }
+}
+
+// PRD-API-003 / PRD-API-005 / PRD-IAM-001 / PRD-IAM-004 / PRD-IAM-005:
+// Browser and Bearer writes share the same actor-bound idempotency, context,
+// audit and redaction boundary before HTTP is introduced.
+#[tokio::test]
+async fn prd_api_003_idempotent_api_token_create_binds_actor_context_and_secrets()
+-> Result<(), Box<dyn Error>> {
+    let organization_id =
+        OrganizationId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000501")?);
+    let project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000502")?);
+    let foreign_project_id =
+        ProjectId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000503")?);
+    let repository = TestRepository::default();
+    let hashing = TestHashing::new();
+    let clock = MutableClock::new(NOW);
+    let ids = UuidV7Generator;
+    let secrets = ApiTokenSecretGenerator;
+    let cipher = ApiTokenReplayCipher::new(1, [0x42; 32])?;
+    let service =
+        ApiTokenIdempotentWriteService::new(&repository, &hashing, &clock, &ids, &secrets, &cipher);
+    let browser = ApiTokenWriteActor::from_browser_management(management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Write],
+    )?);
+    let create = ApiTokenIdempotentCreateCommand {
+        create: ApiTokenCreateCommand {
+            organization_id,
+            project_id: Some(project_id),
+            name: "automation writer".to_owned(),
+            kind: ApiTokenKind::Service,
+            scopes: vec![ApiTokenScope::from_str("api_tokens:write")?],
+            ip_networks: vec![IpNetwork::from_str("192.0.2.0/24")?],
+            expires_at: Some(UtcTimestamp::from_unix_micros(NOW.unix_micros() + 500_000)),
+            request_id: operation_id("019b3cf0-0000-7000-8000-000000000504")?,
+        },
+        idempotency: idempotency("create-key-0501", 0x11),
+    };
+
+    let browser_read_only = ApiTokenWriteActor::from_browser_management(management_actor(
+        organization_id,
+        Some(project_id),
+        project_id,
+        vec![ApiTokenManagementPermission::Read],
+    )?);
+    assert_eq!(
+        service.create(&browser_read_only, create.clone()).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert!(repository.audits().is_empty());
+
+    let created = service.create(&browser, create.clone()).await?;
+    clock.set(UtcTimestamp::from_unix_micros(
+        NOW.unix_micros() + 1_000_000,
+    ));
+    let replayed = service.create(&browser, create.clone()).await?;
+    assert!(!created.replayed);
+    assert!(replayed.replayed);
+    assert_eq!(created.api_token, replayed.api_token);
+    assert_eq!(created.token.expose_once(), replayed.token.expose_once());
+    assert!(!format!("{created:?}{replayed:?}").contains(created.token.expose_once()));
+    assert_eq!(repository.audits().len(), 1);
+    assert_eq!(repository.audits()[0].actor_type, AuditActorType::System);
+    assert!(matches!(
+        repository.audits()[0].actor_id,
+        Some(AuditActorId::User(_))
+    ));
+    assert!(matches!(
+        repository.audits()[0].metadata,
+        AuditMetadata::LocalIdentity(_)
+    ));
+
+    let mut conflicting_create = create;
+    conflicting_create.idempotency.request_hash = [0x12; 32];
+    assert_eq!(
+        service.create(&browser, conflicting_create).await,
+        Err(ApiTokenApplicationError::IdempotencyKeyReused)
+    );
+    assert_eq!(repository.audits().len(), 1);
+
+    let bearer_token_id =
+        ApiTokenId::from_resource_id(resource_id("019b3cf0-0000-7000-8000-000000000506")?);
+    let read_only = TokenActor::new(
+        bearer_token_id,
+        organization_id,
+        Some(project_id),
+        vec![ApiTokenScope::from_str("api_tokens:read")?],
+    )?;
+    assert_eq!(
+        ApiTokenWriteActor::from_token_actor(&read_only),
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    let bearer = ApiTokenWriteActor::from_token_actor(&TokenActor::new(
+        bearer_token_id,
+        organization_id,
+        Some(project_id),
+        vec![ApiTokenScope::from_str("api_tokens:write")?],
+    )?)?;
+    let bearer_repository = TestRepository::default();
+    let bearer_service = ApiTokenIdempotentWriteService::new(
+        &bearer_repository,
+        &hashing,
+        &clock,
+        &ids,
+        &secrets,
+        &cipher,
+    );
+    let bearer_create = ApiTokenIdempotentCreateCommand {
+        create: ApiTokenCreateCommand {
+            organization_id,
+            project_id: Some(project_id),
+            name: "bearer-created writer".to_owned(),
+            kind: ApiTokenKind::Service,
+            scopes: vec![ApiTokenScope::from_str("monitors:read")?],
+            ip_networks: Vec::new(),
+            expires_at: None,
+            request_id: operation_id("019b3cf0-0000-7000-8000-000000000507")?,
+        },
+        idempotency: idempotency("create-key-0502", 0x31),
+    };
+    let mut foreign = bearer_create.clone();
+    foreign.create.project_id = Some(foreign_project_id);
+    assert_eq!(
+        bearer_service.create(&bearer, foreign).await,
+        Err(ApiTokenApplicationError::PermissionDenied)
+    );
+    assert!(bearer_repository.audits().is_empty());
+
+    let bearer_created = bearer_service
+        .create(&bearer, bearer_create.clone())
+        .await?;
+    let bearer_replay = bearer_service.create(&bearer, bearer_create).await?;
+    assert!(!bearer_created.replayed);
+    assert!(bearer_replay.replayed);
+    assert_eq!(
+        bearer_created.token.expose_once(),
+        bearer_replay.token.expose_once()
+    );
+    let audits = bearer_repository.audits();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].actor_type, AuditActorType::ApiToken);
+    assert_eq!(
+        audits[0].actor_id,
+        Some(AuditActorId::ApiToken(bearer_token_id))
+    );
+    assert!(matches!(
+        audits[0].metadata,
+        AuditMetadata::ApiToken(ref metadata)
+            if metadata.api_token_id == bearer_token_id
+    ));
+    assert!(!format!("{audits:?}").contains(bearer_created.token.expose_once()));
     Ok(())
 }
 

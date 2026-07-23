@@ -1526,6 +1526,57 @@ pub async fn run_api_token_create_idempotency_contract(
             .await,
         Err(RepositoryError::ConstraintViolation)
     );
+
+    let short_lived_at = UtcTimestamp::from_unix_micros(after_window.unix_micros() + 1_000_000);
+    let mut short_lived = idempotent_create_plan(
+        61_060,
+        "takt_2122232425262728",
+        "short-lived",
+        61_061,
+        "create-key-short-lived",
+        [0x66; 32],
+        short_lived_at,
+    )?;
+    short_lived.create.token.expires_at = Some(UtcTimestamp::from_unix_micros(
+        short_lived_at.unix_micros() + 1,
+    ));
+    assert!(matches!(
+        repository
+            .create_api_token_idempotent(short_lived.clone())
+            .await?,
+        ApiTokenCreateIdempotencyResult::Created { .. }
+    ));
+    let audit_after_short_lived = repository
+        .audit_events_for_organization(organization_id)
+        .await?
+        .len();
+    let replayed_at = UtcTimestamp::from_unix_micros(short_lived_at.unix_micros() + 2);
+    let mut expired_token_replay = short_lived;
+    expired_token_replay.create.token.now = replayed_at;
+    expired_token_replay.create.audit_event.event.occurred_at = replayed_at;
+    expired_token_replay.context = ApiTokenIdempotencyContext::new(
+        AuditActorType::System,
+        resource_id(3)?,
+        ApiTokenWriteMethod::Post,
+        "/api/v1/api-tokens".to_owned(),
+        "create-key-short-lived".to_owned(),
+        [0x66; 32],
+        replayed_at,
+    )?;
+    assert!(matches!(
+        repository
+            .create_api_token_idempotent(expired_token_replay)
+            .await?,
+        ApiTokenCreateIdempotencyResult::Replay(_)
+    ));
+    assert_eq!(
+        repository
+            .audit_events_for_organization(organization_id)
+            .await?
+            .len(),
+        audit_after_short_lived,
+        "an identical replay must survive token expiry without another audit event"
+    );
     Ok(())
 }
 

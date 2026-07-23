@@ -1122,7 +1122,7 @@ packages:
         - Produktionskomposition der vorhandenen Create-/Patch-/Revoke-HTTP-Grenzen mit Browser-Session, Bearer, Application und Persistenz.
         - Produktionskomposition sowie echte SQLite-HTTP-, Replay-, Concurrency-, Permission- und Secret-Negativfälle für Write.
       out_of_scope:
-        - Actor-/Audit-/Idempotenzschema und Repository-Parität liefert IAM-038; Application-Schreiborchestrierung liefert IAM-039.
+        - Actor-/Audit-/Idempotenzschema und Repository-Parität liefert IAM-038; Application-Schreiborchestrierung liefern IAM-039 und IAM-042.
         - Create-DTO, CSRF, Idempotenz-Replay und Problems liefert IAM-040; Patch/Revoke, If-Match und Problems liefert IAM-041.
         - API-Token List/Get, Bearer-/Session-Read und signierte Cursor; diese liefert IAM-034.
         - Monitor-CRUD; API-010 wendet den hier bereitgestellten Actor-/Scope-Vertrag auf Monitor-Lese- und Schreib-Use-Cases an.
@@ -1196,32 +1196,67 @@ packages:
 
   - id: IAM-039
     release: "0.1"
-    status: planned
+    status: implemented
     requirements: [PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: []
     depends_on: [IAM-025, IAM-029, IAM-038]
-    outcome: Frameworkfreie idempotente Create-/Patch-/Revoke-Orchestrierung für Browser- und API-Token-Akteure.
+    outcome: Frameworkfreie idempotente Create-Orchestrierung für Browser- und API-Token-Akteure mit sicherem identischem Secret-Replay.
     preflight:
       in_scope:
         - Einheitliche Browser-/Bearer-Write-Akteure mit exakter api_tokens:write-Permission und Organisations-/Projektkontext.
-        - Atomare Create-/Patch-/Revoke-Use-Cases über die vorhandenen Idempotenzrepositories einschließlich verschlüsseltem Create-Replay.
-        - Permission-, Kontext-, Replay-, Konflikt-, Audit- und Secret-Negativtests auf Application-Ebene.
+        - Atomarer Create-Use-Case über das vorhandene Idempotenzrepository einschließlich verschlüsseltem identischem Secret-Replay.
+        - Permission-, Kontext-, Replay-, Konflikt-, Audit- und Secret-Negativtests für Create auf Application-Ebene.
+        - Replay-vor-Neuanlage-Validierung für identische Create-Wiederholungen nach Token-Ablauf innerhalb des 24-Stunden-Fensters auf PostgreSQL und SQLite.
       out_of_scope:
         - Audit-/Idempotenzmigration und Repository-Akteurparität; diese liefert IAM-038.
+        - Patch-/Revoke-Orchestrierung; diese folgt nach der Pflichtmessung separat in IAM-042.
         - HTTP-DTOs, CSRF, ETag/If-Match, Problems und Produktionsrouter; diese folgen in IAM-040, IAM-041 und IAM-013.
         - Monitor-CRUD, allgemeine Rollen-/Permission-Engine, OIDC, UI, CLI und Recovery.
       affected_artifacts:
         - crates/application/src/api_token.rs
         - crates/application/tests/api_tokens.rs
+        - crates/persistence/src/api_token_repository.rs
+        - crates/persistence/tests/common/mod.rs
+        - crates/server/src/main.rs
         - docs/implementation-tracking/
         - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
-      estimated_handwritten_lines: 650
-      estimated_validation_minutes: 20
+      estimated_handwritten_lines: 750
+      estimated_validation_minutes: 25
     acceptance:
-      - Browser und api_tokens:write-Bearer erzeugen actor-gebundene idempotente Pläne; read-only oder kontextfremde Akteure scheitern vor Fachwirkung.
-      - Identischer Create-Replay gibt denselben einmaligen Tokenwert zurück; Hash-Konflikt, Patch und Revoke geben niemals ein Secret aus.
+      - Browser und api_tokens:write-Bearer erzeugen actor-gebundene idempotente Create-Pläne; read-only oder kontextfremde Akteure scheitern vor Fachwirkung.
+      - Identischer Create-Replay gibt denselben einmaligen Tokenwert und dieselbe sichere Erstellungsprojektion zurück; ein Hash-Konflikt hat keine Fach- oder Auditwirkung.
     evidence:
       - Application-Tests für Browser-/Bearer-Permission, Idempotenz, Audit und Secret-Redaktion
+      - Gemeinsamer PostgreSQL-/SQLite-Vertrag für Replay nach Token-Ablauf innerhalb der Aufbewahrung
+      - docs/implementation-evidence/iam-039-api-token-idempotent-writes.md
+
+  - id: IAM-042
+    release: "0.1"
+    status: planned
+    requirements: [PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
+    findings: []
+    depends_on: [IAM-039]
+    outcome: Frameworkfreie idempotente Patch-/Revoke-Orchestrierung für Browser- und API-Token-Akteure.
+    preflight:
+      in_scope:
+        - Atomare Patch-/Revoke-Use-Cases über die vorhandenen Idempotenzrepositories und die IAM-039-Actor-Grenze.
+        - Permission-, Kontext-, Replay-, Konflikt-, Audit- und Secret-Negativtests für Patch/Revoke auf Application-Ebene.
+      out_of_scope:
+        - Actor-, Audit-/Idempotenzschema, Repository-Parität und Create-Replay; diese liefern IAM-038 und IAM-039.
+        - HTTP-DTOs, CSRF, ETag/If-Match, Problems und Produktionsrouter; diese folgen in IAM-041 und IAM-013.
+        - Monitor-CRUD, allgemeine Rollen-/Permission-Engine, OIDC, UI, CLI und Recovery.
+      affected_artifacts:
+        - crates/application/src/api_token.rs
+        - crates/application/tests/api_tokens.rs
+        - docs/implementation-tracking/
+        - docs/implementation-evidence/iam-042-api-token-idempotent-mutations.md
+      estimated_handwritten_lines: 420
+      estimated_validation_minutes: 20
+    acceptance:
+      - Browser und api_tokens:write-Bearer erzeugen actor-gebundene idempotente Patch-/Revoke-Pläne; read-only oder kontextfremde Akteure scheitern vor Fachwirkung.
+      - Identische Replays wiederholen weder Mutation noch Audit; Hash-/Versionskonflikte und Patch/Revoke geben niemals ein Secret aus.
+    evidence:
+      - Application-Tests für Browser-/Bearer-Permission, Patch-/Revoke-Idempotenz, Audit und Secret-Redaktion
 
   - id: IAM-040
     release: "0.1"
@@ -1258,7 +1293,7 @@ packages:
     status: planned
     requirements: [PRD-API-001, PRD-API-003, PRD-API-005, PRD-IAM-001, PRD-IAM-004, PRD-IAM-005]
     findings: [SPEC-003]
-    depends_on: [IAM-037, IAM-039]
+    depends_on: [IAM-037, IAM-042]
     outcome: OpenAPI-konforme Axum-Patch-/Revoke-Grenzen für API-Tokens mit Browser-CSRF, If-Match und Idempotenz.
     preflight:
       in_scope:
@@ -1267,7 +1302,7 @@ packages:
         - Echte Axum-Contract-, CSRF-, Versions-, Idempotenz-, Permission-, Problem- und Secret-Negativtests gegen einen beobachtbaren Port.
       out_of_scope:
         - Create und tokenhaltiger Replay; diese liefert IAM-040.
-        - Application-Orchestrierung und Persistenz; diese liefern IAM-039 und IAM-038.
+        - Application-Orchestrierung und Persistenz; diese liefern IAM-042 und IAM-038.
         - Produktionskomposition und echte Datenbank-HTTP-Tests; diese folgen in IAM-013.
       affected_artifacts:
         - crates/api/src/api_tokens.rs

@@ -5,14 +5,14 @@ use chacha20poly1305::{
     ChaCha20Poly1305, KeyInit, Nonce,
     aead::{Aead, Payload},
 };
+use takt_domain::{
+    ApiTokenAuditMetadata, AuditActorId, AuditActorType, AuditEvent, AuditEventId, AuditMetadata,
+    BootstrapAuditMetadata, MembershipId, OrganizationId, UserId,
+    api_token::{ApiToken, ApiTokenPrefix, IpNetwork, TokenActor},
+};
 pub use takt_domain::{
     ApiTokenId, OperationId, ProjectId, ResourceId, UtcTimestamp,
     api_token::{ApiTokenKind, ApiTokenScope, ApiTokenStatus},
-};
-use takt_domain::{
-    AuditActorId, AuditActorType, AuditEvent, AuditEventId, AuditMetadata, BootstrapAuditMetadata,
-    MembershipId, OrganizationId, UserId,
-    api_token::{ApiToken, ApiTokenPrefix, IpNetwork, TokenActor},
 };
 use zeroize::Zeroizing;
 
@@ -37,8 +37,9 @@ pub struct ApiTokenSecret(Zeroizing<String>);
 
 impl ApiTokenSecret {
     pub fn from_client_input(value: String) -> Result<Self, ApiTokenApplicationError> {
+        let value = Zeroizing::new(value);
         validate_secret(&value)?;
-        Ok(Self(Zeroizing::new(value)))
+        Ok(Self(value))
     }
 
     #[must_use]
@@ -793,7 +794,7 @@ pub enum ApiTokenManagementPermission {
     Write,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApiTokenManagementActor {
     organization_id: OrganizationId,
     project_scope: Option<ProjectId>,
@@ -845,6 +846,90 @@ impl ApiTokenManagementActor {
     }
 }
 
+/// Authenticated identity accepted by API-token write use cases.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ApiTokenWriteActor {
+    Browser(ApiTokenManagementActor),
+    Bearer(TokenActor),
+}
+
+impl ApiTokenWriteActor {
+    /// Wraps an already permission-bearing browser management identity.
+    #[must_use]
+    pub const fn from_browser_management(actor: ApiTokenManagementActor) -> Self {
+        Self::Browser(actor)
+    }
+
+    /// Accepts a Bearer actor only when it has the exact `api_tokens:write` scope.
+    pub fn from_token_actor(actor: &TokenActor) -> Result<Self, ApiTokenApplicationError> {
+        let required = ApiTokenScope::from_str("api_tokens:write")
+            .map_err(|_| ApiTokenApplicationError::InvalidMetadata)?;
+        if !actor.allows(&required) {
+            return Err(ApiTokenApplicationError::PermissionDenied);
+        }
+        Ok(Self::Bearer(actor.clone()))
+    }
+
+    fn authorize(
+        &self,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+    ) -> Result<(), ApiTokenApplicationError> {
+        match self {
+            Self::Browser(actor) => actor.authorize(
+                ApiTokenManagementPermission::Write,
+                organization_id,
+                project_id,
+            ),
+            Self::Bearer(actor) => {
+                let required = ApiTokenScope::from_str("api_tokens:write")
+                    .map_err(|_| ApiTokenApplicationError::InvalidMetadata)?;
+                authorize_token_actor(actor, organization_id, project_id, &required)
+            }
+        }
+    }
+
+    fn idempotency_identity(
+        &self,
+    ) -> Result<(AuditActorType, ResourceId), ApiTokenApplicationError> {
+        let (actor_type, actor_id) = match self {
+            Self::Browser(actor) => (AuditActorType::System, actor.user_id.as_uuid()),
+            Self::Bearer(actor) => (AuditActorType::ApiToken, actor.token_id().as_uuid()),
+        };
+        ResourceId::from_uuid(actor_id)
+            .map(|actor_id| (actor_type, actor_id))
+            .map_err(|_| ApiTokenApplicationError::InvalidMetadata)
+    }
+
+    fn audit_identity(
+        &self,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+    ) -> (AuditActorType, AuditActorId, AuditMetadata) {
+        match self {
+            Self::Browser(actor) => (
+                AuditActorType::System,
+                AuditActorId::User(actor.user_id),
+                AuditMetadata::LocalIdentity(BootstrapAuditMetadata {
+                    organization_id,
+                    project_id: actor.audit_project_id,
+                    user_id: actor.user_id,
+                    membership_id: actor.membership_id,
+                }),
+            ),
+            Self::Bearer(actor) => (
+                AuditActorType::ApiToken,
+                AuditActorId::ApiToken(actor.token_id()),
+                AuditMetadata::ApiToken(ApiTokenAuditMetadata {
+                    organization_id,
+                    project_id,
+                    api_token_id: actor.token_id(),
+                }),
+            ),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ApiTokenCreateCommand {
     pub organization_id: OrganizationId,
@@ -877,6 +962,25 @@ pub struct ApiTokenRevokeCommand {
     pub target: ApiTokenTarget,
     pub expected_version: i64,
     pub request_id: OperationId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenIdempotencyInput {
+    pub key: String,
+    pub request_hash: [u8; 32],
+}
+
+#[derive(Clone, Debug)]
+pub struct ApiTokenIdempotentCreateCommand {
+    pub create: ApiTokenCreateCommand,
+    pub idempotency: ApiTokenIdempotencyInput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ApiTokenIdempotentCreateOutput {
+    pub token: ApiTokenSecret,
+    pub api_token: ApiToken,
+    pub replayed: bool,
 }
 
 pub struct ApiTokenManagementService<'a, R, H, C, I, G> {
@@ -1109,6 +1213,281 @@ where
     }
 }
 
+const CREATE_REPLAY_MAGIC: &[u8; 4] = b"TKR1";
+
+/// Actor- and context-bound idempotent API-token write orchestration.
+pub struct ApiTokenIdempotentWriteService<'a, R, H, C, I, G> {
+    repository: &'a R,
+    hashing: &'a H,
+    clock: &'a C,
+    ids: &'a I,
+    secrets: &'a G,
+    replay_cipher: &'a ApiTokenReplayCipher,
+}
+
+impl<'a, R, H, C, I, G> ApiTokenIdempotentWriteService<'a, R, H, C, I, G>
+where
+    R: ApiTokenStore + ApiTokenCreateIdempotencyRepository,
+    H: ApiTokenHashing,
+    C: Clock,
+    I: IdGenerator,
+    G: TokenSecretGenerator,
+{
+    #[must_use]
+    pub const fn new(
+        repository: &'a R,
+        hashing: &'a H,
+        clock: &'a C,
+        ids: &'a I,
+        secrets: &'a G,
+        replay_cipher: &'a ApiTokenReplayCipher,
+    ) -> Self {
+        Self {
+            repository,
+            hashing,
+            clock,
+            ids,
+            secrets,
+            replay_cipher,
+        }
+    }
+
+    pub async fn create(
+        &self,
+        actor: &ApiTokenWriteActor,
+        command: ApiTokenIdempotentCreateCommand,
+    ) -> Result<ApiTokenIdempotentCreateOutput, ApiTokenApplicationError> {
+        let ApiTokenIdempotentCreateCommand {
+            create,
+            idempotency,
+        } = command;
+        actor.authorize(create.organization_id, create.project_id)?;
+        let now = self.now()?;
+        let context = self.idempotency_context(
+            actor,
+            ApiTokenWriteMethod::Post,
+            "/api/v1/api-tokens".to_owned(),
+            idempotency,
+            now,
+        )?;
+        let secret = self.secrets.generate()?;
+        let token = NewApiToken {
+            id: ApiTokenId::from_resource_id(self.next_id()?),
+            organization_id: create.organization_id,
+            project_id: create.project_id,
+            name: create.name.clone(),
+            kind: create.kind,
+            token_prefix: prefix_from_secret(&secret)?,
+            token_hash: self.hashing.hash(&secret).await?,
+            scopes: create.scopes.clone(),
+            ip_networks: create.ip_networks.clone(),
+            expires_at: create.expires_at,
+            now,
+        };
+        let expected = token_projection(&token);
+        let audit_event = self.audit(
+            actor,
+            token.id,
+            token.organization_id,
+            token.project_id,
+            create.request_id,
+            API_TOKEN_CREATED_AUDIT_ACTION,
+            now,
+        )?;
+        let replay_plaintext = encode_create_replay(&secret, now);
+        let encrypted_replay = self.replay_cipher.encrypt(&context, &replay_plaintext)?;
+        let result = self
+            .repository
+            .create_api_token_idempotent(CreateApiTokenIdempotencyPlan {
+                create: CreateApiTokenPlan {
+                    token,
+                    audit_event: NewAuditEvent { event: audit_event },
+                },
+                context: context.clone(),
+                encrypted_replay,
+            })
+            .await
+            .map_err(map_create_idempotency_error)?;
+        match result {
+            ApiTokenCreateIdempotencyResult::Created { api_token, replay } => {
+                if *api_token != expected
+                    || replay.api_token_id != api_token.id
+                    || replay.result_version != api_token.version
+                {
+                    return Err(invalid_repository_result());
+                }
+                Ok(ApiTokenIdempotentCreateOutput {
+                    token: secret,
+                    api_token: *api_token,
+                    replayed: false,
+                })
+            }
+            ApiTokenCreateIdempotencyResult::Replay(replay) => {
+                let (token, created_at) =
+                    decode_create_replay(self.replay_cipher, &context, &replay.encrypted_replay)?;
+                let api_token = replay_token_projection(
+                    &create,
+                    replay.api_token_id,
+                    replay.result_version,
+                    &token,
+                    created_at,
+                )?;
+                Ok(ApiTokenIdempotentCreateOutput {
+                    token,
+                    api_token,
+                    replayed: true,
+                })
+            }
+        }
+    }
+
+    fn idempotency_context(
+        &self,
+        actor: &ApiTokenWriteActor,
+        method: ApiTokenWriteMethod,
+        path: String,
+        input: ApiTokenIdempotencyInput,
+        now: UtcTimestamp,
+    ) -> Result<ApiTokenIdempotencyContext, ApiTokenApplicationError> {
+        let (actor_type, actor_id) = actor.idempotency_identity()?;
+        ApiTokenIdempotencyContext::new(
+            actor_type,
+            actor_id,
+            method,
+            path,
+            input.key,
+            input.request_hash,
+            now,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn audit(
+        &self,
+        actor: &ApiTokenWriteActor,
+        token_id: ApiTokenId,
+        organization_id: OrganizationId,
+        project_id: Option<ProjectId>,
+        request_id: OperationId,
+        action: &str,
+        now: UtcTimestamp,
+    ) -> Result<AuditEvent, ApiTokenApplicationError> {
+        let (actor_type, actor_id, metadata) = actor.audit_identity(organization_id, project_id);
+        Ok(AuditEvent {
+            id: AuditEventId::from_resource_id(self.next_id()?),
+            organization_id,
+            project_id,
+            actor_type,
+            actor_id: Some(actor_id),
+            action: action.to_owned(),
+            resource_type: "api_token".to_owned(),
+            resource_id: ResourceId::from_uuid(token_id.as_uuid())
+                .map_err(|_| ApiTokenApplicationError::IdGeneration)?,
+            request_id,
+            metadata,
+            occurred_at: now,
+        })
+    }
+
+    fn now(&self) -> Result<UtcTimestamp, ApiTokenApplicationError> {
+        self.clock.now().map_err(map_application_error)
+    }
+
+    fn next_id(&self) -> Result<ResourceId, ApiTokenApplicationError> {
+        self.ids.next_resource_id().map_err(map_application_error)
+    }
+}
+
+fn token_projection(value: &NewApiToken) -> ApiToken {
+    ApiToken {
+        id: value.id,
+        organization_id: value.organization_id,
+        project_id: value.project_id,
+        name: value.name.clone(),
+        kind: value.kind,
+        token_prefix: value.token_prefix.clone(),
+        scopes: value.scopes.clone(),
+        ip_networks: value.ip_networks.clone(),
+        expires_at: value.expires_at,
+        last_used_at: None,
+        revoked_at: None,
+        created_at: value.now,
+        updated_at: value.now,
+        version: 1,
+    }
+}
+
+fn encode_create_replay(secret: &ApiTokenSecret, created_at: UtcTimestamp) -> Zeroizing<Vec<u8>> {
+    let mut plaintext = Zeroizing::new(Vec::with_capacity(12 + secret.expose_once().len()));
+    plaintext.extend_from_slice(CREATE_REPLAY_MAGIC);
+    plaintext.extend_from_slice(&created_at.unix_micros().to_be_bytes());
+    plaintext.extend_from_slice(secret.expose_once().as_bytes());
+    plaintext
+}
+
+fn decode_create_replay(
+    cipher: &ApiTokenReplayCipher,
+    context: &ApiTokenIdempotencyContext,
+    encrypted: &EncryptedApiTokenReplay,
+) -> Result<(ApiTokenSecret, UtcTimestamp), ApiTokenApplicationError> {
+    let plaintext = cipher.decrypt(context, encrypted)?;
+    if plaintext.len() != 12 + PREFIX_LENGTH + SECRET_BYTES * 2
+        || &plaintext[..4] != CREATE_REPLAY_MAGIC
+    {
+        return Err(ApiTokenApplicationError::ReplayEncryption);
+    }
+    let mut timestamp = [0_u8; 8];
+    timestamp.copy_from_slice(&plaintext[4..12]);
+    let secret = std::str::from_utf8(&plaintext[12..])
+        .map_err(|_| ApiTokenApplicationError::ReplayEncryption)
+        .and_then(|value| ApiTokenSecret::from_client_input(value.to_owned()))?;
+    Ok((
+        secret,
+        UtcTimestamp::from_unix_micros(i64::from_be_bytes(timestamp)),
+    ))
+}
+
+fn replay_token_projection(
+    command: &ApiTokenCreateCommand,
+    id: ApiTokenId,
+    version: i64,
+    secret: &ApiTokenSecret,
+    created_at: UtcTimestamp,
+) -> Result<ApiToken, ApiTokenApplicationError> {
+    if version != 1 {
+        return Err(invalid_repository_result());
+    }
+    Ok(ApiToken {
+        id,
+        organization_id: command.organization_id,
+        project_id: command.project_id,
+        name: command.name.clone(),
+        kind: command.kind,
+        token_prefix: prefix_from_secret(secret)?,
+        scopes: command.scopes.clone(),
+        ip_networks: command.ip_networks.clone(),
+        expires_at: command.expires_at,
+        last_used_at: None,
+        revoked_at: None,
+        created_at,
+        updated_at: created_at,
+        version,
+    })
+}
+
+fn map_create_idempotency_error(error: ApiTokenCreateIdempotencyError) -> ApiTokenApplicationError {
+    match error {
+        ApiTokenCreateIdempotencyError::KeyReused => ApiTokenApplicationError::IdempotencyKeyReused,
+        ApiTokenCreateIdempotencyError::Repository(error) => {
+            ApiTokenApplicationError::Repository(error)
+        }
+    }
+}
+
+const fn invalid_repository_result() -> ApiTokenApplicationError {
+    ApiTokenApplicationError::Repository(RepositoryError::UnknownInfrastructure)
+}
+
 fn ensure_target(token: &ApiToken, target: ApiTokenTarget) -> Result<(), ApiTokenApplicationError> {
     if token.id == target.id
         && token.organization_id == target.organization_id
@@ -1264,6 +1643,7 @@ pub enum ApiTokenApplicationError {
     InvalidMetadata,
     AuthenticationFailed,
     PermissionDenied,
+    IdempotencyKeyReused,
     ReplayEncryption,
     Clock,
     IdGeneration,
@@ -1279,6 +1659,7 @@ impl fmt::Display for ApiTokenApplicationError {
             }
             Self::InvalidMetadata => "API token metadata is invalid",
             Self::PermissionDenied => "API token permission denied",
+            Self::IdempotencyKeyReused => "API token idempotency key was reused",
             Self::Clock | Self::IdGeneration => "API token application operation failed",
             Self::Repository(_) => "API token repository operation failed",
         })
